@@ -4,5 +4,6 @@ pub mod config;
 pub mod discovery;
 pub mod displays;
 pub mod i18n;
+pub mod input_method;
 pub mod search;
 pub mod shortcuts;

@@ -300,7 +300,9 @@ pub struct Config {
     pub app_shortcuts: Vec<AppShortcut>,
     pub sort: SortOrder,
     pub appearance: Appearance,
+    pub background_opacity: u8,
     pub language: Language,
+    pub input_method: crate::input_method::InputMethod,
     pub include_minimized: bool,
     pub excluded_apps: Vec<String>,
 }
@@ -313,7 +315,9 @@ impl Default for Config {
             app_shortcuts: Vec::new(),
             sort: SortOrder::Recent,
             appearance: Appearance::System,
+            background_opacity: 100,
             language: Language::System,
+            input_method: crate::input_method::InputMethod::default(),
             include_minimized: true,
             excluded_apps: Vec::new(),
         }
@@ -322,6 +326,13 @@ impl Default for Config {
 
 impl Config {
     pub fn validate(&self) -> Result<(), String> {
+        if self.background_opacity > 100 {
+            return Err(tr!(
+                "背景不透明度必须在 0–100% 之间。",
+                "Background opacity must be between 0 and 100%."
+            )
+            .into());
+        }
         let search = self.shortcut.binding()?;
         let switch = self.switch_shortcut.binding()?;
         if self.switch_shortcut.key == "Space" {

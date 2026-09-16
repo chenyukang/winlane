@@ -3,7 +3,11 @@ pub fn verify_hidden_settings(target: &AnyObject, mtm: MainThreadMarker) {
     assert!(!window.window.isVisible());
     assert_eq!(window.candidate().unwrap(), []);
     window.add(target, mtm);
-    assert!(window.candidate().is_err());
+    assert_eq!(
+        window.candidate().unwrap(),
+        [],
+        "an unfinished row must not block saving existing bindings"
+    );
     window.rows.borrow()[0].set_application(ApplicationTarget {
         bundle_id: "com.example.browser".into(),
         path: "/Applications/Example Browser.app".into(),
@@ -37,9 +41,65 @@ pub fn verify_hidden_settings(target: &AnyObject, mtm: MainThreadMarker) {
     translated.copy_draft_from(&window, target, mtm);
     assert_eq!(translated.rows.borrow().len(), 3);
     assert!(translated.rows.borrow()[2].application.borrow().is_none());
-    assert_eq!(translated.rows.borrow()[2].shortcut.read().unwrap().display(), "⌘3");
+    assert_eq!(
+        translated.rows.borrow()[2]
+            .shortcut
+            .read()
+            .unwrap()
+            .display(),
+        "⌘3"
+    );
     translated.remove(2);
     assert_eq!(translated.candidate().unwrap(), items);
+}
+
+pub fn verify_autosave_target(
+    window: &AppShortcutsWindow,
+    target: &AnyObject,
+    mtm: MainThreadMarker,
+    saved: impl Fn() -> winlane::config::Config,
+) {
+    let row = window.rows.borrow()[0].clone();
+    row.set_application(ApplicationTarget {
+        bundle_id: "com.example.editor".into(),
+        path: "/Applications/Example Editor.app".into(),
+        name: "Editor".into(),
+    });
+    row.shortcut.notify_changed();
+    let valid = saved();
+    assert_eq!(valid.app_shortcuts[0].application.name, "Editor");
+    window.add(target, mtm);
+    row.shortcut.notify_changed();
+    assert_eq!(saved(), valid, "blank rows must not remove saved shortcuts");
+    let incomplete = window.rows.borrow()[1].clone();
+    incomplete.set_application(ApplicationTarget {
+        bundle_id: "com.example.chat".into(),
+        path: "/Applications/Example Chat.app".into(),
+        name: "Chat".into(),
+    });
+    incomplete.shortcut.fill(&valid.app_shortcuts[0].shortcut);
+    incomplete.shortcut.notify_changed();
+    assert_eq!(
+        saved(),
+        valid,
+        "conflicts must keep the previous binding active"
+    );
+    assert!(
+        window
+            .message
+            .stringValue()
+            .to_string()
+            .starts_with("Not saved:")
+    );
+    // Removing the conflicting draft restores a valid candidate without changing its binding.
+    unsafe {
+        incomplete.remove.sendAction_to(
+            incomplete.remove.action(),
+            incomplete.remove.target().as_deref(),
+        )
+    };
+    assert_eq!(window.candidate().unwrap(), valid.app_shortcuts);
+    assert_eq!(saved(), valid);
 }
 
 pub fn verify_background_launch() {

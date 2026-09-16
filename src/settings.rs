@@ -12,6 +12,7 @@ use winlane::config::{
     AppShortcut, Appearance, Config, KEYS, Shortcut, SortOrder, key_label, parse_excluded,
 };
 use winlane::i18n::{self, Language};
+use winlane::input_method::InputMethod;
 use winlane::{tr, trf};
 
 pub fn load_aliases() -> Result<Aliases, String> {
@@ -43,10 +44,10 @@ pub fn load() -> Result<Config, String> {
         .unwrap_or_else(|| Ok(Config::default()))
 }
 
-pub fn save(config: &Config) -> Result<(), String> {
+pub fn save(config: &Config, defaults: &NSUserDefaults) -> Result<(), String> {
     let json = NSString::from_str(&config.to_json()?);
     // SAFETY: NSString is an accepted property-list value. One key stores the whole validated configuration.
-    unsafe { NSUserDefaults::standardUserDefaults().setObject_forKey(Some(&json), storage_key()) };
+    unsafe { defaults.setObject_forKey(Some(&json), storage_key()) };
     Ok(())
 }
 
@@ -148,6 +149,21 @@ impl ShortcutControls {
         }
         self.key.selectItemAtIndex(other.key.indexOfSelectedItem());
     }
+
+    pub(crate) fn on_change(&self, target: &AnyObject, action: Sel) {
+        for control in &self.modifiers {
+            set_action(control, target, action);
+        }
+        set_action(&self.key, target, action);
+    }
+
+    pub(crate) fn notify_changed(&self) {
+        // SAFETY: on_change installs a live delegate and its matching action.
+        unsafe {
+            self.key
+                .sendAction_to(self.key.action(), self.key.target().as_deref())
+        };
+    }
 }
 
 pub struct SettingsWindow {
@@ -156,8 +172,12 @@ pub struct SettingsWindow {
     switch_shortcut: ShortcutControls,
     tabs: Retained<NSTabView>,
     language: Retained<NSPopUpButton>,
+    input_method: Retained<NSPopUpButton>,
     sort: Retained<NSPopUpButton>,
     appearance: Retained<NSPopUpButton>,
+    opacity_slider: Retained<NSSlider>,
+    opacity_input: Retained<NSTextField>,
+    opacity_preview: Retained<NSVisualEffectView>,
     minimized: Retained<NSButton>,
     excluded: Retained<NSTextField>,
     login: Retained<NSButton>,
@@ -202,6 +222,7 @@ impl SettingsWindow {
         view.addSubview(&tabs);
         let shortcuts = settings_tab(&tabs, tr!("快捷键", "Shortcuts"), mtm);
         let appearance_tab = settings_tab(&tabs, tr!("外观与语言", "Appearance & Language"), mtm);
+        let input_tab = settings_tab(&tabs, tr!("输入", "Input"), mtm);
         let windows = settings_tab(&tabs, tr!("窗口列表", "Window List"), mtm);
         let startup = settings_tab(&tabs, tr!("启动", "Startup"), mtm);
 
@@ -258,27 +279,27 @@ impl SettingsWindow {
         appearance_tab.addSubview(&label(
             tr!("界面语言", "Language"),
             14.0,
-            rect(30.0, 296.0, 215.0, 25.0),
+            rect(30.0, 315.0, 215.0, 25.0),
             mtm,
         ));
         let language = popup(
             &[tr!("跟随系统", "System"), "中文", "English"],
-            rect(260.0, 293.0, 370.0, 28.0),
+            rect(260.0, 312.0, 370.0, 28.0),
             mtm,
         );
         appearance_tab.addSubview(&language);
         appearance_tab.addSubview(&hint(
             tr!(
-                "跟随 macOS 的首选语言；保存后立即生效。",
-                "Use your preferred macOS language. Changes take effect when saved."
+                "跟随 macOS 的首选语言；更改立即生效。",
+                "Use your preferred macOS language. Changes take effect immediately."
             ),
-            rect(30.0, 250.0, 600.0, 32.0),
+            rect(30.0, 274.0, 600.0, 32.0),
             mtm,
         ));
         appearance_tab.addSubview(&label(
             tr!("外观", "Appearance"),
             14.0,
-            rect(30.0, 191.0, 215.0, 25.0),
+            rect(30.0, 235.0, 215.0, 25.0),
             mtm,
         ));
         let appearance = popup(
@@ -287,7 +308,7 @@ impl SettingsWindow {
                 tr!("浅色", "Light"),
                 tr!("深色", "Dark"),
             ],
-            rect(260.0, 188.0, 370.0, 28.0),
+            rect(260.0, 232.0, 370.0, 28.0),
             mtm,
         );
         appearance_tab.addSubview(&appearance);
@@ -296,9 +317,136 @@ impl SettingsWindow {
                 "用于搜索、切换面板和设置窗口。",
                 "Applies to the search panel, switch panel, and settings."
             ),
-            rect(30.0, 145.0, 600.0, 32.0),
+            rect(30.0, 195.0, 600.0, 32.0),
             mtm,
         ));
+
+        appearance_tab.addSubview(&label(
+            tr!("背景不透明度", "Background opacity"),
+            14.0,
+            rect(30.0, 153.0, 215.0, 25.0),
+            mtm,
+        ));
+        let opacity_slider =
+            NSSlider::initWithFrame(NSSlider::alloc(mtm), rect(260.0, 154.0, 275.0, 24.0));
+        opacity_slider.setMinValue(0.0);
+        opacity_slider.setMaxValue(100.0);
+        opacity_slider.setContinuous(true);
+        opacity_slider.setAccessibilityLabel(Some(&NSString::from_str(tr!(
+            "背景不透明度",
+            "Background opacity"
+        ))));
+        let opacity_input =
+            NSTextField::initWithFrame(NSTextField::alloc(mtm), rect(550.0, 151.0, 58.0, 26.0));
+        opacity_input.setAlignment(NSTextAlignment::Right);
+        opacity_input.setAccessibilityLabel(Some(&NSString::from_str(tr!(
+            "不透明度百分比",
+            "Opacity percentage"
+        ))));
+        // SAFETY: The delegate outlives these controls and implements both actions.
+        unsafe {
+            opacity_slider.setTarget(Some(target));
+            opacity_slider.setAction(Some(sel!(changeBackgroundOpacity:)));
+            opacity_input.setTarget(Some(target));
+            opacity_input.setAction(Some(sel!(commitBackgroundOpacity:)));
+        }
+        appearance_tab.addSubview(&opacity_slider);
+        appearance_tab.addSubview(&opacity_input);
+        appearance_tab.addSubview(&label("%", 13.0, rect(613.0, 153.0, 18.0, 24.0), mtm));
+        let opacity_hint = NSTextField::wrappingLabelWithString(
+            &NSString::from_str(tr!(
+                "100% 保持当前效果；数值越低，背景越透明。文字和图标保持清晰，更改自动保存。",
+                "100% keeps the current look. Lower values reveal more background. Text and icons stay clear. Changes save automatically."
+            )),
+            mtm,
+        );
+        opacity_hint.setFont(Some(&NSFont::systemFontOfSize(12.0)));
+        opacity_hint.setTextColor(Some(&NSColor::secondaryLabelColor()));
+        opacity_hint.setFrame(rect(30.0, 108.0, 600.0, 36.0));
+        opacity_hint.setMaximumNumberOfLines(2);
+        appearance_tab.addSubview(&opacity_hint);
+        let sample = NSView::initWithFrame(NSView::alloc(mtm), rect(30.0, 24.0, 600.0, 64.0));
+        for (x, color) in [
+            (0.0, NSColor::systemIndigoColor()),
+            (300.0, NSColor::systemTealColor()),
+        ] {
+            let tile = NSBox::initWithFrame(NSBox::alloc(mtm), rect(x, 0.0, 300.0, 64.0));
+            tile.setBoxType(NSBoxType::Custom);
+            tile.setBorderWidth(0.0);
+            tile.setFillColor(&color.colorWithAlphaComponent(0.35));
+            sample.addSubview(&tile);
+        }
+        let opacity_preview = crate::app::panel_backdrop(sample.bounds(), mtm);
+        opacity_preview.setBlendingMode(NSVisualEffectBlendingMode::WithinWindow);
+        sample.addSubview(&opacity_preview);
+        sample.addSubview(&label(
+            tr!(
+                "预览 · 搜索和切换面板",
+                "Preview · Search and switch panels"
+            ),
+            14.0,
+            rect(18.0, 21.0, 565.0, 23.0),
+            mtm,
+        ));
+        appearance_tab.addSubview(&sample);
+
+        input_tab.addSubview(&label(
+            tr!("搜索输入法", "Search input method"),
+            14.0,
+            rect(30.0, 315.0, 215.0, 25.0),
+            mtm,
+        ));
+        let input_method = popup(
+            &[
+                tr!("跟随当前输入法", "Keep current input source"),
+                tr!("始终英文", "Always English"),
+                tr!("始终中文", "Always Chinese"),
+                tr!("记住 Winlane 上次使用", "Last used in Winlane"),
+            ],
+            rect(260.0, 312.0, 370.0, 28.0),
+            mtm,
+        );
+        input_method.setAccessibilityLabel(Some(&NSString::from_str(tr!(
+            "搜索输入法",
+            "Search input method"
+        ))));
+        input_tab.addSubview(&input_method);
+        for (text, frame) in [
+            (
+                tr!(
+                    "进入搜索框时应用，包括从切换模式按 Space 进入搜索。输入过程中仍可手动切换输入法。",
+                    "Applied when you enter search, including Space from switch mode. You can still change input sources while typing."
+                ),
+                rect(30.0, 245.0, 600.0, 52.0),
+            ),
+            (
+                tr!(
+                    "英文 / 中文：使用 macOS 为该语言选择的已启用输入法，支持第三方输入法。",
+                    "English / Chinese: use the enabled input source macOS chooses for that language, including third-party input methods."
+                ),
+                rect(30.0, 169.0, 600.0, 52.0),
+            ),
+            (
+                tr!(
+                    "记住上次：保存上次在 Winlane 搜索框中使用的输入法，重启后也会保留。",
+                    "Last used: remember the input source used in Winlane search, even after restarting Winlane."
+                ),
+                rect(30.0, 101.0, 600.0, 52.0),
+            ),
+            (
+                tr!(
+                    "所需输入法未启用或已移除时，保留当前输入法。切换模式的 alias 不受影响。",
+                    "If the requested input source is unavailable, keep the current one. Switch-mode aliases are unaffected."
+                ),
+                rect(30.0, 33.0, 600.0, 52.0),
+            ),
+        ] {
+            let text = NSTextField::wrappingLabelWithString(&NSString::from_str(text), mtm);
+            text.setFont(Some(&NSFont::systemFontOfSize(12.0)));
+            text.setTextColor(Some(&NSColor::secondaryLabelColor()));
+            text.setFrame(frame);
+            input_tab.addSubview(&text);
+        }
 
         windows.addSubview(&label(
             tr!("窗口排序", "Sort windows"),
@@ -335,6 +483,18 @@ impl SettingsWindow {
             "For example: Finder, Terminal"
         ))));
         windows.addSubview(&excluded);
+        set_action(&excluded, target, sel!(settingsChanged:));
+        excluded.cell().unwrap().setSendsActionOnEndEditing(true);
+        opacity_input
+            .cell()
+            .unwrap()
+            .setSendsActionOnEndEditing(true);
+        search_shortcut.on_change(target, sel!(settingsChanged:));
+        switch_shortcut.on_change(target, sel!(settingsChanged:));
+        for control in [&*language, &*appearance, &*sort, &*input_method] {
+            set_action(control, target, sel!(settingsChanged:));
+        }
+        set_action(&minimized, target, sel!(settingsChanged:));
         windows.addSubview(&hint(
             tr!(
                 "填写列表里显示的完整应用名，用逗号分隔。",
@@ -375,7 +535,9 @@ impl SettingsWindow {
             mtm,
         ));
 
-        let message = hint("", rect(28.0, 62.0, 664.0, 38.0), mtm);
+        let message = NSTextField::wrappingLabelWithString(ns_string!(""), mtm);
+        message.setFont(Some(&NSFont::systemFontOfSize(12.0)));
+        message.setFrame(rect(28.0, 62.0, 664.0, 38.0));
         message.setMaximumNumberOfLines(2);
         view.addSubview(&message);
         view.addSubview(&button(
@@ -385,22 +547,26 @@ impl SettingsWindow {
             rect(28.0, 20.0, 190.0, 30.0),
             mtm,
         ));
-        view.addSubview(&button(
-            tr!("保存设置", "Save Settings"),
-            target,
-            sel!(saveSettings:),
-            rect(542.0, 20.0, 150.0, 30.0),
+        let autosave_hint = hint(
+            tr!("更改自动保存", "Changes save automatically"),
+            rect(380.0, 24.0, 312.0, 22.0),
             mtm,
-        ));
+        );
+        autosave_hint.setAlignment(NSTextAlignment::Right);
+        view.addSubview(&autosave_hint);
 
         Self {
             window,
             tabs,
             language,
+            input_method,
             search_shortcut,
             switch_shortcut,
             sort,
             appearance,
+            opacity_slider,
+            opacity_input,
+            opacity_preview,
             minimized,
             excluded,
             login,
@@ -411,6 +577,14 @@ impl SettingsWindow {
     }
 
     pub fn fill(&self, config: &Config) {
+        self.input_method
+            .selectItemAtIndex(match config.input_method {
+                InputMethod::Current => 0,
+                InputMethod::English => 1,
+                InputMethod::Chinese => 2,
+                InputMethod::LastUsed => 3,
+            });
+        self.set_opacity(config.background_opacity);
         self.set_app_shortcuts(&config.app_shortcuts);
         self.search_shortcut.fill(&config.shortcut);
         self.switch_shortcut.fill(&config.switch_shortcut);
@@ -454,6 +628,13 @@ impl SettingsWindow {
                 2 => Appearance::Dark,
                 _ => Appearance::System,
             },
+            background_opacity: self.read_opacity()?,
+            input_method: match self.input_method.indexOfSelectedItem() {
+                1 => InputMethod::English,
+                2 => InputMethod::Chinese,
+                3 => InputMethod::LastUsed,
+                _ => InputMethod::Current,
+            },
             language: match self.language.indexOfSelectedItem() {
                 1 => Language::Chinese,
                 2 => Language::English,
@@ -472,8 +653,41 @@ impl SettingsWindow {
             .map_or(0, |item| self.tabs.indexOfTabViewItem(&item))
     }
 
+    fn read_opacity(&self) -> Result<u8, String> {
+        self.opacity_input
+            .stringValue()
+            .to_string()
+            .trim()
+            .parse::<u8>()
+            .ok()
+            .filter(|value| *value <= 100)
+            .ok_or_else(|| {
+                tr!(
+                    "请输入 0–100 之间的整数百分比。",
+                    "Enter a whole-number percentage from 0 to 100."
+                )
+                .into()
+            })
+    }
+
+    fn set_opacity(&self, value: u8) {
+        self.opacity_slider.setDoubleValue(f64::from(value));
+        self.opacity_input
+            .setStringValue(&NSString::from_str(&value.to_string()));
+        self.opacity_preview.setAlphaValue(f64::from(value) / 100.0);
+    }
+
+    pub fn opacity_slider_changed(&self) {
+        self.set_opacity(self.opacity_slider.doubleValue().round() as u8);
+    }
+
+    pub fn opacity_input_changed(&self) -> Result<(), String> {
+        self.set_opacity(self.read_opacity()?);
+        Ok(())
+    }
+
     pub fn select_tab(&self, index: isize) {
-        if (0..4).contains(&index) {
+        if (0..5).contains(&index) {
             self.tabs.selectTabViewItemAtIndex(index);
         }
     }
@@ -496,8 +710,8 @@ impl SettingsWindow {
         self.fill(config);
         self.report(
             tr!(
-                "快捷键和列表设置在保存后生效；登录启动开关立即生效。",
-                "Save to apply changes. The launch-at-login toggle takes effect immediately."
+                "更改自动保存；文字输入在按 Return 或结束编辑时保存。",
+                "Changes save automatically. Text fields save on Return or when editing ends."
             ),
             false,
         );
@@ -624,7 +838,7 @@ fn popup(titles: &[&str], frame: NSRect, mtm: MainThreadMarker) -> Retained<NSPo
     }
     control
 }
-fn set_action(button: &NSButton, target: &AnyObject, action: Sel) {
+fn set_action(button: &NSControl, target: &AnyObject, action: Sel) {
     // SAFETY: The application delegate outlives the controls and implements each selector.
     unsafe {
         button.setTarget(Some(target));

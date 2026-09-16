@@ -57,7 +57,7 @@ Press **Space** in the switcher to start searching. In an empty search field, Sp
 
 ### Give frequent apps a permanent shortcut
 
-Open **Settings → Shortcuts → App Shortcuts**, choose an app, and assign a combination such as **Command + 1** for your browser or **Command + 2** for chat. Save to enable it globally.
+Open **Settings → Shortcuts → App Shortcuts**, choose an app, and assign a combination such as **Command + 1** for your browser or **Command + 2** for chat. Valid bindings save and take effect automatically.
 
 These shortcuts work without opening the picker and launch the app if needed. They target an application; use a window's alias when you need a particular project or document. A global binding overrides the same combination in other apps—for example, a browser's numbered-tab shortcut.
 
@@ -69,12 +69,17 @@ Open Settings from the menu bar or press **Command + ,** while using Winlane.
 | --- | --- |
 | **Shortcuts** | Separate shortcuts for search and switching, plus fixed app shortcuts. |
 | **Appearance & Language** | System, light, or dark appearance; system language, Chinese, or English. |
-| **Window List** | Sorting, minimized windows, and apps to exclude. Recent sorting reflects selections made through Winlane. |
+| **Input** | Keep the current input source, start searches in English or Chinese, or remember the last input source used in Winlane. |
+| **Window List** | Sorting, minimized windows, and apps to exclude. Recent sorting includes window selections and app shortcuts. |
 | **Startup** | Launch at login and access to macOS login-item settings. |
 
-Click **Save Settings** to apply changes. Language changes update the interface immediately, without a restart. By default, Winlane uses the first supported language in your macOS preferences, falling back to English. The launch-at-login toggle takes effect immediately, independently of Save.
+Settings save automatically. Menus, switches, and sliders apply immediately; text fields save when you press Return or finish editing. Invalid values and conflicting shortcuts leave the last valid configuration in effect and show an error. Restore Defaults also applies immediately.
 
-The search panel's **Window Actions** menu also lets you minimize or restore a window, hide its app, and copy its title. **Command + R** refreshes the list if something looks out of date.
+Language changes update the interface without a restart. By default, Winlane uses the first supported language in your macOS preferences, falling back to English.
+
+The input preference applies when the search field gains focus, including when you press Space from switch mode. You can still switch input sources manually while typing. English and Chinese use an enabled input source chosen by macOS; if it is unavailable, the current source is kept. **Last used in Winlane** remembers your search input source across restarts. Switch-mode aliases work independently of this setting.
+
+The **Window** menu lets you limit searches to the current app, minimize or restore a window, hide its app, and copy its title. **Command + R** refreshes the list if something looks out of date.
 
 ## Privacy and permissions
 

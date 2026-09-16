@@ -36,6 +36,32 @@ fn saved_preferences_round_trip_without_window_data() {
 }
 
 #[test]
+fn background_opacity_preserves_legacy_defaults_and_validates_percentages() {
+    assert_eq!(Config::from_json("{}").unwrap().background_opacity, 100);
+    for value in [0, 37, 100] {
+        let config = Config {
+            background_opacity: value,
+            ..Config::default()
+        };
+        assert_eq!(
+            Config::from_json(&config.to_json().unwrap()).unwrap(),
+            config
+        );
+    }
+    for value in ["-1", "101", "256", "50.5", "null"] {
+        assert!(Config::from_json(&format!(r#"{{"background_opacity":{value}}}"#)).is_err());
+    }
+    assert!(
+        Config {
+            background_opacity: 101,
+            ..Config::default()
+        }
+        .to_json()
+        .is_err()
+    );
+}
+
+#[test]
 fn legacy_launch_preference_is_ignored_without_losing_other_settings() {
     for show_on_launch in [false, true] {
         let json = format!(

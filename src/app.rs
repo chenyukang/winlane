@@ -10,8 +10,9 @@ use objc2::runtime::{AnyObject, ProtocolObject, Sel};
 use objc2::{AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::*;
 use objc2_foundation::{
-    MainThreadMarker, NSBundle, NSData, NSNotification, NSNumber, NSObject, NSObjectProtocol,
-    NSPoint, NSRect, NSRunLoop, NSRunLoopCommonModes, NSSize, NSString, NSTimer, NSURL, ns_string,
+    MainThreadMarker, NSArray, NSBundle, NSData, NSNotification, NSNotificationCenter, NSNumber,
+    NSObject, NSObjectProtocol, NSPoint, NSRect, NSRunLoop, NSRunLoopCommonModes, NSSize, NSString,
+    NSTimer, NSURL, NSUserDefaults, ns_string,
 };
 use std::time::{Duration, Instant};
 use winlane::aliases::{AliasInput, AliasMatch, Aliases, AppIdentity};
@@ -26,14 +27,16 @@ use winlane::shortcuts::{
 
 use crate::accessibility;
 use crate::app_shortcuts::{self, AppShortcutsWindow};
+use crate::input_source::{self, Source};
 use crate::installed_apps;
 use crate::settings::{self, SettingsWindow};
 use crate::shortcut_tap::ShortcutTap;
+use winlane::input_method::InputSession;
 
 const WIDTH: f64 = 700.0;
 const HEIGHT: f64 = 590.0;
 const ROW_HEIGHT: f64 = 28.0;
-const LIST_TOP: f64 = 484.0;
+const LIST_TOP: f64 = 526.0;
 const LIST_BOTTOM: f64 = 36.0;
 const LIST_WIDTH: f64 = WIDTH - 20.0;
 const APP_CATALOG_TTL: Duration = Duration::from_secs(10 * 60);
@@ -41,8 +44,8 @@ const APP_CATALOG_TTL: Duration = Duration::from_secs(10 * 60);
 struct PanelUi {
     display_id: u32,
     shortcut_label: Retained<NSTextField>,
-    scope: Retained<NSButton>,
     panel: Retained<SearchPanel>,
+    backdrop: Retained<NSVisualEffectView>,
     input: Retained<NSSearchField>,
     scroll: Retained<NSScrollView>,
     list: Retained<ListView>,
@@ -51,7 +54,6 @@ struct PanelUi {
     demo_button: Retained<NSButton>,
     refresh_button: Retained<NSButton>,
     mode_label: Retained<NSTextField>,
-    actions: Retained<NSPopUpButton>,
     rows: RefCell<Vec<RowUi>>,
     empty_labels: RefCell<Vec<Retained<NSTextField>>>,
 }
@@ -96,19 +98,14 @@ impl RowUi {
         }
         self.selected = Some(selected);
         self.button.setAccessibilitySelected(selected);
-        if let Some(layer) = self.button.layer() {
-            let color = if selected {
-                NSColor::selectedContentBackgroundColor()
-            } else {
-                NSColor::clearColor()
-            };
-            // SAFETY: CALayer retains the supplied CGColor.
-            unsafe {
-                let _: () = msg_send![&layer, setBackgroundColor: &*color.CGColor()];
-            }
-        }
+        self.button.ivars().selected.set(selected);
+        self.button
+            .ivars()
+            .has_alias
+            .set(!self.alias.stringValue().is_empty());
+        NSView::setNeedsDisplay(&self.button, true);
         let text = if selected {
-            NSColor::selectedMenuItemTextColor()
+            NSColor::whiteColor()
         } else {
             NSColor::labelColor()
         };
@@ -120,12 +117,13 @@ impl RowUi {
         };
         self.title.setTextColor(Some(&detail));
         self.app.setTextColor(Some(&text));
+        self.app.setAlphaValue(if selected { 1.0 } else { 0.80 });
         let alias = if selected {
             text
         } else if launching {
-            NSColor::controlAccentColor()
+            NSColor::systemTealColor()
         } else {
-            NSColor::secondaryLabelColor()
+            NSColor::systemBlueColor()
         };
         self.alias.setTextColor(Some(&alias));
     }
@@ -139,8 +137,12 @@ struct AppState {
     keyboard_display: Cell<Option<u32>>,
     changing_displays: Cell<bool>,
     syncing_controls: Cell<bool>,
+    saving_settings: Cell<bool>,
+    input_session: RefCell<InputSession>,
+    changing_input_source: Cell<bool>,
     check_panel_focus: Cell<bool>,
     config: RefCell<Config>,
+    config_store: OnceCell<Retained<NSUserDefaults>>,
     aliases: RefCell<Aliases>,
     identities: RefCell<HashMap<i32, AppIdentity>>,
     icons: RefCell<HashMap<i32, Option<Retained<NSImage>>>>,
@@ -172,6 +174,7 @@ struct AppState {
     launch_matches: RefCell<Vec<usize>>,
     selected: Cell<usize>,
     previous_pid: Cell<i32>,
+    previous_window: Cell<Option<u64>>,
     receiver: RefCell<Option<Receiver<Vec<WindowInfo>>>>,
     loading: Cell<bool>,
     demo: Cell<bool>,
@@ -246,19 +249,101 @@ define_class!(
 );
 
 define_class!(
-    // SAFETY: This NSButton subclass customizes cursor rectangles on the main thread.
+    // SAFETY: Drawing and mouse tracking stay on AppKit's main thread.
     #[unsafe(super = NSButton)]
     #[thread_kind = MainThreadOnly]
+    #[ivars = RowAppearance]
     #[derive(Debug)]
     struct WindowRowButton;
     unsafe impl NSObjectProtocol for WindowRowButton {}
     impl WindowRowButton {
+        #[unsafe(method(drawRect:))]
+        fn draw(&self, _: NSRect) {
+            let selected = self.ivars().selected.get();
+            let path = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(self.bounds(), 7.0, 7.0);
+            if selected {
+                selection_gradient().drawInBezierPath_angle(&path, 0.0);
+            } else if self.ivars().hovered.get() || self.isHighlighted() {
+                NSColor::systemBlueColor().colorWithAlphaComponent(0.09).setFill();
+                path.fill();
+            }
+            if self.ivars().has_alias.get() {
+                let chip = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(
+                    rect(8.0, 4.0, 28.0, 18.0), 5.0, 5.0,
+                );
+                if selected {
+                    NSColor::whiteColor().colorWithAlphaComponent(0.19).setFill();
+                } else {
+                    NSColor::systemBlueColor().colorWithAlphaComponent(0.09).setFill();
+                }
+                chip.fill();
+            }
+        }
+        #[unsafe(method(updateTrackingAreas))]
+        fn update_tracking(&self) {
+            if let Some(area) = self.ivars().tracking.borrow_mut().take() { self.removeTrackingArea(&area); }
+            // SAFETY: The tracking area belongs to this view, which implements both mouse callbacks.
+            unsafe {
+                let _: () = msg_send![super(self), updateTrackingAreas];
+                let area = NSTrackingArea::initWithRect_options_owner_userInfo(
+                    NSTrackingArea::alloc(), self.bounds(),
+                    NSTrackingAreaOptions::MouseEnteredAndExited | NSTrackingAreaOptions::ActiveAlways | NSTrackingAreaOptions::InVisibleRect,
+                    Some(self), None,
+                );
+                self.addTrackingArea(&area);
+                self.ivars().tracking.replace(Some(area));
+            }
+        }
+        #[unsafe(method(mouseEntered:))]
+        fn entered(&self, _: &NSEvent) { self.ivars().hovered.set(true); NSView::setNeedsDisplay(self, true); }
+        #[unsafe(method(mouseExited:))]
+        fn exited(&self, _: &NSEvent) { self.ivars().hovered.set(false); NSView::setNeedsDisplay(self, true); }
+        #[unsafe(method(viewDidMoveToWindow))]
+        fn moved_to_window(&self) {
+            unsafe { let _: () = msg_send![super(self), viewDidMoveToWindow]; }
+            self.ivars().hovered.set(false);
+        }
         #[unsafe(method(resetCursorRects))]
         fn reset_cursor_rects(&self) {
             // SAFETY: Preserve NSButton's cursor setup before adding the row's cursor.
             unsafe { let _: () = msg_send![super(self), resetCursorRects]; }
             if self.isEnabled() {
                 self.addCursorRect_cursor(self.visibleRect(), &NSCursor::pointingHandCursor());
+            }
+        }
+    }
+);
+
+#[derive(Debug, Default)]
+struct RowAppearance {
+    selected: Cell<bool>,
+    hovered: Cell<bool>,
+    has_alias: Cell<bool>,
+    tracking: RefCell<Option<Retained<NSTrackingArea>>>,
+}
+
+define_class!(
+    // SAFETY: This view draws a static tint above AppKit's native material on the main thread.
+    #[unsafe(super = NSView)]
+    #[thread_kind = MainThreadOnly]
+    struct PanelSurface;
+    unsafe impl NSObjectProtocol for PanelSurface {}
+    impl PanelSurface {
+        #[unsafe(method(drawRect:))]
+        fn draw(&self, dirty: NSRect) {
+            unsafe { let _: () = msg_send![super(self), drawRect: dirty]; }
+            let dark = unsafe {
+                self.effectiveAppearance().bestMatchFromAppearancesWithNames(
+                    &NSArray::from_slice(&[NSAppearanceNameAqua, NSAppearanceNameDarkAqua]),
+                ).is_some_and(|name| &*name == NSAppearanceNameDarkAqua)
+            };
+            let (start, end) = if dark {
+                (tint(0x172039, 0.88), tint(0x102b32, 0.80))
+            } else {
+                (tint(0xf5f7ff, 0.94), tint(0xecf8fa, 0.88))
+            };
+            if let Some(gradient) = NSGradient::initWithStartingColor_endingColor(NSGradient::alloc(), &start, &end) {
+                gradient.drawInRect_angle(self.bounds(), -25.0);
             }
         }
     }
@@ -310,14 +395,27 @@ define_class!(
     }
     unsafe impl NSWindowDelegate for Delegate {
         #[unsafe(method(windowDidBecomeKey:))]
-        fn became_key(&self, _: &NSNotification) {
+        fn became_key(&self, notification: &NSNotification) {
+            if notification.object().and_then(|object| object.downcast::<SearchPanel>().ok()).is_none() { return; }
             self.ivars().check_panel_focus.set(false);
             self.focus_search();
         }
         #[unsafe(method(windowShouldClose:))]
-        fn should_close(&self, _: &NSWindow) -> bool { self.dismiss(); false }
+        fn should_close(&self, window: &NSWindow) -> bool {
+            if window.downcast_ref::<SearchPanel>().is_some() {
+                self.dismiss(); false
+            } else {
+                window.makeFirstResponder(None);
+                true
+            }
+        }
         #[unsafe(method(windowDidResignKey:))]
-        fn resigned(&self, _: &NSNotification) {
+        fn resigned(&self, notification: &NSNotification) {
+            let Some(window) = notification.object().and_then(|object| object.downcast::<NSWindow>().ok()) else { return; };
+            if window.downcast_ref::<SearchPanel>().is_none() {
+                window.makeFirstResponder(None);
+                return;
+            }
             self.ivars().check_panel_focus.set(true);
             self.ivars().wake.get().unwrap().signal();
         }
@@ -351,7 +449,10 @@ define_class!(
         #[unsafe(method(validateMenuItem:))]
         fn validate_menu_item(&self, item: &NSMenuItem) -> bool {
             let action = item.action();
-            if [sel!(minimizeChosen:), sel!(hideChosen:), sel!(copyTitle:), sel!(quickSelect:)].into_iter().any(|sel| action == Some(sel)) {
+            if action == Some(sel!(toggleScope:)) {
+                item.setState(if self.ivars().current_app_only.get() { NSControlStateValueOn } else { NSControlStateValueOff });
+                self.any_panel_visible() && self.ivars().mode.get() == Some(PanelMode::Search)
+            } else if [sel!(minimizeChosen:), sel!(hideChosen:), sel!(copyTitle:), sel!(quickSelect:)].into_iter().any(|sel| action == Some(sel)) {
                 let visible = self.any_panel_visible();
                 visible && if action == Some(sel!(quickSelect:)) {
                     (item.tag() as usize) < self.match_count()
@@ -360,6 +461,12 @@ define_class!(
         }
     }
     impl Delegate {
+        #[unsafe(method(inputSourceChanged:))]
+        fn input_source_changed(&self, _: &NSNotification) {
+            if !self.ivars().changing_input_source.get() {
+                self.remember_search_input();
+            }
+        }
         #[unsafe(method(showSettings:))]
         fn settings_action(&self, _: Option<&AnyObject>) {
             self.ivars().launch_receiver.replace(None);
@@ -370,20 +477,42 @@ define_class!(
             settings.show(&self.ivars().config.borrow());
             self.report_shortcut_status();
         }
-        #[unsafe(method(saveSettings:))]
-        fn save_settings(&self, _: Option<&AnyObject>) {
-            if let Some(settings) = self.settings_window() {
-                match settings.candidate().and_then(|candidate| self.apply_config(candidate)) {
-                    Ok(()) => self.report_shortcut_status(),
-                    Err(error) => settings.report(&error, true),
-                }
-            }
-        }
+        #[unsafe(method(settingsChanged:))]
+        fn settings_changed(&self, _: Option<&AnyObject>) { self.autosave_settings(); }
         #[unsafe(method(resetSettings:))]
         fn reset_settings(&self, _: Option<&AnyObject>) {
             if let Some(settings) = self.settings_window() {
-                settings.fill(&Config::default());
-                settings.report(tr!("已填入默认值，点击保存后生效。登录启动状态保持不变。", "Defaults filled in. Save to apply. Launch at login is unchanged."), false);
+                if self.ivars().saving_settings.replace(true) { return; }
+                let result = self.apply_config(Config::default());
+                self.ivars().saving_settings.set(false);
+                match result {
+                    Ok(()) => {
+                        if let Some(settings) = self.settings_window() {
+                            settings.fill(&self.ivars().config.borrow());
+                            settings.report(tr!("默认设置已恢复并保存。登录启动状态保持不变。", "Defaults restored and saved. Launch at login is unchanged."), false);
+                        }
+                        if let Some(window) = self.app_shortcuts_window() {
+                            window.fill(&self.ivars().config.borrow().app_shortcuts, self, self.mtm());
+                        }
+                    }
+                    Err(error) => settings.report(&trf!("未保存：{}", "Not saved: {}", error), true),
+                }
+            }
+        }
+        #[unsafe(method(changeBackgroundOpacity:))]
+        fn change_background_opacity(&self, _: Option<&AnyObject>) {
+            if let Some(settings) = self.settings_window() {
+                settings.opacity_slider_changed();
+                self.autosave_settings();
+            }
+        }
+        #[unsafe(method(commitBackgroundOpacity:))]
+        fn commit_background_opacity(&self, _: Option<&AnyObject>) {
+            if let Some(settings) = self.settings_window() {
+                match settings.opacity_input_changed() {
+                    Ok(()) => self.autosave_settings(),
+                    Err(error) => settings.report(&trf!("未保存：{}", "Not saved: {}", error), true),
+                }
             }
         }
         #[unsafe(method(showAppShortcuts:))]
@@ -396,35 +525,26 @@ define_class!(
         }
         #[unsafe(method(removeAppShortcut:))]
         fn remove_app_shortcut(&self, sender: &NSButton) {
-            if let Some(window) = self.app_shortcuts_window() { window.remove(sender.tag() as usize); }
+            if let Some(window) = self.app_shortcuts_window() {
+                window.remove(sender.tag() as usize);
+                self.autosave_app_shortcuts();
+            }
         }
         #[unsafe(method(chooseShortcutApp:))]
         fn choose_shortcut_app(&self, sender: &NSButton) {
             if let Some(window) = self.app_shortcuts_window() { window.choose(sender.tag() as usize, self.mtm()); }
         }
-        #[unsafe(method(saveAppShortcuts:))]
-        fn save_app_shortcuts(&self, _: Option<&AnyObject>) {
-            if let Some(window) = self.app_shortcuts_window() {
-                let result = window.candidate().and_then(|shortcuts| {
-                    let mut config = self.ivars().config.borrow().clone();
-                    config.app_shortcuts = shortcuts;
-                    self.apply_config(config)
-                });
-                match result {
-                    Ok(()) => window.report(tr!("应用快捷键已保存并启用。", "App shortcuts saved and enabled."), false),
-                    Err(error) => window.report(&error, true),
-                }
-            }
-        }
+        #[unsafe(method(appShortcutsChanged:))]
+        fn app_shortcuts_changed(&self, _: Option<&AnyObject>) { self.autosave_app_shortcuts(); }
         #[unsafe(method(toggleLogin:))]
         fn toggle_login(&self, _: Option<&AnyObject>) {
             if let Some(settings) = self.settings_window() { settings.toggle_login(); }
         }
         #[unsafe(method(manageLogin:))]
         fn manage_login(&self, _: Option<&AnyObject>) { settings::manage_login(); }
-        #[unsafe(method(changeScope:))]
-        fn change_scope(&self, sender: &NSButton) {
-            self.ivars().current_app_only.set(sender.state() == NSControlStateValueOn);
+        #[unsafe(method(toggleScope:))]
+        fn toggle_scope(&self, _: Option<&AnyObject>) {
+            self.ivars().current_app_only.set(!self.ivars().current_app_only.get());
             self.filter();
         }
         #[unsafe(method(minimizeChosen:))]
@@ -458,6 +578,7 @@ define_class!(
         #[unsafe(method(closeWindow:))]
         fn close_window(&self, _: Option<&AnyObject>) {
             if let Some(settings) = self.settings_window() && settings.window.isKeyWindow() {
+                settings.window.makeFirstResponder(None);
                 settings.window.close();
             } else if self.any_panel_key() { self.dismiss(); }
         }
@@ -536,6 +657,10 @@ define_class!(
         }
         #[unsafe(method(quitApp:))]
         fn quit(&self, _: Option<&AnyObject>) {
+            if let Some(settings) = self.settings_window() {
+                settings.window.makeFirstResponder(None);
+            }
+            self.end_session();
             NSApplication::sharedApplication(self.mtm()).terminate(None);
         }
     }
@@ -561,6 +686,15 @@ impl Delegate {
         let app = NSApplication::sharedApplication(mtm);
         app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
         self.build_menus();
+        // SAFETY: The delegate lives for the app lifetime; AppKit delivers this notification on the main thread.
+        unsafe {
+            NSNotificationCenter::defaultCenter().addObserver_selector_name_object(
+                self,
+                sel!(inputSourceChanged:),
+                Some(NSTextInputContextKeyboardSelectionDidChangeNotification),
+                None,
+            );
+        }
         // SAFETY: The application retains this delegate for the entire run loop; poll: has NSTimer signature.
         let timer = unsafe {
             NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
@@ -636,6 +770,12 @@ impl Delegate {
             tr!("关闭窗口", "Close Window"),
             sel!(closeWindow:),
             "w",
+        ));
+        window_menu.addItem(&NSMenuItem::separatorItem(mtm));
+        window_menu.addItem(&self.menu_item(
+            tr!("仅当前应用", "Current app only"),
+            sel!(toggleScope:),
+            "",
         ));
         window_menu.addItem(&NSMenuItem::separatorItem(mtm));
         self.add_window_actions(&window_menu);
@@ -729,6 +869,9 @@ impl Delegate {
             return window;
         }
         let window = Rc::new(SettingsWindow::new(self, self.mtm()));
+        window
+            .window
+            .setDelegate(Some(ProtocolObject::from_ref(self)));
         self.ivars().settings.replace(Some(window.clone()));
         window
     }
@@ -815,6 +958,7 @@ impl Delegate {
     fn sync_displays(&self) {
         let state = self.ivars();
         state.changing_displays.set(true);
+        let syncing_controls = state.syncing_controls.replace(true);
         let existing = self.panels();
         let focused = existing
             .iter()
@@ -851,8 +995,16 @@ impl Delegate {
                 .find(|ui| ui.display_id == position.display_id)
                 .cloned()
                 .unwrap_or_else(|| self.create_panel(position.display_id));
-            ui.panel
-                .setFrameOrigin(NSPoint::new(position.x, position.y));
+            if state.mode.get().is_some() {
+                self.render_panel(&ui);
+            }
+            let display = displays
+                .iter()
+                .find(|display| display.id == position.display_id)
+                .unwrap();
+            let y = display.visible.y
+                + ((display.visible.height - ui.panel.frame().size.height) * 0.58).max(0.0);
+            ui.panel.setFrameOrigin(NSPoint::new(position.x, y));
             panels.push(ui);
         }
         state.panels.replace(panels.clone());
@@ -864,6 +1016,7 @@ impl Delegate {
             ui.panel.orderOut(None);
             ui.panel.close();
         }
+        state.syncing_controls.set(syncing_controls);
         state.changing_displays.set(false);
     }
 
@@ -923,31 +1076,30 @@ impl Delegate {
         panel.setHidesOnDeactivate(false);
         panel.setBecomesKeyOnlyIfNeeded(false);
         panel.setMovableByWindowBackground(true);
-        let root = NSVisualEffectView::initWithFrame(
-            NSVisualEffectView::alloc(mtm),
-            rect(0.0, 0.0, WIDTH, HEIGHT),
-        );
-        root.setMaterial(NSVisualEffectMaterial::Popover);
-        root.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
-        root.setState(NSVisualEffectState::Active);
+        panel.setOpaque(false);
+        panel.setBackgroundColor(Some(&NSColor::clearColor()));
+        let root = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, WIDTH, HEIGHT));
         panel.setContentView(Some(&root));
+        let backdrop = panel_backdrop(root.bounds(), mtm);
+        root.addSubview(&backdrop);
 
         let shortcut = label(
             &self.ivars().config.borrow().shortcut.display(),
             11.0,
-            rect(WIDTH - 160.0, 557.0, 144.0, 18.0),
+            rect(WIDTH - 120.0, 546.0, 104.0, 18.0),
             mtm,
         );
         shortcut.setAlignment(NSTextAlignment::Right);
-        shortcut.setTextColor(Some(&NSColor::tertiaryLabelColor()));
+        shortcut.setTextColor(Some(&NSColor::labelColor()));
+        shortcut.setAlphaValue(0.65);
         root.addSubview(&shortcut);
 
         let input_width = ((WIDTH - 32.0) * 0.618).round();
         let input = NSSearchField::initWithFrame(
             NSSearchField::alloc(mtm),
-            rect((WIDTH - input_width) / 2.0, 520.0, input_width, 28.0),
+            rect((WIDTH - input_width) / 2.0, 538.0, input_width, 34.0),
         );
-        input.setFont(Some(&NSFont::systemFontOfSize(16.0)));
+        input.setFont(Some(&NSFont::systemFontOfSize(15.0)));
         input.setPlaceholderString(Some(ns_string!("")));
         input.setSendsSearchStringImmediately(true);
         input.setMaximumRecents(0);
@@ -956,32 +1108,9 @@ impl Delegate {
             input.setDelegate(Some(ProtocolObject::from_ref(self)));
             root.addSubview(&input);
         }
-        let scope = self.button(
-            tr!("仅当前应用", "Current app only"),
-            sel!(changeScope:),
-            rect(16.0, 490.0, 180.0, 22.0),
-        );
-        scope.setButtonType(NSButtonType::Switch);
-        scope.setToolTip(Some(&NSString::from_str(tr!(
-            "只显示呼出面板前正在使用的应用；演示模式以 Safari 为例。",
-            "Only show the app used before opening this panel; Safari is used in the demo."
-        ))));
-        root.addSubview(&scope);
-        let actions = NSPopUpButton::initWithFrame_pullsDown(
-            NSPopUpButton::alloc(mtm),
-            rect(WIDTH - 146.0, 488.0, 130.0, 26.0),
-            true,
-        );
-        let actions_menu = NSMenu::new(mtm);
-        let heading = NSMenuItem::new(mtm);
-        heading.setTitle(&NSString::from_str(tr!("窗口操作", "Window Actions")));
-        actions_menu.addItem(&heading);
-        self.add_window_actions(&actions_menu);
-        actions.setMenu(Some(&actions_menu));
-        actions.setFont(Some(&NSFont::systemFontOfSize(12.0)));
-        root.addSubview(&actions);
         let mode_label = label("", 11.0, rect(16.0, LIST_BOTTOM, WIDTH - 32.0, 20.0), mtm);
-        mode_label.setTextColor(Some(&NSColor::secondaryLabelColor()));
+        mode_label.setTextColor(Some(&NSColor::labelColor()));
+        mode_label.setAlphaValue(0.65);
         mode_label.setHidden(true);
         root.addSubview(&mode_label);
 
@@ -1006,7 +1135,8 @@ impl Delegate {
             rect(16.0, 9.0, WIDTH - 148.0, 18.0),
             mtm,
         );
-        footer.setTextColor(Some(&NSColor::secondaryLabelColor()));
+        footer.setTextColor(Some(&NSColor::labelColor()));
+        footer.setAlphaValue(0.65);
         root.addSubview(&footer);
         let help = self.button(
             tr!("辅助功能设置…", "Accessibility Settings…"),
@@ -1032,11 +1162,14 @@ impl Delegate {
             sel!(showSettings:),
             rect(WIDTH - 126.0, 9.0, 110.0, 24.0),
         );
+        settings_button.setBordered(false);
+        settings_button.setContentTintColor(Some(&NSColor::labelColor()));
         root.addSubview(&settings_button);
 
         Rc::new(PanelUi {
             display_id,
             panel,
+            backdrop,
             input,
             scroll,
             list,
@@ -1045,9 +1178,7 @@ impl Delegate {
             demo_button,
             refresh_button: refresh,
             shortcut_label: shortcut,
-            scope,
             mode_label,
-            actions,
             rows: RefCell::new(Vec::new()),
             empty_labels: RefCell::new(Vec::new()),
         })
@@ -1126,8 +1257,8 @@ impl Delegate {
         {
             state.hotkey_error.replace(Some(
                 tr!(
-                    "快捷键监听已暂停，请重新保存快捷键设置。",
-                    "Shortcut monitoring is paused. Save your shortcuts again."
+                    "快捷键监听已暂停，请重新启动 Winlane。",
+                    "Shortcut monitoring is paused. Restart Winlane."
                 )
                 .into(),
             ));
@@ -1201,29 +1332,92 @@ impl Delegate {
         }
     }
 
+    fn autosave_settings(&self) {
+        let Some(settings) = self.settings_window() else {
+            return;
+        };
+        if self.ivars().saving_settings.replace(true) {
+            return;
+        }
+        let result = settings
+            .candidate()
+            .and_then(|candidate| self.apply_config(candidate));
+        self.ivars().saving_settings.set(false);
+        if let Some(settings) = self.settings_window() {
+            match result {
+                Ok(()) => settings.report(tr!("已自动保存。", "Saved automatically."), false),
+                Err(error) => settings.report(&trf!("未保存：{}", "Not saved: {}", error), true),
+            }
+        }
+    }
+
+    fn autosave_app_shortcuts(&self) {
+        let Some(window) = self.app_shortcuts_window() else {
+            return;
+        };
+        let result = window.candidate().and_then(|shortcuts| {
+            let mut config = self.ivars().config.borrow().clone();
+            config.app_shortcuts = shortcuts;
+            self.apply_config(config)
+        });
+        match result {
+            Ok(()) => window.report(
+                tr!(
+                    "有效的快捷键已自动保存；未选择应用的行暂不启用。",
+                    "Valid shortcuts saved automatically. Rows without an app stay inactive."
+                ),
+                false,
+            ),
+            Err(error) => window.report(&trf!("未保存：{}", "Not saved: {}", error), true),
+        }
+    }
+
     fn apply_config(&self, candidate: Config) -> Result<(), String> {
         candidate.validate()?;
-        let (tap, receiver) = ShortcutTap::new(
-            self.mtm(),
-            candidate.shortcut.binding()?,
-            candidate.switch_shortcut.binding()?,
-            candidate.app_bindings()?,
-            self.ivars().wake.get().unwrap().handle(),
+        let previous = self.ivars().config.borrow().clone();
+        if candidate == previous {
+            return Ok(());
+        }
+        let bindings_changed = candidate.shortcut != previous.shortcut
+            || candidate.switch_shortcut != previous.switch_shortcut
+            || candidate.app_bindings()? != previous.app_bindings()?;
+        let registration = if bindings_changed {
+            Some(ShortcutTap::new(
+                self.mtm(),
+                candidate.shortcut.binding()?,
+                candidate.switch_shortcut.binding()?,
+                candidate.app_bindings()?,
+                self.ivars().wake.get().unwrap().handle(),
+            )?)
+        } else {
+            None
+        };
+        settings::save(
+            &candidate,
+            self.ivars()
+                .config_store
+                .get_or_init(NSUserDefaults::standardUserDefaults),
         )?;
-        settings::save(&candidate)?;
-        self.ivars().shortcut_tap.replace(Some(tap));
-        self.ivars().shortcut_rx.replace(Some(receiver));
-        settings::apply_appearance(&candidate, self.mtm());
+        if let Some((tap, receiver)) = registration {
+            self.ivars().shortcut_tap.replace(Some(tap));
+            self.ivars().shortcut_rx.replace(Some(receiver));
+            self.ivars().hotkey_error.replace(None);
+        }
+        if candidate.appearance != previous.appearance {
+            settings::apply_appearance(&candidate, self.mtm());
+        }
         if let Some(settings) = self.settings_window() {
             settings.set_app_shortcuts(&candidate.app_shortcuts);
         }
-        let language_changed = settings::apply_language(candidate.language);
+        let language_changed =
+            candidate.language != previous.language && settings::apply_language(candidate.language);
         self.ivars().config.replace(candidate);
-        self.ivars().hotkey_error.replace(None);
         if language_changed {
             self.rebuild_localized_ui();
         }
-        self.update_shortcut_labels();
+        if bindings_changed {
+            self.update_shortcut_labels();
+        }
         self.filter();
         Ok(())
     }
@@ -1256,6 +1450,7 @@ impl Delegate {
     }
 
     fn launch_application(&self, application: &ApplicationTarget, origin: LaunchOrigin) {
+        self.remember_frontmost_window();
         self.end_session();
         self.ivars().launch_receiver.replace(None);
         if let Some(settings) = self.settings_window() {
@@ -1300,6 +1495,7 @@ impl Delegate {
                     NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
                 {
                     app.unhide();
+                    self.remember_application(pid);
                 } else {
                     self.report_launch_error(
                         tr!(
@@ -1412,6 +1608,10 @@ impl Delegate {
     }
 
     fn show_mode(&self, mode: PanelMode, session: u64, direction: i8) {
+        self.finish_search_input();
+        if mode == PanelMode::Search {
+            self.prepare_search_input();
+        }
         self.ivars().launch_receiver.replace(None);
         if let Some(settings) = self.app_shortcuts_window() {
             settings.window.orderOut(None);
@@ -1425,14 +1625,7 @@ impl Delegate {
         if let Some(windows) = deferred {
             self.install_windows(windows);
         }
-        let workspace = NSWorkspace::sharedWorkspace();
-        if let Some(front) = workspace.frontmostApplication()
-            && front.processIdentifier() != std::process::id() as i32
-            && !self.any_panel_key()
-        {
-            self.ivars().previous_pid.set(front.processIdentifier());
-        }
-        self.sync_displays();
+        self.remember_frontmost_window();
         self.ivars().query.borrow_mut().clear();
         self.ivars().session.set(session);
         self.ivars().mode.set(Some(mode));
@@ -1449,6 +1642,7 @@ impl Delegate {
             self.ivars().current_app_only.set(false);
         }
         self.filter_preserving(preserve);
+        self.sync_displays();
         self.prepare_switch_selection();
         if !self.ivars().demo.get() {
             self.refresh();
@@ -1457,20 +1651,104 @@ impl Delegate {
     }
 
     fn focus_search(&self) {
+        if self.ivars().changing_input_source.replace(true) {
+            return;
+        }
         for ui in self
             .panels()
             .into_iter()
             .filter(|ui| ui.panel.isKeyWindow())
         {
             match self.ivars().mode.get() {
-                Some(PanelMode::Search) if ui.input.currentEditor().is_none() => {
-                    ui.panel.makeFirstResponder(Some(&ui.input));
+                Some(PanelMode::Search) => {
+                    let new_editor = ui.input.currentEditor().is_none();
+                    if new_editor {
+                        ui.panel.makeFirstResponder(Some(&ui.input));
+                    }
+                    let editor = ui
+                        .input
+                        .currentEditor()
+                        .and_then(|editor| editor.downcast::<NSTextView>().ok());
+                    if let Some(editor) = editor
+                        && !NSTextInputClient::hasMarkedText(&*editor)
+                    {
+                        let first_focus = !self.ivars().input_session.borrow().focused;
+                        let source = if first_focus {
+                            input_source::preferred(
+                                self.ivars().config.borrow().input_method,
+                                self.mtm(),
+                            )
+                        } else if new_editor {
+                            self.ivars()
+                                .input_session
+                                .borrow()
+                                .selected
+                                .as_deref()
+                                .and_then(|id| Source::by_id(id, self.mtm()))
+                        } else {
+                            None
+                        };
+                        if let Some(source) = source {
+                            source.select(self.mtm());
+                        }
+                        self.ivars().input_session.borrow_mut().focused = true;
+                        self.remember_search_input();
+                    }
                 }
                 Some(PanelMode::Switch) => {
                     ui.panel.makeFirstResponder(None);
                 }
                 _ => {}
             }
+        }
+        self.ivars().changing_input_source.set(false);
+    }
+
+    fn prepare_search_input(&self) {
+        let current = Source::current(self.mtm()).and_then(|source| source.id());
+        self.ivars()
+            .input_session
+            .borrow_mut()
+            .prepare(current, self.ivars().config.borrow().input_method);
+    }
+
+    fn remember_search_input(&self) {
+        if self.ivars().mode.get() != Some(PanelMode::Search)
+            || !self.any_panel_key()
+            || !self.ivars().input_session.borrow().focused
+        {
+            return;
+        }
+        let current = Source::current(self.mtm()).and_then(|source| source.id());
+        let mut session = self.ivars().input_session.borrow_mut();
+        if session.observe(current)
+            && let Some(id) = &session.selected
+        {
+            input_source::remember(id);
+        }
+    }
+
+    fn finish_search_input(&self) {
+        if !self.ivars().input_session.borrow().focused {
+            self.ivars().input_session.borrow_mut().finish(None);
+            return;
+        }
+        self.remember_search_input();
+        // Do not overwrite a destination app's choice after focus has already moved away.
+        let current = self
+            .any_panel_key()
+            .then(|| Source::current(self.mtm()))
+            .flatten()
+            .and_then(|source| source.id());
+        let previous = self
+            .ivars()
+            .input_session
+            .borrow_mut()
+            .finish(current.as_deref());
+        if let Some(previous) = previous.and_then(|id| Source::by_id(&id, self.mtm())) {
+            self.ivars().changing_input_source.set(true);
+            previous.select(self.mtm());
+            self.ivars().changing_input_source.set(false);
         }
     }
 
@@ -1494,6 +1772,7 @@ impl Delegate {
     }
 
     fn end_session(&self) {
+        self.finish_search_input();
         let state = self.ivars();
         if state.mode.replace(None).is_none() {
             return;
@@ -1540,6 +1819,9 @@ impl Delegate {
     }
 
     fn display_search(&self, session: u64) {
+        if self.ivars().mode.get() != Some(PanelMode::Search) {
+            self.prepare_search_input();
+        }
         let state = self.ivars();
         let selected_id = self.selected_result();
         state.session.set(session);
@@ -1564,9 +1846,15 @@ impl Delegate {
         let anchor = if let Some(id) = state.switch_anchor.get() {
             matches.iter().position(|&index| windows[index].id == id)
         } else {
-            matches
-                .iter()
-                .position(|&index| windows[index].pid == state.previous_pid.get())
+            state
+                .previous_window
+                .get()
+                .and_then(|id| matches.iter().position(|&index| windows[index].id == id))
+                .or_else(|| {
+                    matches
+                        .iter()
+                        .position(|&index| windows[index].pid == state.previous_pid.get())
+                })
         };
         if let Some(selection) = state.switch_selection.borrow_mut().as_mut() {
             selection.install(matches.len(), anchor);
@@ -1901,15 +2189,14 @@ impl Delegate {
     }
 
     fn render_panel(&self, ui: &PanelUi) {
+        let opacity = f64::from(self.ivars().config.borrow().background_opacity) / 100.0;
+        if ui.backdrop.alphaValue() != opacity {
+            ui.backdrop.setAlphaValue(opacity);
+        }
         let query = self.ivars().query.borrow();
         if ui.input.stringValue().to_string() != *query {
             ui.input.setStringValue(&NSString::from_str(&query));
         }
-        ui.scope.setState(if self.ivars().current_app_only.get() {
-            NSControlStateValueOn
-        } else {
-            NSControlStateValueOff
-        });
         drop(query);
         let state = self.ivars();
         let list = &ui.list;
@@ -1921,6 +2208,42 @@ impl Delegate {
         let trusted = accessibility::is_trusted();
         let demo = state.demo.get();
         let switching = state.mode.get() == Some(PanelMode::Switch);
+        let root = ui.panel.contentView().unwrap();
+        let previous_height = root.bounds().size.height;
+        let mut frame = ui.panel.frame();
+        let chrome_height = frame.size.height - previous_height;
+        let visible = ui.panel.screen().map(|screen| screen.visibleFrame());
+        let mut height = panel_height(count, switching, !trusted || demo);
+        if let Some(visible) = visible {
+            height = height.min((visible.size.height - chrome_height).max(1.0));
+        }
+        if (height - previous_height).abs() > 0.5 {
+            // Keep the search field stationary as results shrink; only shift the
+            // top edge when growing would otherwise extend below the display.
+            frame.origin.y += previous_height - height;
+            frame.size.height = height + chrome_height;
+            if let Some(visible) = visible {
+                frame.origin.y = frame.origin.y.clamp(
+                    visible.origin.y,
+                    (visible.origin.y + visible.size.height - frame.size.height)
+                        .max(visible.origin.y),
+                );
+            }
+            ui.panel.setFrame_display(frame, false);
+        }
+        let header: [(&NSView, f64); 2] = [
+            (&ui.input, height - 52.0),
+            (
+                &ui.shortcut_label,
+                height - if switching { 26.0 } else { 44.0 },
+            ),
+        ];
+        for (view, y) in header {
+            let origin = NSPoint::new(view.frame().origin.x, y);
+            if view.frame().origin != origin {
+                view.setFrameOrigin(origin);
+            }
+        }
         let alias_input = state.alias_input.borrow();
         let alias_query = alias_input.text();
         let aliases = state.aliases.borrow();
@@ -1928,8 +2251,6 @@ impl Delegate {
         let unmatched_alias =
             switching && !alias_query.is_empty() && alias_match.position().is_none();
         ui.input.setHidden(switching);
-        ui.scope.setHidden(switching);
-        ui.actions.setHidden(switching);
         ui.mode_label.setHidden(!switching);
         let config = state.config.borrow();
         ui.mode_label
@@ -1984,7 +2305,7 @@ impl Delegate {
             ui.mode_label.setFrame(mode_frame);
         }
         let list_bottom = list_bottom + if switching { ROW_HEIGHT } else { 0.0 };
-        let list_top = if switching { 548.0 } else { LIST_TOP };
+        let list_top = height - if switching { 36.0 } else { HEIGHT - LIST_TOP };
         let list_height = list_top - list_bottom;
         let scroll_frame = rect(10.0, list_bottom, LIST_WIDTH, list_height);
         if ui.scroll.frame() != scroll_frame {
@@ -2046,8 +2367,19 @@ impl Delegate {
                     ),
                 )
             };
-            let heading = label(title, 21.0, rect(40.0, 90.0, 540.0, 38.0), self.mtm());
-            let detail = label(detail, 14.0, rect(40.0, 137.0, 550.0, 96.0), self.mtm());
+            let message_top = ((list_height - 142.0) / 2.0).max(12.0);
+            let heading = label(
+                title,
+                21.0,
+                rect(40.0, message_top, 540.0, 38.0),
+                self.mtm(),
+            );
+            let detail = label(
+                detail,
+                14.0,
+                rect(40.0, message_top + 42.0, 550.0, 96.0),
+                self.mtm(),
+            );
             detail.setTextColor(Some(&NSColor::secondaryLabelColor()));
             detail.setMaximumNumberOfLines(4);
             list.addSubview(&heading);
@@ -2171,8 +2503,9 @@ impl Delegate {
             ROW_HEIGHT - 2.0,
         );
         // SAFETY: WindowRowButton inherits NSButton's designated frame initializer.
-        let button: Retained<WindowRowButton> =
-            unsafe { msg_send![WindowRowButton::alloc(mtm), initWithFrame: frame] };
+        let button: Retained<WindowRowButton> = unsafe {
+            msg_send![super(WindowRowButton::alloc(mtm).set_ivars(RowAppearance::default())), initWithFrame: frame]
+        };
         button.setTitle(ns_string!(""));
         button.setBordered(false);
         button.setTag(position as isize);
@@ -2181,21 +2514,23 @@ impl Delegate {
             button.setTarget(Some(self));
             button.setAction(Some(sel!(pickWindow:)));
         }
-        button.setWantsLayer(true);
-        if let Some(layer) = button.layer() {
-            unsafe {
-                let _: () = msg_send![&layer, setCornerRadius: 5.0f64];
-            }
-        }
         let title = label("", 13.0, rect(222.0, 3.0, LIST_WIDTH - 236.0, 20.0), mtm);
         let app = label("", 13.0, rect(42.0, 3.0, 142.0, 20.0), mtm);
+        app.setFont(Some(&NSFont::systemFontOfSize_weight(12.0, unsafe {
+            NSFontWeightMedium
+        })));
         app.setAlignment(NSTextAlignment::Right);
         for field in [&title, &app] {
             field.setMaximumNumberOfLines(1);
             field.setLineBreakMode(NSLineBreakMode::ByTruncatingTail);
             button.addSubview(field);
         }
-        let alias = label("", 12.0, rect(8.0, 3.0, 28.0, 20.0), mtm);
+        let alias = label("", 10.0, rect(8.0, 4.0, 28.0, 18.0), mtm);
+        alias.setAlignment(NSTextAlignment::Center);
+        alias.setFont(Some(&NSFont::monospacedSystemFontOfSize_weight(
+            10.0,
+            unsafe { NSFontWeightSemibold },
+        )));
         button.addSubview(&alias);
         let icon =
             NSImageView::initWithFrame(NSImageView::alloc(mtm), rect(192.0, 3.0, 20.0, 20.0));
@@ -2257,6 +2592,50 @@ impl Delegate {
             .clone()
     }
 
+    fn remember_frontmost_window(&self) {
+        if self.ivars().demo.get() || self.any_panel_key() {
+            return;
+        }
+        if let Some(front) = NSWorkspace::sharedWorkspace().frontmostApplication()
+            && front.processIdentifier() != std::process::id() as i32
+        {
+            let pid = front.processIdentifier();
+            self.ivars().previous_pid.set(pid);
+            self.ivars()
+                .previous_window
+                .set(self.remember_application(pid));
+        }
+    }
+
+    fn remember_application(&self, pid: i32) -> Option<u64> {
+        let id = accessibility::focused_window(pid).or_else(|| {
+            let windows = self.ivars().windows.borrow();
+            let recent = self.ivars().recency.borrow();
+            windows
+                .iter()
+                .filter(|window| window.pid == pid)
+                .min_by_key(|window| {
+                    (
+                        window.minimized,
+                        recent
+                            .iter()
+                            .position(|id| *id == window.id)
+                            .unwrap_or(usize::MAX),
+                    )
+                })
+                .map(|window| window.id)
+        })?;
+        self.remember_window(id);
+        Some(id)
+    }
+
+    fn remember_window(&self, id: u64) {
+        let mut recent = self.ivars().recency.borrow_mut();
+        recent.retain(|previous| *previous != id);
+        recent.insert(0, id);
+        recent.truncate(128);
+    }
+
     fn activate_selected(&self) {
         if let Some(tap) = self.ivars().shortcut_tap.borrow().as_ref() {
             tap.finish(self.ivars().session.get());
@@ -2303,11 +2682,7 @@ impl Delegate {
             ));
             return;
         }
-        let mut recent = self.ivars().recency.borrow_mut();
-        recent.retain(|id| *id != window.id);
-        recent.insert(0, window.id);
-        recent.truncate(128);
-        drop(recent);
+        self.remember_window(window.id);
         let query = self.ivars().query.borrow().trim().to_lowercase();
         if !query.is_empty() {
             let mut preferences = self.ivars().preferences.borrow_mut();
@@ -2478,6 +2853,52 @@ fn app_identity(app: &NSRunningApplication) -> Option<AppIdentity> {
 
 fn rect(x: f64, y: f64, width: f64, height: f64) -> NSRect {
     NSRect::new(NSPoint::new(x, y), NSSize::new(width, height))
+}
+fn panel_height(count: usize, switching: bool, extra_controls: bool) -> f64 {
+    let header = if switching { 36.0 } else { HEIGHT - LIST_TOP };
+    let footer =
+        if extra_controls { 64.0 } else { LIST_BOTTOM } + if switching { ROW_HEIGHT } else { 0.0 };
+    let content = if count == 0 {
+        184.0
+    } else {
+        count as f64 * ROW_HEIGHT + 8.0
+    };
+    (header + footer + content).clamp(280.0, HEIGHT)
+}
+pub(crate) fn panel_backdrop(frame: NSRect, mtm: MainThreadMarker) -> Retained<NSVisualEffectView> {
+    let backdrop = NSVisualEffectView::initWithFrame(NSVisualEffectView::alloc(mtm), frame);
+    backdrop.setMaterial(NSVisualEffectMaterial::Popover);
+    backdrop.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
+    backdrop.setState(NSVisualEffectState::Active);
+    let resize =
+        NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable;
+    backdrop.setAutoresizingMask(resize);
+    // SAFETY: PanelSurface inherits NSView's frame initializer.
+    let surface: Retained<PanelSurface> =
+        unsafe { msg_send![PanelSurface::alloc(mtm), initWithFrame: backdrop.bounds()] };
+    surface.setAutoresizingMask(resize);
+    backdrop.addSubview(&surface);
+    backdrop
+}
+
+fn tint(rgb: u32, alpha: f64) -> Retained<NSColor> {
+    NSColor::colorWithSRGBRed_green_blue_alpha(
+        ((rgb >> 16) & 0xff) as f64 / 255.0,
+        ((rgb >> 8) & 0xff) as f64 / 255.0,
+        (rgb & 0xff) as f64 / 255.0,
+        alpha,
+    )
+}
+fn selection_gradient() -> &'static NSGradient {
+    static GRADIENT: std::sync::OnceLock<Retained<NSGradient>> = std::sync::OnceLock::new();
+    GRADIENT.get_or_init(|| {
+        NSGradient::initWithStartingColor_endingColor(
+            NSGradient::alloc(),
+            &tint(0x2855e8, 1.0),
+            &tint(0x087f98, 1.0),
+        )
+        .unwrap()
+    })
 }
 fn set_label(field: &NSTextField, text: &str) {
     if field.stringValue().to_string() != text {

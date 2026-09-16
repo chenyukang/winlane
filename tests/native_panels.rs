@@ -5,6 +5,10 @@
 mod main_wake;
 
 #[cfg(target_os = "macos")]
+#[path = "../src/input_source.rs"]
+mod input_source;
+
+#[cfg(target_os = "macos")]
 mod accessibility {
     include!("../src/accessibility.rs");
 
@@ -252,16 +256,46 @@ mod app {
         verify_distinct_window_aliases(mtm);
         let delegate = Delegate::new(mtm);
         crate::settings::verify_localized_settings(&delegate, mtm);
+        verify_autosave(mtm);
+        for language in ["en", "zh"] {
+            if let Some(source) = Source::for_language(language, mtm) {
+                let id = source
+                    .id()
+                    .expect("language source needs a stable identifier");
+                assert_eq!(
+                    Source::by_id(&id, mtm).and_then(|source| source.id()),
+                    Some(id)
+                );
+            }
+        }
+        assert!(Source::by_id("example.test.missing-input-source", mtm).is_none());
         crate::app_shortcuts::verify_hidden_settings(&delegate, mtm);
         crate::installed_apps::verify_catalog();
         verify_catalog_refresh(mtm);
         verify_launch_search(mtm);
+        verify_shortcut_recency(mtm);
+        verify_adaptive_panels(mtm);
         delegate.ivars().demo.set(true);
         delegate.ivars().windows.replace(demo_windows());
         delegate.ivars().mode.set(Some(PanelMode::Search));
         delegate.sync_displays();
         delegate.filter();
         let panels = delegate.panels();
+        for policy in [
+            winlane::input_method::InputMethod::English,
+            winlane::input_method::InputMethod::Chinese,
+        ] {
+            delegate.ivars().config.borrow_mut().input_method = policy;
+            delegate.prepare_search_input();
+            delegate.focus_search();
+            assert!(
+                !delegate.ivars().input_session.borrow().focused,
+                "hidden panels must never change or remember input sources"
+            );
+            delegate.finish_search_input();
+        }
+        delegate.ivars().config.borrow_mut().input_method =
+            winlane::input_method::InputMethod::Current;
         let mut distinct_frames = Vec::new();
         for screen in screens.iter() {
             if !distinct_frames.contains(&screen.frame()) {
@@ -345,16 +379,21 @@ mod app {
             assert_eq!(rows[0].title.stringValue().to_string(), "Updated title");
             assert_eq!(rows[0].icon.image(), rows[1].icon.image());
         }
-        let scope = &panels.last().unwrap().scope;
-        scope.setState(NSControlStateValueOn);
+        let scope = delegate.menu_item("Current app only", sel!(toggleScope:), "");
+        delegate.ivars().query.replace(String::new());
         unsafe {
-            let _: () = msg_send![&*delegate, changeScope: &**scope];
+            let _: () = msg_send![&*delegate, toggleScope: &*scope];
+            let _: bool = msg_send![&*delegate, validateMenuItem: &*scope];
         }
-        assert!(
-            panels
-                .iter()
-                .all(|ui| ui.scope.state() == NSControlStateValueOn)
-        );
+        assert!(delegate.ivars().current_app_only.get());
+        assert_eq!(scope.state(), NSControlStateValueOn);
+        assert!(panels.iter().all(|ui| ui.list.subviews().len() == 2));
+        unsafe {
+            let _: () = msg_send![&*delegate, toggleScope: &*scope];
+            let _: bool = msg_send![&*delegate, validateMenuItem: &*scope];
+        }
+        assert!(!delegate.ivars().current_app_only.get());
+        assert_eq!(scope.state(), NSControlStateValueOff);
         delegate.ivars().mode.set(Some(PanelMode::Switch));
         delegate.render();
         assert!(
@@ -375,6 +414,35 @@ mod app {
                 .iter()
                 .all(|ui| !ui.input.isHidden() && ui.mode_label.isHidden())
         );
+        for mode in [PanelMode::Search, PanelMode::Switch] {
+            delegate.ivars().mode.set(Some(mode));
+            for percent in [0, 50, 100] {
+                delegate.ivars().config.borrow_mut().background_opacity = percent;
+                delegate.render();
+                for ui in &panels {
+                    let root = ui.panel.contentView().unwrap();
+                    assert!(!ui.panel.isOpaque());
+                    assert_eq!(ui.panel.alphaValue(), 1.0);
+                    assert_eq!(root.alphaValue(), 1.0);
+                    assert_eq!(ui.backdrop.alphaValue(), f64::from(percent) / 100.0);
+                    assert_eq!(ui.backdrop.frame(), root.bounds());
+                    assert_eq!(
+                        ui.backdrop.subviews().objectAtIndex(0).frame(),
+                        ui.backdrop.bounds()
+                    );
+                    assert_eq!(ui.input.alphaValue(), 1.0);
+                    assert_eq!(unsafe { ui.input.superview() }, Some(root.clone()));
+                    for row in ui.rows.borrow().iter() {
+                        assert_eq!(row.button.alphaValue(), 1.0);
+                        assert_eq!(row.title.alphaValue(), 1.0);
+                        assert_eq!(row.icon.alphaValue(), 1.0);
+                    }
+                    assert!(!ui.panel.isVisible());
+                }
+            }
+        }
+        delegate.ivars().mode.set(Some(PanelMode::Search));
+        delegate.render();
         let ids: Vec<_> = panels.iter().map(|ui| ui.panel.windowNumber()).collect();
         delegate.sync_displays();
         assert_eq!(
@@ -401,6 +469,153 @@ mod app {
         println!(
             "Native panel checks passed on {} display(s): placement, shared query/scope/mode/alias, reuse; no panels shown or shortcuts registered.",
             panels.len()
+        );
+    }
+
+    fn verify_autosave(mtm: MainThreadMarker) {
+        let previous_locale = winlane::i18n::locale();
+        winlane::i18n::set_locale(winlane::i18n::Locale::English);
+        let domain = NSString::from_str(&format!(
+            "com.example.winlane-autosave-test-{}",
+            std::process::id()
+        ));
+        let store =
+            NSUserDefaults::initWithSuiteName(NSUserDefaults::alloc(), Some(&domain)).unwrap();
+        store.removePersistentDomainForName(&domain);
+        let delegate = Delegate::new(mtm);
+        delegate.ivars().config_store.set(store.clone()).unwrap();
+        let settings = delegate.ensure_settings_window();
+        settings.fill(&Config::default());
+        let saved = || {
+            let text = store
+                .stringForKey(ns_string!("WindowlanePreferencesV1"))
+                .unwrap();
+            let saved = Config::from_json(&text.to_string()).unwrap();
+            assert_eq!(saved, *delegate.ivars().config.borrow());
+            assert!(
+                delegate.ivars().shortcut_tap.borrow().is_none(),
+                "ordinary settings must not register a keyboard tap"
+            );
+            saved
+        };
+        crate::settings::verify_autosave_controls(&settings, saved);
+        unsafe {
+            let _: () = msg_send![&*delegate, resetSettings: None::<&AnyObject>];
+        }
+        assert_eq!(
+            saved(),
+            Config::default(),
+            "Restore Defaults must persist immediately"
+        );
+        let seed = Config {
+            app_shortcuts: vec![winlane::config::AppShortcut {
+                application: ApplicationTarget {
+                    bundle_id: "com.example.browser".into(),
+                    path: "/Applications/Example Browser.app".into(),
+                    name: "Browser".into(),
+                },
+                shortcut: winlane::config::Shortcut {
+                    command: true,
+                    control: false,
+                    option: false,
+                    shift: false,
+                    key: "Digit1".into(),
+                },
+            }],
+            ..Config::default()
+        };
+        delegate.ivars().config.replace(seed.clone());
+        crate::settings::save(&seed, &store).unwrap();
+        let shortcuts = delegate.ensure_app_shortcuts_window();
+        shortcuts.fill(&seed.app_shortcuts, &delegate, mtm);
+        crate::app_shortcuts::verify_autosave_target(&shortcuts, &delegate, mtm, saved);
+        assert!(!settings.window.isVisible() && !shortcuts.window.isVisible());
+        store.removePersistentDomainForName(&domain);
+        winlane::i18n::set_locale(previous_locale);
+        println!(
+            "Autosave checks passed: native actions persisted to an isolated preferences domain; invalid values and conflicts preserved prior settings; no keyboard taps installed."
+        );
+    }
+
+    fn verify_adaptive_panels(mtm: MainThreadMarker) {
+        let delegate = Delegate::new(mtm);
+        let state = delegate.ivars();
+        state.demo.set(true);
+        for mode in [PanelMode::Search, PanelMode::Switch] {
+            state.mode.set(Some(mode));
+            let mut heights = Vec::new();
+            let mut top_edges = Vec::new();
+            for count in [24, 14, 7, 1, 0] {
+                state.windows.replace(
+                    (0..count)
+                        .map(|id| WindowInfo {
+                            id,
+                            pid: -1,
+                            app: "Browser".into(),
+                            title: format!("Window {id}"),
+                            minimized: false,
+                        })
+                        .collect(),
+                );
+                delegate.filter();
+                if state.panels.borrow().is_empty() {
+                    delegate.sync_displays();
+                    delegate.render();
+                }
+                for (index, ui) in delegate.panels().iter().enumerate() {
+                    let frame = ui.panel.frame();
+                    let root = ui.panel.contentView().unwrap();
+                    let top = frame.origin.y + frame.size.height;
+                    if count == 24 {
+                        top_edges.push(top);
+                    }
+                    assert!(
+                        (top - top_edges[index]).abs() < 1.0,
+                        "filtering must preserve the panel's top edge"
+                    );
+                    assert!(
+                        ui.scroll.frame().origin.y
+                            >= ui.footer.frame().origin.y + ui.footer.frame().size.height
+                    );
+                    if mode == PanelMode::Search {
+                        assert!(
+                            ui.input.frame().origin.y + ui.input.frame().size.height
+                                <= root.bounds().size.height
+                        );
+                        assert!(
+                            ui.scroll.frame().origin.y + ui.scroll.frame().size.height
+                                <= ui.input.frame().origin.y - 8.0
+                        );
+                    }
+                    for label in ui.empty_labels.borrow().iter() {
+                        assert!(label.frame().origin.y >= 0.0);
+                        assert!(
+                            label.frame().origin.y + label.frame().size.height
+                                <= ui.scroll.frame().size.height,
+                            "empty-state text must fit without scrolling"
+                        );
+                    }
+                    assert!(!ui.panel.isVisible());
+                }
+                heights.push(
+                    delegate.panels()[0]
+                        .panel
+                        .contentView()
+                        .unwrap()
+                        .bounds()
+                        .size
+                        .height,
+                );
+            }
+            assert!(
+                heights[1] < heights[0],
+                "fourteen items should be shorter than the capped list"
+            );
+            assert!(heights[2] < heights[1]);
+            assert!(heights[3] < heights[2]);
+        }
+        println!(
+            "Adaptive panel checks passed: two modes, 0/1/7/14/24 items, fixed top edge and visible controls."
         );
     }
 
@@ -699,7 +914,12 @@ mod app {
         let windows: Vec<_> = demo_windows()
             .into_iter()
             .cycle()
-            .take(22)
+            .take(
+                std::env::var("WINLANE_PREVIEW_WINDOWS")
+                    .ok()
+                    .and_then(|count| count.parse().ok())
+                    .unwrap_or(22),
+            )
             .enumerate()
             .map(|(index, mut window)| {
                 window.id = index as u64;

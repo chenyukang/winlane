@@ -425,6 +425,19 @@ fn scan_application(
         .collect())
 }
 
+pub fn focused_window(pid: i32) -> Option<u64> {
+    let application = Element::application(pid)?;
+    // This runs on the shortcut path: use one bounded read, without discovery
+    // or retries when the foreground application is busy.
+    application.set_timeout(0.02);
+    let value = application.attribute_once("AXFocusedWindow").ok()?;
+    // SAFETY: The owned attribute is checked before treating it as an AX element.
+    if unsafe { CFGetTypeID(value.as_CFTypeRef()) } != unsafe { AXUIElementGetTypeID() } {
+        return None;
+    }
+    Some(Element(value).id(pid))
+}
+
 pub fn list_windows(apps: &[(i32, String)]) -> Vec<WindowInfo> {
     if !is_trusted() {
         return Vec::new();

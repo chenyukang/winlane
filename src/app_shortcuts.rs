@@ -211,33 +211,18 @@ impl AppShortcutsWindow {
             rect(30.0, 89.0, 640.0, 24.0),
             mtm,
         ));
-        let message = hint(
-            tr!(
-                "保存后生效，重启 Winlane 会保留绑定。",
-                "Save to apply. Shortcuts are kept after restarting Winlane."
-            ),
-            rect(30.0, 42.0, 480.0, 43.0),
+        let message = NSTextField::wrappingLabelWithString(
+            &NSString::from_str(tr!(
+                "有效的快捷键自动保存，重启后保留。",
+                "Valid shortcuts save automatically and persist after restarting Winlane."
+            )),
             mtm,
         );
+        message.setFont(Some(&NSFont::systemFontOfSize(12.0)));
+        message.setTextColor(Some(&NSColor::secondaryLabelColor()));
+        message.setFrame(rect(30.0, 42.0, 640.0, 43.0));
         message.setMaximumNumberOfLines(2);
         root.addSubview(&message);
-        let save = button(
-            tr!("保存快捷键", "Save Shortcuts"),
-            target,
-            sel!(saveAppShortcuts:),
-            rect(530.0, 42.0, 140.0, 30.0),
-            mtm,
-        );
-        save.setTranslatesAutoresizingMaskIntoConstraints(false);
-        root.addSubview(&save);
-        NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&[
-            save.trailingAnchor()
-                .constraintEqualToAnchor_constant(&root.trailingAnchor(), -30.0),
-            save.widthAnchor().constraintEqualToConstant(140.0),
-            save.heightAnchor().constraintEqualToConstant(30.0),
-            save.firstBaselineAnchor()
-                .constraintEqualToAnchor(&message.firstBaselineAnchor()),
-        ]));
         Self {
             window,
             document,
@@ -279,8 +264,8 @@ impl AppShortcutsWindow {
         self.fill(items, target, mtm);
         self.report(
             tr!(
-                "保存后生效，重启 Winlane 会保留绑定。",
-                "Save to apply. Shortcuts are kept after restarting Winlane."
+                "有效的快捷键自动保存，重启后保留。",
+                "Valid shortcuts save automatically and persist after restarting Winlane."
             ),
             false,
         );
@@ -328,6 +313,7 @@ impl AppShortcutsWindow {
             shift: false,
             key,
         });
+        shortcut.on_change(target, sel!(appShortcutsChanged:));
         let row = Rc::new(AppShortcutRow {
             view,
             choose,
@@ -406,11 +392,7 @@ impl AppShortcutsWindow {
                 match target_at_url(&url) {
                     Ok(application) => {
                         row.set_application(application);
-                        message.setStringValue(&NSString::from_str(tr!(
-                            "应用已选择，点击保存后生效。",
-                            "App selected. Save to apply."
-                        )));
-                        message.setTextColor(Some(&NSColor::secondaryLabelColor()));
+                        row.shortcut.notify_changed();
                     }
                     Err(error) => {
                         message.setStringValue(&NSString::from_str(&error));
@@ -426,18 +408,12 @@ impl AppShortcutsWindow {
         self.rows
             .borrow()
             .iter()
-            .enumerate()
-            .map(|(index, row)| {
-                Ok(AppShortcut {
-                    shortcut: row.shortcut.read()?,
-                    application: row.application.borrow().clone().ok_or_else(|| {
-                        trf!(
-                            "请为第 {} 个快捷键选择应用。",
-                            "Choose an app for shortcut {}.",
-                            index + 1
-                        )
-                    })?,
-                })
+            .filter_map(|row| {
+                let application = row.application.borrow().clone()?;
+                Some(row.shortcut.read().map(|shortcut| AppShortcut {
+                    shortcut,
+                    application,
+                }))
             })
             .collect()
     }

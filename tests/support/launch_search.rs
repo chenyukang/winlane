@@ -1,3 +1,103 @@
+fn verify_shortcut_recency(mtm: MainThreadMarker) {
+    let delegate = Delegate::new(mtm);
+    let state = delegate.ivars();
+    // The hidden test process stands in for the launch completion's target;
+    // no user application is activated and no keyboard shortcut is registered.
+    let target_pid = std::process::id() as i32;
+    state.windows.replace(
+        [
+            (10, target_pid),
+            (11, target_pid),
+            (20, -20),
+            (21, -20),
+            (30, -30),
+        ]
+        .into_iter()
+        .map(|(id, pid)| WindowInfo {
+            id,
+            pid,
+            app: format!("Application {pid}"),
+            title: format!("Window {id}"),
+            minimized: false,
+        })
+        .collect(),
+    );
+    for origin in [LaunchOrigin::Shortcut, LaunchOrigin::Search] {
+        state.recency.replace(vec![20, 11, 30, 10, 21]);
+        // Capture the exact departing project window, even when a sibling
+        // window of the same application is already in the history.
+        delegate.remember_window(21);
+        for _ in 0..2 {
+            let (tx, rx) = mpsc::channel();
+            state.launch_receiver.replace(Some(PendingLaunch {
+                receiver: rx,
+                origin,
+            }));
+            let before = state.recency.borrow().clone();
+            delegate.poll_app_launch();
+            assert_eq!(
+                *state.recency.borrow(),
+                before,
+                "pending launches are not visits"
+            );
+            tx.send(Ok(target_pid)).unwrap();
+            delegate.poll_app_launch();
+            state.previous_pid.set(target_pid);
+            state.previous_window.set(Some(11));
+            state.mode.set(Some(PanelMode::Switch));
+            state
+                .switch_selection
+                .replace(Some(SwitchSelection::new(1)));
+            delegate.filter();
+            delegate.prepare_switch_selection();
+            let ordered: Vec<_> = state
+                .matches
+                .borrow()
+                .iter()
+                .map(|&index| state.windows.borrow()[index].id)
+                .collect();
+            assert_eq!(
+                ordered,
+                [11, 21, 20, 30, 10],
+                "app shortcuts must update MRU without grouping sibling windows"
+            );
+            assert_eq!(state.selected.get(), 1);
+            assert_eq!(delegate.selected_window().unwrap().id, 21);
+        }
+        // Simulate accepting the second entry, then opening the switcher again.
+        delegate.remember_window(21);
+        state.previous_pid.set(-20);
+        state.previous_window.set(Some(21));
+        state
+            .switch_selection
+            .replace(Some(SwitchSelection::new(1)));
+        delegate.filter();
+        delegate.prepare_switch_selection();
+        assert_eq!(state.recency.borrow()[..2], [21, 11]);
+        assert_eq!(delegate.selected_window().unwrap().id, 11);
+
+        state
+            .switch_selection
+            .replace(Some(SwitchSelection::new(-1)));
+        delegate.prepare_switch_selection();
+        assert_eq!(
+            delegate.selected_window().unwrap().id,
+            10,
+            "reverse cycling must still wrap"
+        );
+    }
+    let before = state.recency.borrow().clone();
+    assert_eq!(delegate.remember_application(-999), None);
+    assert_eq!(
+        *state.recency.borrow(),
+        before,
+        "missing apps must not change history"
+    );
+    println!(
+        "Recency checks passed: shortcut/search launches, departing project window, repeat shortcut, toggle back, reverse cycle, pending and missing targets."
+    );
+}
+
 fn verify_catalog_refresh(mtm: MainThreadMarker) {
     let delegate = Delegate::new(mtm);
     let state = delegate.ivars();
