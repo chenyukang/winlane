@@ -1,5 +1,5 @@
 use crate::i18n::Language;
-use crate::search::{WindowInfo, rank};
+use crate::search::{Query, WindowInfo, rank};
 use crate::{tr, trf};
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 use serde::{Deserialize, Serialize};
@@ -565,6 +565,20 @@ pub fn visible_matches(
                 windows[i].app.to_lowercase(),
             )
         }),
+    }
+    if config.sort == SortOrder::Recent {
+        let Some(query) = Query::new(query) else {
+            return Vec::new();
+        };
+        if !query.is_empty() {
+            order.retain(|&i| {
+                let window = &windows[i];
+                query
+                    .score([window.app.as_str(), window.title.as_str()])
+                    .is_some()
+            });
+        }
+        return order;
     }
     let candidates: Vec<_> = order.iter().map(|&i| windows[i].clone()).collect();
     rank(&candidates, query, preferred)

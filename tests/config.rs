@@ -213,6 +213,53 @@ fn exclusions_accept_chinese_punctuation_and_deduplicate_exact_app_names() {
 }
 
 #[test]
+fn recent_search_preserves_window_history_instead_of_match_scores() {
+    let items: Vec<_> = [
+        (1, 20, "Notion", "CKB Dev Log"),
+        (2, 10, "Code", "snapshot2.rs — ckb"),
+        (3, 10, "Code", "ckb.rs — fiber"),
+        (4, 30, "Browser", "Unrelated"),
+    ]
+    .into_iter()
+    .map(|(id, pid, app, title)| WindowInfo {
+        id,
+        pid,
+        app: app.into(),
+        title: title.into(),
+        minimized: false,
+    })
+    .collect();
+    let config = Config::default();
+    for query in ["c", "ck", "ckb", " CKB "] {
+        for preferred in [None, Some(1), Some(3)] {
+            assert_eq!(
+                visible_matches(&items, query, preferred, &config, None, &[2, 1, 3, 4], 10),
+                vec![1, 0, 2],
+                "typing must filter the recent list without reordering it"
+            );
+        }
+    }
+    assert_eq!(
+        visible_matches(&items, "code ckb", None, &config, None, &[3, 1, 2], 10),
+        vec![2, 1],
+        "windows from the same app must have independent recency"
+    );
+    assert!(visible_matches(&items, "missing", None, &config, None, &[2, 1, 3], 10).is_empty());
+    assert!(
+        visible_matches(
+            &items,
+            &"c".repeat(129),
+            None,
+            &config,
+            None,
+            &[2, 1, 3],
+            10
+        )
+        .is_empty()
+    );
+}
+
+#[test]
 fn switch_delay_migrates_and_bounds_the_hold_interval() {
     assert_eq!(Config::from_json("{}").unwrap().switch_delay_ms, 100);
     for delay in [0, 100, 350, 1000] {
