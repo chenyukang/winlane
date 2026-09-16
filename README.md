@@ -13,7 +13,7 @@ You need **macOS 14 or later**. Tagged builds are distributed through [GitHub Re
 - **arm64** for Apple Silicon Macs.
 - **x86_64** for Intel Macs.
 
-Open the DMG and drag Winlane to Applications, or extract the ZIP and move `Winlane.app` there. Quit an existing copy before replacing it, and keep the same installation location for updates. Each release includes SHA-256 checksums and its signing status. Until the first release is published, use the source build below.
+Open the DMG and drag Winlane to Applications, or extract the ZIP and move `Winlane.app` there. Quit an existing copy before replacing it, and keep the same installation location for updates. Each release includes SHA-256 checksums and its signing status.
 
 If a release is marked **ad hoc / not notarized**, macOS may block the first launch. After verifying the download, use **System Settings → Privacy & Security → Open Anyway**. These builds may need Accessibility permission again after an update. Developer ID signed and notarized releases avoid the ad hoc identity changes.
 
