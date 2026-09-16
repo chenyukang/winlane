@@ -1,3 +1,83 @@
+fn verify_catalog_refresh(mtm: MainThreadMarker) {
+    let delegate = Delegate::new(mtm);
+    let state = delegate.ivars();
+    state.mode.set(Some(PanelMode::Search));
+    for query in ["", "   "] {
+        state.query.replace(query.into());
+        delegate.ensure_app_catalog();
+        assert!(
+            state.catalog_receiver.borrow().is_none(),
+            "empty search must not scan apps"
+        );
+    }
+    state.query.replace("browser".into());
+    state.current_app_only.set(true);
+    delegate.ensure_app_catalog();
+    assert!(
+        state.catalog_receiver.borrow().is_none(),
+        "window-only scope must not scan apps"
+    );
+    state.current_app_only.set(false);
+    state.mode.set(Some(PanelMode::Switch));
+    delegate.ensure_app_catalog();
+    assert!(
+        state.catalog_receiver.borrow().is_none(),
+        "switch mode must not scan apps"
+    );
+    state.mode.set(Some(PanelMode::Search));
+    state
+        .catalog_checked
+        .set(Some(Instant::now() - Duration::from_secs(5 * 60)));
+    delegate.ensure_app_catalog();
+    assert!(
+        state.catalog_receiver.borrow().is_none(),
+        "reuse a five-minute-old catalog"
+    );
+
+    let input =
+        NSSearchField::initWithFrame(NSSearchField::alloc(mtm), rect(0.0, 0.0, 200.0, 28.0));
+    for checked in [None, Some(Instant::now() - Duration::from_secs(11 * 60))] {
+        state.catalog_checked.set(checked);
+        state.query.borrow_mut().clear();
+        input.setStringValue(ns_string!("browser"));
+        let notification = unsafe {
+            NSNotification::notificationWithName_object(
+                ns_string!("NSControlTextDidChangeNotification"),
+                Some(&input),
+            )
+        };
+        unsafe {
+            let _: () = msg_send![&*delegate, controlTextDidChange: &*notification];
+        }
+        assert!(
+            state.catalog_receiver.borrow().is_some(),
+            "typing must refresh a missing or expired catalog"
+        );
+        let apps = state
+            .catalog_receiver
+            .borrow_mut()
+            .take()
+            .unwrap()
+            .recv_timeout(Duration::from_secs(15))
+            .expect("catalog scan must complete");
+        let (tx, rx) = mpsc::channel();
+        state.catalog_receiver.replace(Some(rx));
+        delegate.ensure_app_catalog();
+        tx.send(apps).expect("a pending scan must not be replaced");
+        delegate.poll_app_catalog();
+        assert!(state.catalog_receiver.borrow().is_none());
+        assert!(state.catalog_checked.get().unwrap().elapsed() < Duration::from_secs(5));
+        delegate.filter();
+        assert!(
+            state.catalog_receiver.borrow().is_none(),
+            "completed scans must be reused"
+        );
+    }
+    println!(
+        "Catalog refresh checks passed: demand, scope, ten-minute cache, in-flight reuse, completion."
+    );
+}
+
 fn verify_launch_search(mtm: MainThreadMarker) {
     let delegate = Delegate::new(mtm);
     let state = delegate.ivars();

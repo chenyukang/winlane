@@ -36,6 +36,7 @@ const ROW_HEIGHT: f64 = 28.0;
 const LIST_TOP: f64 = 484.0;
 const LIST_BOTTOM: f64 = 36.0;
 const LIST_WIDTH: f64 = WIDTH - 20.0;
+const APP_CATALOG_TTL: Duration = Duration::from_secs(10 * 60);
 
 struct PanelUi {
     display_id: u32,
@@ -901,9 +902,17 @@ impl Delegate {
                 defer: false]
         };
         unsafe { panel.setReleasedWhenClosed(false) };
-        panel.setTitle(ns_string!("Winlane"));
         panel.setTitleVisibility(NSWindowTitleVisibility::Hidden);
         panel.setTitlebarAppearsTransparent(true);
+        for button in [
+            NSWindowButton::CloseButton,
+            NSWindowButton::MiniaturizeButton,
+            NSWindowButton::ZoomButton,
+        ] {
+            if let Some(button) = panel.standardWindowButton(button) {
+                button.setHidden(true);
+            }
+        }
         panel.setLevel(NSFloatingWindowLevel);
         panel.setCollectionBehavior(
             NSWindowCollectionBehavior::CanJoinAllSpaces
@@ -923,9 +932,6 @@ impl Delegate {
         root.setState(NSVisualEffectState::Active);
         panel.setContentView(Some(&root));
 
-        let brand = label("Winlane", 13.0, rect(90.0, 556.0, 270.0, 20.0), mtm);
-        brand.setTextColor(Some(&NSColor::secondaryLabelColor()));
-        root.addSubview(&brand);
         let shortcut = label(
             &self.ivars().config.borrow().shortcut.display(),
             11.0,
@@ -1442,7 +1448,6 @@ impl Delegate {
         if mode == PanelMode::Switch {
             self.ivars().current_app_only.set(false);
         }
-        self.ensure_app_catalog();
         self.filter_preserving(preserve);
         self.prepare_switch_selection();
         if !self.ivars().demo.get() {
@@ -1545,7 +1550,6 @@ impl Delegate {
         if let Some(windows) = deferred {
             self.install_windows(windows);
         }
-        self.ensure_app_catalog();
         self.filter_preserving(selected_id);
         self.focus_search();
     }
@@ -1725,11 +1729,13 @@ impl Delegate {
         let state = self.ivars();
         if state.demo.get()
             || state.mode.get() != Some(PanelMode::Search)
+            || state.current_app_only.get()
+            || state.query.borrow().trim().is_empty()
             || state.catalog_receiver.borrow().is_some()
             || state
                 .catalog_checked
                 .get()
-                .is_some_and(|at| at.elapsed() < Duration::from_secs(60))
+                .is_some_and(|at| at.elapsed() < APP_CATALOG_TTL)
         {
             return;
         }
@@ -1771,6 +1777,7 @@ impl Delegate {
     }
 
     fn filter_preserving(&self, selected_id: Option<SelectedResult>) {
+        self.ensure_app_catalog();
         let query = self.ivars().query.borrow().clone();
         let preferred = self
             .ivars()

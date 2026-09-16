@@ -91,6 +91,8 @@ Switching across Spaces depends on macOS Mission Control settings and the target
 
 Installed-app search reads Applications directories and the Spotlight index. Apps outside those directories may be missing until indexed. Helpers, internal components, Trash contents, and mounted installer images are excluded.
 
+The catalog is loaded when searching with a nonempty query outside the current-app-only scope, then cached for ten minutes. Subsequent searches use the cached results while an expired catalog updates in the background. Press Command-R with a search query to refresh it immediately, for example after installing an app.
+
 Other keyboard tools can intercept a shortcut before Winlane receives it. If one binding fails while others work, check for remapping rules or competing global shortcuts. Changing Winlane's own bindings does not change those external rules.
 
 ## Local state

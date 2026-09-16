@@ -254,6 +254,7 @@ mod app {
         crate::settings::verify_localized_settings(&delegate, mtm);
         crate::app_shortcuts::verify_hidden_settings(&delegate, mtm);
         crate::installed_apps::verify_catalog();
+        verify_catalog_refresh(mtm);
         verify_launch_search(mtm);
         delegate.ivars().demo.set(true);
         delegate.ivars().windows.replace(demo_windows());
