@@ -29,7 +29,19 @@ fn switch_cycles_and_commits_once_on_primary_modifier_release() {
             fresh: true
         }
     );
-    assert_eq!(router.handle(KEY_DOWN, TAB, COMMAND, true), (true, None));
+    assert_eq!(
+        router.handle(KEY_DOWN, TAB, COMMAND, true),
+        (
+            true,
+            Some(Action {
+                session: first.session,
+                kind: ActionKind::Switch {
+                    direction: 1,
+                    fresh: false
+                },
+            })
+        )
+    );
     assert_eq!(router.handle(KEY_UP, TAB, COMMAND, false), (true, None));
     let next = action(&mut router, KEY_DOWN, TAB, COMMAND | SHIFT);
     assert_eq!(next.session, first.session);
@@ -64,6 +76,95 @@ fn space_enters_search_and_releasing_command_does_not_accept() {
     assert_eq!(router.handle(FLAGS_CHANGED, 55, 0, false), (false, None));
     assert_eq!(router.handle(KEY_UP, SPACE, 0, false), (true, None));
     assert_eq!(router.handle(KEY_DOWN, SPACE, 0, false), (false, None));
+}
+
+#[test]
+fn held_navigation_matches_repeated_presses_including_reverse_and_wraparound() {
+    for (switch_key, modifiers, navigation_key) in [
+        (TAB, COMMAND, TAB),
+        (50, COMMAND, 50),
+        (50, COMMAND, TAB),
+        (32, CONTROL, 32),
+        (50, COMMAND, 125),
+        (50, COMMAND, 126),
+    ] {
+        let mut held = ShortcutRouter::new(
+            Binding {
+                key: 34,
+                modifiers: CONTROL,
+            },
+            Binding {
+                key: switch_key,
+                modifiers,
+            },
+        );
+        let first = action(&mut held, KEY_DOWN, switch_key, modifiers);
+        held.handle(KEY_UP, switch_key, modifiers, false);
+        let mut tapped = ShortcutRouter::new(
+            Binding {
+                key: 34,
+                modifiers: CONTROL,
+            },
+            Binding {
+                key: switch_key,
+                modifiers,
+            },
+        );
+        action(&mut tapped, KEY_DOWN, switch_key, modifiers);
+        tapped.handle(KEY_UP, switch_key, modifiers, false);
+        let mut selection = SwitchSelection::new(1);
+        selection.install(4, Some(0));
+        let mut expected = 1_isize;
+        for (index, flags) in [modifiers; 5]
+            .into_iter()
+            .chain([modifiers | SHIFT; 5])
+            .enumerate()
+        {
+            let actual = held.handle(KEY_DOWN, navigation_key, flags, index != 0);
+            let expected_action = tapped.handle(KEY_DOWN, navigation_key, flags, false);
+            assert_eq!(actual, expected_action);
+            let Some(Action {
+                session,
+                kind: ActionKind::Switch { direction, fresh },
+            }) = actual.1
+            else {
+                panic!("holding navigation must keep moving selection");
+            };
+            assert_eq!(session, first.session);
+            assert!(!fresh);
+            selection.step(direction);
+            expected = (expected + isize::from(direction)).rem_euclid(4);
+            assert_eq!(selection.selected(), Some(expected as usize));
+            tapped.handle(KEY_UP, navigation_key, flags, false);
+        }
+        assert_eq!(
+            action(&mut held, FLAGS_CHANGED, 0, 0).kind,
+            ActionKind::Accept
+        );
+        selection.release();
+        assert_eq!(selection.take_commit(), Some(expected as usize));
+        assert_eq!(selection.take_commit(), None);
+        assert_eq!(
+            held.handle(KEY_DOWN, navigation_key, modifiers, true),
+            (true, None)
+        );
+        assert_eq!(held.handle(KEY_UP, navigation_key, 0, false), (true, None));
+    }
+}
+
+#[test]
+fn held_switch_key_stops_navigating_after_search_or_cancel() {
+    for key in [SPACE, ESCAPE, 36] {
+        let mut router = router();
+        action(&mut router, KEY_DOWN, TAB, COMMAND);
+        action(&mut router, KEY_DOWN, key, COMMAND);
+        for _ in 0..3 {
+            assert_eq!(router.handle(KEY_DOWN, TAB, COMMAND, true), (true, None));
+            assert_eq!(router.handle(KEY_DOWN, key, COMMAND, true), (true, None));
+        }
+        assert_eq!(router.handle(FLAGS_CHANGED, 55, 0, false), (false, None));
+        assert_eq!(router.handle(KEY_UP, TAB, 0, false), (true, None));
+    }
 }
 
 #[test]

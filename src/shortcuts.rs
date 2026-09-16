@@ -226,18 +226,24 @@ impl ShortcutRouter {
         if event != KEY_DOWN {
             return (false, None);
         }
-        if self.consumed.contains(&key) {
-            return (true, None);
-        }
         let app_shortcut = self
             .app_shortcuts
             .iter()
             .position(|binding| binding.matches(key, flags, false));
+        let navigation_repeat = repeat
+            && self.consumed.contains(&key)
+            && self.mode == Some(PanelMode::Switch)
+            && app_shortcut.is_none()
+            && !self.search.matches(key, flags, false)
+            && (self.switch.matches(key, flags, true) || matches!(key, TAB | 125 | 126));
+        if self.consumed.contains(&key) && !navigation_repeat {
+            return (true, None);
+        }
         let alias_key = self.mode == Some(PanelMode::Switch)
             && (flags & MODIFIERS & !SHIFT == 0
                 || flags & MODIFIERS & !SHIFT == self.switch.modifiers & !SHIFT)
             && (letter_for_key(key).is_some() || key == 51);
-        if repeat {
+        if repeat && !navigation_repeat {
             let consume = app_shortcut.is_some()
                 || self.search.matches(key, flags, false)
                 || self.switch.matches(key, flags, true)
