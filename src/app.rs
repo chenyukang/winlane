@@ -56,7 +56,7 @@ struct PanelUi {
 }
 
 struct RowUi {
-    button: Retained<NSButton>,
+    button: Retained<WindowRowButton>,
     title: Retained<NSTextField>,
     app: Retained<NSTextField>,
     alias: Retained<NSTextField>,
@@ -241,6 +241,25 @@ define_class!(
     impl ListView {
         #[unsafe(method(isFlipped))]
         fn flipped(&self) -> bool { true }
+    }
+);
+
+define_class!(
+    // SAFETY: This NSButton subclass customizes cursor rectangles on the main thread.
+    #[unsafe(super = NSButton)]
+    #[thread_kind = MainThreadOnly]
+    #[derive(Debug)]
+    struct WindowRowButton;
+    unsafe impl NSObjectProtocol for WindowRowButton {}
+    impl WindowRowButton {
+        #[unsafe(method(resetCursorRects))]
+        fn reset_cursor_rects(&self) {
+            // SAFETY: Preserve NSButton's cursor setup before adding the row's cursor.
+            unsafe { let _: () = msg_send![super(self), resetCursorRects]; }
+            if self.isEnabled() {
+                self.addCursorRect_cursor(self.visibleRect(), &NSCursor::pointingHandCursor());
+            }
+        }
     }
 );
 
@@ -2138,15 +2157,15 @@ impl Delegate {
 
     fn create_row(&self, position: usize) -> RowUi {
         let mtm = self.mtm();
-        let button = NSButton::initWithFrame(
-            NSButton::alloc(mtm),
-            rect(
-                2.0,
-                position as f64 * ROW_HEIGHT + 1.0,
-                LIST_WIDTH - 4.0,
-                ROW_HEIGHT - 2.0,
-            ),
+        let frame = rect(
+            2.0,
+            position as f64 * ROW_HEIGHT + 1.0,
+            LIST_WIDTH - 4.0,
+            ROW_HEIGHT - 2.0,
         );
+        // SAFETY: WindowRowButton inherits NSButton's designated frame initializer.
+        let button: Retained<WindowRowButton> =
+            unsafe { msg_send![WindowRowButton::alloc(mtm), initWithFrame: frame] };
         button.setTitle(ns_string!(""));
         button.setBordered(false);
         button.setTag(position as isize);
