@@ -155,7 +155,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
             background.setBorderWidth(0.0);
             background.setFillColor(&NSColor::windowBackgroundColor());
             view.addSubview_positioned_relativeTo(&background, NSWindowOrderingMode::Below, None);
-            for (tab, name) in [(1, "opacity"), (2, "input")] {
+            for (tab, name) in [(1, "opacity"), (2, "input"), (3, "windows")] {
                 settings.select_tab(tab);
                 view.layoutSubtreeIfNeeded();
                 let bitmap = view
@@ -186,6 +186,13 @@ pub fn verify_autosave_controls(settings: &SettingsWindow, saved: impl Fn() -> C
     let send = |control: &NSControl| unsafe {
         assert!(control.sendAction_to(control.action(), control.target().as_deref()));
     };
+    settings.switch_delay.setStringValue(ns_string!("150"));
+    send(&settings.switch_delay);
+    assert_eq!(saved().switch_delay_ms, 150);
+    settings.switch_delay.setStringValue(ns_string!("1001"));
+    send(&settings.switch_delay);
+    assert_eq!(saved().switch_delay_ms, 150);
+    settings.switch_delay.setStringValue(ns_string!("150"));
     settings.input_method.selectItemAtIndex(1);
     send(&settings.input_method);
     assert_eq!(saved().input_method, InputMethod::English);

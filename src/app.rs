@@ -167,6 +167,7 @@ struct AppState {
     session: Cell<u64>,
     switch_selection: RefCell<Option<SwitchSelection>>,
     switch_anchor: Cell<Option<u64>>,
+    switch_timer: RefCell<Option<Retained<NSTimer>>>,
     deferred_windows: RefCell<Option<Vec<WindowInfo>>>,
     hotkey_error: RefCell<Option<String>>,
     windows: RefCell<Vec<WindowInfo>>,
@@ -390,7 +391,7 @@ define_class!(
             if !self.ivars().panels.borrow().is_empty() {
                 self.sync_displays();
                 self.render();
-                if self.ivars().mode.get().is_some() { self.present_panels(); }
+                if self.ivars().mode.get().is_some() && self.ivars().switch_timer.borrow().is_none() { self.present_panels(); }
             }
         }
     }
@@ -462,6 +463,15 @@ define_class!(
         }
     }
     impl Delegate {
+        #[unsafe(method(presentSwitch:))]
+        fn present_switch(&self, timer: &NSTimer) {
+            self.drain_shortcut_actions();
+            let state = self.ivars();
+            let current = state.switch_timer.borrow().as_ref().is_some_and(|pending| std::ptr::eq(&**pending, timer));
+            if current && state.mode.get() == Some(PanelMode::Switch)
+                && !state.switch_selection.borrow().as_ref().is_some_and(SwitchSelection::released)
+            { self.present_panels(); }
+        }
         #[unsafe(method(workspaceActivated:))]
         fn workspace_activated(&self, _: &NSNotification) { self.track_frontmost(); }
         #[unsafe(method(inputSourceChanged:))]
@@ -624,9 +634,7 @@ define_class!(
                 && !self.any_panel_key()
             { self.end_session(); }
             self.check_shortcuts();
-            let actions: Vec<_> = self.ivars().shortcut_rx.borrow().as_ref()
-                .map(|rx| rx.try_iter().collect()).unwrap_or_default();
-            for action in actions { self.shortcut_action(action); }
+            self.drain_shortcut_actions();
             self.poll_app_launch();
             self.poll_app_catalog();
             let result = self.ivars().receiver.borrow().as_ref().map(|rx| rx.try_recv());
@@ -1036,6 +1044,7 @@ impl Delegate {
     }
 
     fn present_panels(&self) {
+        self.cancel_switch_timer();
         let state = self.ivars();
         state.changing_displays.set(true);
         let panels = self.panels();
@@ -1299,6 +1308,19 @@ impl Delegate {
                     false,
                 );
             }
+        }
+    }
+
+    fn drain_shortcut_actions(&self) {
+        let actions: Vec<_> = self
+            .ivars()
+            .shortcut_rx
+            .borrow()
+            .as_ref()
+            .map(|rx| rx.try_iter().collect())
+            .unwrap_or_default();
+        for action in actions {
+            self.shortcut_action(action);
         }
     }
 
@@ -1625,6 +1647,8 @@ impl Delegate {
     }
 
     fn show_mode(&self, mode: PanelMode, session: u64, direction: i8) {
+        let already_visible = self.any_panel_visible();
+        self.cancel_switch_timer();
         self.finish_search_input();
         if mode == PanelMode::Search {
             self.prepare_search_input();
@@ -1664,7 +1688,42 @@ impl Delegate {
         if !self.ivars().demo.get() {
             self.refresh();
         }
-        self.present_panels();
+        if mode == PanelMode::Switch && !already_visible {
+            self.schedule_switch_panel();
+        } else {
+            self.present_panels();
+        }
+    }
+
+    fn cancel_switch_timer(&self) -> bool {
+        if let Some(timer) = self.ivars().switch_timer.borrow_mut().take() {
+            timer.invalidate();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn schedule_switch_panel(&self) {
+        self.cancel_switch_timer();
+        let delay = self.ivars().config.borrow().switch_delay_ms;
+        if delay == 0 {
+            self.present_panels();
+            return;
+        }
+        // SAFETY: One-shot main-thread timer; invalidated on cancellation, mode
+        // change, or confirmation. Identity checks reject stale callbacks.
+        let timer = unsafe {
+            NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
+                f64::from(delay) / 1000.0,
+                self,
+                sel!(presentSwitch:),
+                None,
+                false,
+            )
+        };
+        unsafe { NSRunLoop::mainRunLoop().addTimer_forMode(&timer, NSRunLoopCommonModes) };
+        self.ivars().switch_timer.replace(Some(timer));
     }
 
     fn focus_search(&self) {
@@ -1789,6 +1848,7 @@ impl Delegate {
     }
 
     fn end_session(&self) {
+        self.cancel_switch_timer();
         self.finish_search_input();
         let state = self.ivars();
         if state.mode.replace(None).is_none() {
@@ -1836,6 +1896,7 @@ impl Delegate {
     }
 
     fn display_search(&self, session: u64) {
+        let was_delayed = self.cancel_switch_timer();
         if self.ivars().mode.get() != Some(PanelMode::Search) {
             self.prepare_search_input();
         }
@@ -1850,6 +1911,9 @@ impl Delegate {
             self.install_windows(windows);
         }
         self.filter_preserving(selected_id);
+        if was_delayed {
+            self.present_panels();
+        }
         self.focus_search();
     }
 

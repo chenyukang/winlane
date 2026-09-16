@@ -43,6 +43,8 @@ Once authorized, Winlane starts quietly in the menu bar. Its menu provides acces
 
 Hold **Command**, press **Tab** to open the switcher, then keep pressing Tab to move through the list. Release Command to switch to the selected window. Add Shift to move backward, or press Esc to cancel.
 
+A quick press and release switches back without showing the panel. Hold the shortcut for 100 ms to see the list; adjust this delay in **Settings → Window List** (0 shows it immediately). Search always opens immediately.
+
 Each row represents an independent window. Separate editor projects appear separately; browser tabs and background helpers do not become extra entries. On multiple displays, the same picker appears on every screen, with a shared selection.
 
 The letters beside each window are its **alias**. Type those letters while holding Command, then release Command to jump directly to that window. Aliases are assigned automatically from English app names, stay unique across windows, and are remembered when Winlane restarts. Additional window aliases may change when the target app closes and creates new windows.

@@ -1,3 +1,63 @@
+fn verify_switch_delay(mtm: MainThreadMarker) {
+    let delegate = Delegate::new(mtm);
+    let state = delegate.ivars();
+    state.mode.set(Some(PanelMode::Switch));
+    state
+        .switch_selection
+        .replace(Some(SwitchSelection::new(1)));
+    delegate.schedule_switch_panel();
+    let first = state.switch_timer.borrow().as_ref().unwrap().clone();
+    assert!(first.isValid());
+    assert!(!delegate.any_panel_visible());
+    state
+        .switch_selection
+        .borrow_mut()
+        .as_mut()
+        .unwrap()
+        .release();
+    first.fire();
+    assert!(!delegate.any_panel_visible());
+    assert!(
+        state.switch_timer.borrow().is_some(),
+        "released gestures must wait for selection without presenting"
+    );
+    delegate.end_session();
+    assert!(!first.isValid());
+    assert!(state.switch_timer.borrow().is_none());
+
+    state.mode.set(Some(PanelMode::Switch));
+    state
+        .switch_selection
+        .replace(Some(SwitchSelection::new(1)));
+    delegate.schedule_switch_panel();
+    let held = state.switch_timer.borrow().as_ref().unwrap().clone();
+    unsafe {
+        let _: () = msg_send![&*delegate, presentSwitch: &*first];
+    }
+    assert!(
+        state.switch_timer.borrow().is_some(),
+        "old callbacks must not reveal a newer gesture"
+    );
+    held.fire();
+    assert!(
+        state.switch_timer.borrow().is_none(),
+        "holding reveals through the normal presentation path"
+    );
+    delegate.schedule_switch_panel();
+    let search = state.switch_timer.borrow().as_ref().unwrap().clone();
+    delegate.display_search(7);
+    assert!(!search.isValid());
+    assert!(state.switch_timer.borrow().is_none());
+    assert_eq!(state.mode.get(), Some(PanelMode::Search));
+    state.config.borrow_mut().switch_delay_ms = 0;
+    delegate.schedule_switch_panel();
+    assert!(state.switch_timer.borrow().is_none());
+    assert!(
+        !delegate.any_panel_visible(),
+        "tests must not create visible windows"
+    );
+}
+
 fn verify_external_focus_history(mtm: MainThreadMarker) {
     let delegate = Delegate::new(mtm);
     let state = delegate.ivars();

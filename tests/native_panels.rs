@@ -278,6 +278,7 @@ mod app {
         verify_launch_search(mtm);
         verify_shortcut_recency(mtm);
         verify_external_focus_history(mtm);
+        verify_switch_delay(mtm);
         verify_adaptive_panels(mtm);
         delegate.ivars().demo.set(true);
         delegate.ivars().windows.replace(demo_windows());

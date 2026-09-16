@@ -186,3 +186,26 @@ fn exclusions_accept_chinese_punctuation_and_deduplicate_exact_app_names() {
         vec![1]
     );
 }
+
+#[test]
+fn switch_delay_migrates_and_bounds_the_hold_interval() {
+    assert_eq!(Config::from_json("{}").unwrap().switch_delay_ms, 100);
+    for delay in [0, 100, 350, 1000] {
+        let config = Config {
+            switch_delay_ms: delay,
+            ..Config::default()
+        };
+        assert_eq!(
+            Config::from_json(&config.to_json().unwrap()).unwrap(),
+            config
+        );
+    }
+    assert!(
+        Config {
+            switch_delay_ms: 1001,
+            ..Config::default()
+        }
+        .validate()
+        .is_err()
+    );
+}

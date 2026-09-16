@@ -301,6 +301,7 @@ pub struct Config {
     pub sort: SortOrder,
     pub appearance: Appearance,
     pub background_opacity: u8,
+    pub switch_delay_ms: u16,
     pub language: Language,
     pub input_method: crate::input_method::InputMethod,
     pub include_minimized: bool,
@@ -316,6 +317,7 @@ impl Default for Config {
             sort: SortOrder::Recent,
             appearance: Appearance::System,
             background_opacity: 100,
+            switch_delay_ms: 100,
             language: Language::System,
             input_method: crate::input_method::InputMethod::default(),
             include_minimized: true,
@@ -330,6 +332,13 @@ impl Config {
             return Err(tr!(
                 "背景不透明度必须在 0–100% 之间。",
                 "Background opacity must be between 0 and 100%."
+            )
+            .into());
+        }
+        if self.switch_delay_ms > 1000 {
+            return Err(tr!(
+                "显示延迟应在 0–1000 毫秒之间。",
+                "Display delay must be between 0 and 1000 ms."
             )
             .into());
         }

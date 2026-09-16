@@ -177,6 +177,7 @@ pub struct SettingsWindow {
     appearance: Retained<NSPopUpButton>,
     opacity_slider: Retained<NSSlider>,
     opacity_input: Retained<NSTextField>,
+    switch_delay: Retained<NSTextField>,
     opacity_preview: Retained<NSVisualEffectView>,
     minimized: Retained<NSButton>,
     excluded: Retained<NSTextField>,
@@ -504,6 +505,29 @@ impl SettingsWindow {
             mtm,
         ));
 
+        windows.addSubview(&label(
+            tr!("切换面板显示延迟（毫秒）", "Switcher display delay (ms)"),
+            13.0,
+            rect(30.0, 45.0, 360.0, 24.0),
+            mtm,
+        ));
+        let switch_delay =
+            NSTextField::initWithFrame(NSTextField::alloc(mtm), rect(480.0, 45.0, 150.0, 26.0));
+        switch_delay
+            .cell()
+            .unwrap()
+            .setSendsActionOnEndEditing(true);
+        set_action(&switch_delay, target, sel!(settingsChanged:));
+        windows.addSubview(&switch_delay);
+        windows.addSubview(&hint(
+            tr!(
+                "快速松键直接切换；0 表示立即显示。",
+                "Quick releases switch directly; 0 shows the panel immediately."
+            ),
+            rect(30.0, 8.0, 600.0, 30.0),
+            mtm,
+        ));
+
         let login = checkbox(tr!("登录时自动启动", "Launch at login"), mtm);
         login.setFrame(rect(30.0, 293.0, 330.0, 27.0));
         set_action(&login, target, sel!(toggleLogin:));
@@ -566,6 +590,7 @@ impl SettingsWindow {
             appearance,
             opacity_slider,
             opacity_input,
+            switch_delay,
             opacity_preview,
             minimized,
             excluded,
@@ -585,6 +610,8 @@ impl SettingsWindow {
                 InputMethod::LastUsed => 3,
             });
         self.set_opacity(config.background_opacity);
+        self.switch_delay
+            .setStringValue(&NSString::from_str(&config.switch_delay_ms.to_string()));
         self.set_app_shortcuts(&config.app_shortcuts);
         self.search_shortcut.fill(&config.shortcut);
         self.switch_shortcut.fill(&config.switch_shortcut);
@@ -629,6 +656,18 @@ impl SettingsWindow {
                 _ => Appearance::System,
             },
             background_opacity: self.read_opacity()?,
+            switch_delay_ms: self
+                .switch_delay
+                .stringValue()
+                .to_string()
+                .trim()
+                .parse()
+                .map_err(|_| {
+                    tr!(
+                        "显示延迟应为 0–1000 的整数。",
+                        "Display delay must be an integer from 0 to 1000."
+                    )
+                })?,
             input_method: match self.input_method.indexOfSelectedItem() {
                 1 => InputMethod::English,
                 2 => InputMethod::Chinese,
