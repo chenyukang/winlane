@@ -59,6 +59,32 @@ impl Query {
         self.tokens.is_empty()
     }
 
+    pub(crate) fn app_name_priority(&self, name: &str) -> u8 {
+        if self.matches_exactly(name) {
+            return 0;
+        }
+        let field = Field::new(name);
+        if self.tokens.iter().all(|token| {
+            field.chars.windows(token.len()).any(|part| part == token)
+                || field.initials.starts_with(token)
+        }) {
+            1
+        } else {
+            2
+        }
+    }
+
+    fn matches_exactly(&self, text: &str) -> bool {
+        let mut words = text.split_whitespace();
+        self.tokens.iter().all(|token| {
+            words.next().is_some_and(|word| {
+                word.chars()
+                    .flat_map(char::to_lowercase)
+                    .eq(token.iter().copied())
+            })
+        }) && words.next().is_none()
+    }
+
     pub(crate) fn score<'a>(&self, fields: impl IntoIterator<Item = &'a str>) -> Option<i32> {
         let fields: Vec<_> = fields.into_iter().map(Field::new).collect();
         self.tokens.iter().try_fold(0, |score, token| {

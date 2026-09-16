@@ -170,6 +170,62 @@ fn each_window_keeps_its_alias_across_order_title_changes_and_winlane_restart() 
 }
 
 #[test]
+fn alias_search_lists_sibling_windows_after_the_target_and_respects_filters() {
+    let identities = HashMap::from([
+        (10, app("code", "Code")),
+        (11, app("code", "Code")),
+        (20, app("other", "Code")),
+        (30, app("browser", "Browser")),
+    ]);
+    let mut windows = vec![
+        window(1, 10),
+        window(2, 10),
+        window(3, 11),
+        window(4, 20),
+        window(5, 30),
+    ];
+    windows[1].minimized = true;
+    let mut aliases = Aliases::from_json(r#"{"code":"co","other":"x","browser":"b"}"#).unwrap();
+    aliases.ensure_windows(&windows, &identities);
+    let order = [4, 2, 3, 1, 0];
+    assert_eq!(
+        aliases.search_order(" Co ", &order, &windows),
+        Some(vec![0, 2, 1])
+    );
+    assert_eq!(aliases.filter_order("co", &order, &windows), Some(vec![0]));
+    assert_eq!(
+        aliases.match_windows("co", &[5, 3, 4, 2, 1]),
+        AliasMatch::Matched(4)
+    );
+    assert_eq!(aliases.search_order("project", &order, &windows), None);
+    assert_eq!(aliases.search_order("co", &[], &windows), Some(vec![]));
+    let config = Config {
+        include_minimized: false,
+        ..Config::default()
+    };
+    let order = visible_matches(&windows, "", None, &config, None, &[3, 2, 1], 10);
+    assert_eq!(
+        aliases.search_order("co", &order, &windows),
+        Some(vec![0, 2])
+    );
+    let order = visible_matches(&windows, "", None, &config, Some(11), &[3, 2, 1], 10);
+    assert_eq!(aliases.search_order("co", &order, &windows), Some(vec![2]));
+    let order = visible_matches(&windows, "", None, &config, Some(20), &[], 10);
+    assert_eq!(aliases.search_order("co", &order, &windows), Some(vec![]));
+    let config = Config {
+        excluded_apps: vec!["App".into()],
+        ..config
+    };
+    let order = visible_matches(&windows, "", None, &config, None, &[], 10);
+    assert_eq!(aliases.search_order("co", &order, &windows), Some(vec![]));
+    let restored = Aliases::from_json(&aliases.to_json()).unwrap();
+    assert_eq!(
+        restored.search_order("co", &[4, 2, 3, 1, 0], &windows),
+        Some(vec![0, 2, 1])
+    );
+}
+
+#[test]
 fn newly_seen_apps_do_not_steal_window_aliases_and_closed_windows_release_theirs() {
     let mut identities = HashMap::from([(42, app("code", "Code"))]);
     let mut windows = vec![window(11, 42), window(12, 42), window(13, 42)];

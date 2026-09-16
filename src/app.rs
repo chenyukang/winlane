@@ -2271,15 +2271,35 @@ impl Delegate {
             &self.ivars().recency.borrow(),
             self.ivars().previous_pid.get(),
         );
-        let matched = aliases
-            .filter_order(&query, &matched, &windows)
-            .unwrap_or(matched);
+        let alias_matches = if self.ivars().mode.get() == Some(PanelMode::Search) {
+            aliases
+                .search_order(&query, &matched, &windows)
+                .map(|mut results| {
+                    let included: HashSet<_> = results.iter().copied().collect();
+                    let text_matches = visible_matches(
+                        &windows,
+                        &query,
+                        preferred,
+                        &self.ivars().config.borrow(),
+                        scope_pid,
+                        &self.ivars().recency.borrow(),
+                        self.ivars().previous_pid.get(),
+                    );
+                    results.extend(
+                        text_matches
+                            .into_iter()
+                            .filter(|index| !included.contains(index)),
+                    );
+                    results
+                })
+        } else {
+            aliases.filter_order(&query, &matched, &windows)
+        };
+        let matched = alias_matches.unwrap_or(matched);
         let apps = self.ivars().installed_apps.borrow();
         let launch_matches = if self.ivars().mode.get() == Some(PanelMode::Search)
             && !self.ivars().demo.get()
             && scope_pid.is_none()
-            && aliases.resolve_window(&query).is_none()
-            && (!aliases.is_alias(&query) || aliases.resolve(&query).is_some())
         {
             let identities = self.ivars().identities.borrow();
             let occupied: HashSet<_> = windows

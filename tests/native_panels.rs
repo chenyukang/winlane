@@ -263,6 +263,7 @@ mod app {
         verify_main_wake(mtm);
         verify_switch_alias_prefix(mtm);
         verify_distinct_window_aliases(mtm);
+        verify_alias_does_not_block_title_search(mtm);
         let delegate = Delegate::new(mtm);
         crate::settings::verify_localized_settings(&delegate, mtm);
         verify_autosave(mtm);
@@ -288,6 +289,7 @@ mod app {
         verify_project_rule_search(mtm);
         verify_adaptive_panels(mtm);
         verify_usage_hint_visibility(mtm);
+        verify_app_name_search(mtm);
         verify_editor_window_titles(mtm);
         delegate.ivars().demo.set(true);
         delegate.ivars().windows.replace(demo_windows());
@@ -663,6 +665,49 @@ mod app {
         );
     }
 
+    fn verify_app_name_search(mtm: MainThreadMarker) {
+        let delegate = Delegate::new(mtm);
+        let state = delegate.ivars();
+        state.demo.set(true);
+        state.mode.set(Some(PanelMode::Search));
+        state.windows.replace(vec![
+            WindowInfo {
+                id: 1,
+                pid: -1,
+                app: "Code".into(),
+                title: "localization.rs (Working Tree) (localization.rs) — windowlane".into(),
+                minimized: false,
+            },
+            WindowInfo {
+                id: 2,
+                pid: -2,
+                app: "Notion".into(),
+                title: "CKB Dev Log".into(),
+                minimized: false,
+            },
+        ]);
+        state.recency.replace(vec![1, 2]);
+        delegate.sync_displays();
+        delegate.filter();
+        assert_eq!(delegate.selected_window().unwrap().id, 1);
+        for query in ["noti", "notion"] {
+            state.query.replace(query.into());
+            delegate.filter();
+            assert_eq!(delegate.selected_window().unwrap().id, 2);
+            assert_eq!(delegate.match_count(), 2);
+            for ui in delegate.panels() {
+                let rows = ui.rows.borrow();
+                assert_eq!(rows[0].app.stringValue().to_string(), "Notion");
+                assert!(rows[0].button.isAccessibilitySelected());
+                assert_eq!(rows[1].app.stringValue().to_string(), "Code");
+                assert!(!ui.panel.isVisible());
+            }
+        }
+        println!(
+            "Partial and exact app-name searches selected Notion ahead of a recent Code fuzzy match on all panels."
+        );
+    }
+
     fn verify_usage_hint_visibility(mtm: MainThreadMarker) {
         let delegate = Delegate::new(mtm);
         let state = delegate.ivars();
@@ -857,6 +902,100 @@ mod app {
         );
     }
 
+    fn verify_alias_does_not_block_title_search(mtm: MainThreadMarker) {
+        let delegate = Delegate::new(mtm);
+        let state = delegate.ivars();
+        state.demo.set(true);
+        state.mode.set(Some(PanelMode::Search));
+        state.automatic_aliases.replace(
+            Aliases::from_json(r#"{"com.apple.finder":"fi","com.microsoft.VSCode":"co"}"#).unwrap(),
+        );
+        state.identities.replace(HashMap::from([
+            (
+                -10,
+                AppIdentity {
+                    id: "com.microsoft.VSCode".into(),
+                    english_name: "Code".into(),
+                },
+            ),
+            (
+                -20,
+                AppIdentity {
+                    id: "com.apple.finder".into(),
+                    english_name: "Finder".into(),
+                },
+            ),
+        ]));
+        let fiber = WindowInfo {
+            id: 1,
+            pid: -10,
+            app: "Code".into(),
+            title: "channel.rs — fiber".into(),
+            minimized: false,
+        };
+        let other = WindowInfo {
+            id: 2,
+            pid: -10,
+            app: "Code".into(),
+            title: "main.rs — rust".into(),
+            minimized: false,
+        };
+        let finder = WindowInfo {
+            id: 3,
+            pid: -20,
+            app: "Finder".into(),
+            title: "Documents".into(),
+            minimized: false,
+        };
+        delegate.install_windows(vec![other.clone(), fiber.clone()]);
+        delegate.sync_displays();
+        for query in ["f", "fi", "fib", "fiber", " FI "] {
+            state.query.replace(query.into());
+            delegate.filter();
+            assert_eq!(
+                delegate.match_count(),
+                1,
+                "a saved alias without a window must not block {query}"
+            );
+            assert_eq!(delegate.selected_window().unwrap().id, 1);
+        }
+        state.query.replace("fi".into());
+        delegate.install_windows(vec![other.clone(), fiber.clone(), finder]);
+        delegate.filter();
+        assert_eq!(
+            delegate.match_count(),
+            2,
+            "a live alias must retain the matching project below it"
+        );
+        assert_eq!(delegate.selected_window().unwrap().id, 3);
+        delegate.move_selection(1);
+        assert_eq!(delegate.selected_window().unwrap().id, 1);
+        delegate.filter_preserving(delegate.selected_result());
+        assert_eq!(delegate.selected_window().unwrap().id, 1);
+        for ui in delegate.panels() {
+            let rows = ui.rows.borrow();
+            assert_eq!(rows[1].title.stringValue().to_string(), "fiber: channel.rs");
+            assert!(rows[1].button.isAccessibilitySelected());
+            assert!(!ui.panel.isVisible());
+        }
+        state.config.borrow_mut().excluded_apps = vec!["Finder".into()];
+        delegate.filter();
+        assert_eq!(delegate.match_count(), 1);
+        assert_eq!(delegate.selected_window().unwrap().id, 1);
+        state.config.borrow_mut().excluded_apps = vec!["Code".into()];
+        delegate.filter();
+        assert_eq!(delegate.match_count(), 1);
+        assert_eq!(delegate.selected_window().unwrap().id, 3);
+        state.config.borrow_mut().excluded_apps.clear();
+        delegate.install_windows(vec![other, fiber]);
+        delegate.filter();
+        assert_eq!(delegate.match_count(), 1);
+        assert_eq!(delegate.selected_window().unwrap().id, 1);
+        println!(
+            "Alias/title search checks passed: fi finds fiber with Finder absent, present, excluded, and closed; selection survives refresh."
+        );
+    }
+
     fn verify_distinct_window_aliases(mtm: MainThreadMarker) {
         let delegate = Delegate::new(mtm);
         let state = delegate.ivars();
@@ -909,10 +1048,32 @@ mod app {
         );
         for (id, alias) in &expected {
             state.mode.set(Some(PanelMode::Search));
+            state.recency.replace(vec![3, 1, 2]);
             state.query.replace(alias.clone());
             delegate.filter();
-            assert_eq!(state.matches.borrow().len(), 1);
+            assert_eq!(state.matches.borrow().len(), 3);
             assert_eq!(delegate.selected_window().unwrap().id, *id);
+            let mut ordered_ids = vec![*id];
+            ordered_ids.extend([3, 1, 2].into_iter().filter(|other| other != id));
+            assert_eq!(
+                state
+                    .matches
+                    .borrow()
+                    .iter()
+                    .map(|&index| state.windows.borrow()[index].id)
+                    .collect::<Vec<_>>(),
+                ordered_ids,
+                "the exact alias leads, followed by sibling windows in recent order"
+            );
+            for ui in delegate.panels() {
+                let rows = ui.rows.borrow();
+                assert!(rows[0].button.isAccessibilitySelected());
+                assert!(rows.iter().take(3).all(|row| row.attached));
+            }
+            delegate.move_selection(1);
+            assert_eq!(delegate.selected_window().unwrap().id, ordered_ids[1]);
+            delegate.filter_preserving(delegate.selected_result());
+            assert_eq!(delegate.selected_window().unwrap().id, ordered_ids[1]);
             state.query.borrow_mut().clear();
             state.mode.set(Some(PanelMode::Switch));
             state

@@ -245,7 +245,7 @@ fn recent_search_preserves_window_history_instead_of_match_scores() {
     })
     .collect();
     let config = Config::default();
-    for query in ["c", "ck", "ckb", " CKB "] {
+    for query in ["ck", "ckb", " CKB "] {
         for preferred in [None, Some(1), Some(3)] {
             assert_eq!(
                 visible_matches(&items, query, preferred, &config, None, &[2, 1, 3, 4], 10),
@@ -254,6 +254,11 @@ fn recent_search_preserves_window_history_instead_of_match_scores() {
             );
         }
     }
+    assert_eq!(
+        visible_matches(&items, "c", None, &config, None, &[2, 1, 3, 4], 10),
+        vec![1, 2, 0],
+        "app-name prefixes precede title matches while preserving per-window recency"
+    );
     assert_eq!(
         visible_matches(&items, "code ckb", None, &config, None, &[3, 1, 2], 10),
         vec![2, 1],
@@ -271,6 +276,116 @@ fn recent_search_preserves_window_history_instead_of_match_scores() {
             10
         )
         .is_empty()
+    );
+}
+
+#[test]
+fn app_name_matches_precede_recent_title_matches_without_reordering_each_group() {
+    let items: Vec<_> = [
+        (
+            1,
+            10,
+            "Code",
+            "localization.rs (Working Tree) (localization.rs) — windowlane",
+        ),
+        (2, 20, "Notion", "CKB Dev Log"),
+        (3, 30, "Browser", "notion"),
+        (4, 20, "Notion", "Notes"),
+    ]
+    .into_iter()
+    .map(|(id, pid, app, title)| WindowInfo {
+        id,
+        pid,
+        app: app.into(),
+        title: title.into(),
+        minimized: false,
+    })
+    .collect();
+    let config = Config::default();
+    let recent = [3, 1, 4, 2];
+    for query in ["notion", "NOTION", "  Notion\t", "noti", "NOT"] {
+        for preferred in [None, Some(1), Some(3)] {
+            assert_eq!(
+                visible_matches(&items, query, preferred, &config, None, &recent, 10),
+                vec![3, 1, 2, 0],
+                "app names must lead; each group's windows retain their own recency"
+            );
+        }
+    }
+    assert_eq!(
+        visible_matches(&items, "", None, &config, None, &recent, 10),
+        vec![2, 0, 3, 1]
+    );
+    assert_eq!(
+        visible_matches(&items, "notion", None, &config, Some(10), &recent, 10),
+        vec![0],
+        "app matching must not bypass current-app scope"
+    );
+    let config = Config {
+        excluded_apps: vec!["Notion".into()],
+        ..config
+    };
+    assert_eq!(
+        visible_matches(&items, "notion", None, &config, None, &recent, 10),
+        vec![2, 0],
+        "excluded apps must stay excluded"
+    );
+    let items = [
+        WindowInfo {
+            id: 1,
+            pid: 10,
+            app: "Browser".into(),
+            title: "System Settings".into(),
+            minimized: false,
+        },
+        WindowInfo {
+            id: 2,
+            pid: 20,
+            app: "System Settings".into(),
+            title: "Privacy".into(),
+            minimized: false,
+        },
+    ];
+    assert_eq!(
+        visible_matches(
+            &items,
+            " system\tSETTINGS  ",
+            None,
+            &Config::default(),
+            None,
+            &[1, 2],
+            10
+        ),
+        vec![1, 0],
+        "multiword names normalize case and whitespace like other searches"
+    );
+    let items: Vec<_> = [
+        ("Editor", "Chrome"),
+        ("Google Chrome", "Documentation"),
+        ("Chrome", "About"),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, (app, title))| WindowInfo {
+        id: index as u64,
+        pid: index as i32,
+        app: app.into(),
+        title: title.into(),
+        minimized: false,
+    })
+    .collect();
+    assert_eq!(
+        visible_matches(
+            &items,
+            "chrome",
+            None,
+            &Config::default(),
+            None,
+            &[0, 1, 2],
+            0
+        ),
+        vec![2, 1, 0],
+        "complete names outrank partial app names, which outrank title matches"
     );
 }
 

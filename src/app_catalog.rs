@@ -36,8 +36,9 @@ pub fn matching_apps(
             {
                 return None;
             }
-            let score = if let Some(id) = alias_app {
-                (app.target.bundle_id == id).then_some(12_000)?
+            let alias_match = alias_app == Some(app.target.bundle_id.as_str());
+            let score = if alias_match {
+                12_000
             } else {
                 query.score(
                     app.names
@@ -46,11 +47,13 @@ pub fn matching_apps(
                         .map(String::as_str),
                 )?
             };
-            Some((index, score))
+            Some((index, alias_match, score))
         })
         .collect();
-    matches.sort_by(|(a, sa), (b, sb)| {
-        sb.cmp(sa)
+    matches.sort_by(|(a, alias_a, sa), (b, alias_b, sb)| {
+        alias_b
+            .cmp(alias_a)
+            .then_with(|| sb.cmp(sa))
             .then_with(|| {
                 apps[*a]
                     .target
@@ -60,5 +63,5 @@ pub fn matching_apps(
             })
             .then_with(|| apps[*a].target.bundle_id.cmp(&apps[*b].target.bundle_id))
     });
-    matches.into_iter().map(|(index, _)| index).collect()
+    matches.into_iter().map(|(index, _, _)| index).collect()
 }

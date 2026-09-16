@@ -579,6 +579,7 @@ pub fn visible_matches(
                     .score([window.app.as_str(), window.title.as_str()])
                     .is_some()
             });
+            order.sort_by_cached_key(|&i| query.app_name_priority(&windows[i].app));
         }
         return order;
     }

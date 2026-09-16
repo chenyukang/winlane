@@ -142,6 +142,29 @@ impl Aliases {
         )
     }
 
+    pub fn search_order(
+        &self,
+        query: &str,
+        order: &[usize],
+        windows: &[crate::search::WindowInfo],
+    ) -> Option<Vec<usize>> {
+        let Some(target) = self.resolve_window(query) else {
+            return self.filter_order(query, order, windows);
+        };
+        let app = &self.windows.get(&target)?.app;
+        let mut matches: Vec<_> = order
+            .iter()
+            .copied()
+            .filter(|&index| {
+                self.windows
+                    .get(&windows[index].id)
+                    .is_some_and(|window| &window.app == app)
+            })
+            .collect();
+        matches.sort_by_key(|&index| windows[index].id != target);
+        Some(matches)
+    }
+
     pub fn ensure(&mut self, apps: &[AppIdentity]) -> bool {
         self.ensure_reserved(apps, &BTreeSet::new())
     }

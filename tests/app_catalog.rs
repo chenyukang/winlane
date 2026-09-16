@@ -63,16 +63,53 @@ fn saved_app_aliases_can_launch_but_do_not_duplicate_windows() {
     ];
     assert_eq!(
         matching_apps(&apps, "w", &HashSet::new(), &[], Some("example.wechat")),
-        [0]
+        [0, 1]
     );
-    assert!(
+    assert_eq!(
         matching_apps(
             &apps,
             "w",
             &HashSet::from(["example.wechat".into()]),
             &[],
             Some("example.wechat")
-        )
-        .is_empty()
+        ),
+        [1]
+    );
+}
+
+#[test]
+fn aliases_prioritize_launch_targets_without_hiding_text_matches() {
+    let apps = [
+        app("example.filezilla", "FileZilla", &[]),
+        app("com.apple.finder", "访达", &[]),
+        app("example.unrelated", "Browser", &[]),
+    ];
+    assert_eq!(
+        matching_apps(&apps, "fi", &HashSet::new(), &[], Some("com.apple.finder")),
+        [1, 0]
+    );
+    assert_eq!(
+        matching_apps(
+            &apps,
+            "fi",
+            &HashSet::from(["com.apple.finder".into()]),
+            &[],
+            Some("com.apple.finder")
+        ),
+        [0]
+    );
+    assert_eq!(
+        matching_apps(
+            &apps,
+            "fi",
+            &HashSet::new(),
+            &["访达".into()],
+            Some("com.apple.finder")
+        ),
+        [0]
+    );
+    assert_eq!(
+        matching_apps(&apps, "fi", &HashSet::new(), &[], Some("example.missing")),
+        [0]
     );
 }

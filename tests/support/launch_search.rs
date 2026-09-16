@@ -46,7 +46,8 @@ fn verify_project_rule_search(mtm: MainThreadMarker) {
     delegate.install_windows(windows.clone());
     state.query.replace("ck".into());
     delegate.filter();
-    assert_eq!(delegate.match_count(), 1);
+    assert_eq!(delegate.match_count(), 3);
+    assert_eq!(state.launch_matches.borrow().len(), 1);
     assert_eq!(delegate.selected_window().unwrap().id, 1);
     state.mode.set(Some(PanelMode::Switch));
     state.query.replace(String::new());
@@ -68,9 +69,10 @@ fn verify_project_rule_search(mtm: MainThreadMarker) {
     delegate.filter();
     assert_eq!(
         delegate.match_count(),
-        0,
-        "closed project rules must not fall through to unrelated launch results"
+        1,
+        "closed project aliases must still allow ordinary name matches"
     );
+    assert_eq!(delegate.selected_application().unwrap().bundle_id, "com.example.other");
     let mut reopened = windows;
     reopened[0].id = 10;
     reopened[0].title = "README.md — CKB".into();
