@@ -228,6 +228,7 @@ pub struct SettingsWindow {
     opacity_input: Retained<NSTextField>,
     switch_delay: Retained<NSTextField>,
     opacity_preview: Retained<NSVisualEffectView>,
+    usage_hints: Retained<NSButton>,
     minimized: Retained<NSButton>,
     excluded: Retained<NSTextField>,
     login: Retained<NSButton>,
@@ -423,12 +424,12 @@ impl SettingsWindow {
         opacity_hint.setFrame(rect(30.0, 108.0, 600.0, 36.0));
         opacity_hint.setMaximumNumberOfLines(2);
         appearance_tab.addSubview(&opacity_hint);
-        let sample = NSView::initWithFrame(NSView::alloc(mtm), rect(30.0, 24.0, 600.0, 64.0));
+        let sample = NSView::initWithFrame(NSView::alloc(mtm), rect(30.0, 52.0, 600.0, 44.0));
         for (x, color) in [
             (0.0, NSColor::systemIndigoColor()),
             (300.0, NSColor::systemTealColor()),
         ] {
-            let tile = NSBox::initWithFrame(NSBox::alloc(mtm), rect(x, 0.0, 300.0, 64.0));
+            let tile = NSBox::initWithFrame(NSBox::alloc(mtm), rect(x, 0.0, 300.0, 44.0));
             tile.setBoxType(NSBoxType::Custom);
             tile.setBorderWidth(0.0);
             tile.setFillColor(&color.colorWithAlphaComponent(0.35));
@@ -443,10 +444,20 @@ impl SettingsWindow {
                 "Preview · Search and switch panels"
             ),
             14.0,
-            rect(18.0, 21.0, 565.0, 23.0),
+            rect(18.0, 11.0, 565.0, 23.0),
             mtm,
         ));
         appearance_tab.addSubview(&sample);
+        let usage_hints = checkbox(
+            tr!(
+                "显示底部提示和设置按钮",
+                "Show footer hints and Settings button"
+            ),
+            mtm,
+        );
+        usage_hints.setFrame(rect(30.0, 16.0, 600.0, 26.0));
+        set_action(&usage_hints, target, sel!(settingsChanged:));
+        appearance_tab.addSubview(&usage_hints);
 
         input_tab.addSubview(&label(
             tr!("搜索输入法", "Search input method"),
@@ -641,6 +652,7 @@ impl SettingsWindow {
             opacity_input,
             switch_delay,
             opacity_preview,
+            usage_hints,
             minimized,
             excluded,
             login,
@@ -660,6 +672,11 @@ impl SettingsWindow {
                 InputMethod::LastUsed => 3,
             });
         self.set_opacity(config.background_opacity);
+        self.usage_hints.setState(if config.show_usage_hints {
+            NSControlStateValueOn
+        } else {
+            NSControlStateValueOff
+        });
         self.switch_delay
             .setStringValue(&NSString::from_str(&config.switch_delay_ms.to_string()));
         self.set_app_shortcuts(&config.app_shortcuts);
@@ -708,6 +725,7 @@ impl SettingsWindow {
                 _ => Appearance::System,
             },
             background_opacity: self.read_opacity()?,
+            show_usage_hints: self.usage_hints.state() == NSControlStateValueOn,
             switch_delay_ms: self
                 .switch_delay
                 .stringValue()

@@ -38,6 +38,21 @@ fn saved_preferences_round_trip_without_window_data() {
 }
 
 #[test]
+fn usage_hints_preserve_legacy_defaults_and_saved_choice() {
+    assert!(Config::from_json("{}").unwrap().show_usage_hints);
+    for show_usage_hints in [false, true] {
+        let config = Config {
+            show_usage_hints,
+            ..Config::default()
+        };
+        assert_eq!(
+            Config::from_json(&config.to_json().unwrap()).unwrap(),
+            config
+        );
+    }
+}
+
+#[test]
 fn saved_search_shortcuts_survive_default_changes() {
     for (shortcut, expected) in [
         (

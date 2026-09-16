@@ -287,6 +287,7 @@ mod app {
         verify_switch_delay(mtm);
         verify_project_rule_search(mtm);
         verify_adaptive_panels(mtm);
+        verify_usage_hint_visibility(mtm);
         verify_editor_window_titles(mtm);
         delegate.ivars().demo.set(true);
         delegate.ivars().windows.replace(demo_windows());
@@ -659,6 +660,118 @@ mod app {
         winlane::i18n::set_locale(previous_locale);
         println!(
             "Autosave checks passed: native actions persisted to an isolated preferences domain; invalid values and conflicts preserved prior settings; no keyboard taps installed."
+        );
+    }
+
+    fn verify_usage_hint_visibility(mtm: MainThreadMarker) {
+        let delegate = Delegate::new(mtm);
+        let state = delegate.ivars();
+        state.demo.set(true);
+        state.windows.replace(
+            (0..10)
+                .map(|id| WindowInfo {
+                    id,
+                    pid: -1,
+                    app: "Browser".into(),
+                    title: format!("Window {id}"),
+                    minimized: false,
+                })
+                .collect(),
+        );
+        delegate.sync_displays();
+        for mode in [PanelMode::Search, PanelMode::Switch] {
+            state.mode.set(Some(mode));
+            for show_hints in [true, false, true, false] {
+                state.config.borrow_mut().show_usage_hints = show_hints;
+                delegate.filter();
+                for ui in delegate.panels() {
+                    assert_eq!(ui.footer.isHidden(), !show_hints);
+                    assert_eq!(
+                        ui.mode_label.isHidden(),
+                        mode != PanelMode::Switch || !show_hints
+                    );
+                    let root = ui.panel.contentView().unwrap();
+                    let settings = root
+                        .subviews()
+                        .into_iter()
+                        .filter_map(|view| view.downcast::<NSButton>().ok())
+                        .find(|button| button.action() == Some(sel!(showSettings:)))
+                        .unwrap();
+                    assert_eq!(settings.isHidden(), !show_hints);
+                    assert!(settings.frame().origin.y >= 0.0);
+                    assert!(
+                        settings.frame().origin.y + settings.frame().size.height
+                            <= ui.scroll.frame().origin.y
+                    );
+                    assert_eq!(
+                        root.bounds().size.height,
+                        if mode == PanelMode::Switch {
+                            388.0 + if show_hints { ROW_HEIGHT } else { 0.0 }
+                        } else {
+                            416.0
+                        }
+                    );
+                    assert!(!ui.panel.isVisible());
+                }
+            }
+        }
+        state.alias_input.borrow_mut().push('z');
+        delegate.render();
+        for ui in delegate.panels() {
+            assert!(
+                !ui.mode_label.isHidden(),
+                "typed alias feedback must stay visible"
+            );
+            assert!(ui.mode_label.stringValue().to_string().contains("Alias  z"));
+            assert!(ui.footer.isHidden());
+        }
+        state.alias_input.borrow_mut().clear();
+        delegate.render();
+        assert!(delegate.panels().iter().all(|ui| ui.mode_label.isHidden()));
+        state.demo.set(false);
+        state
+            .hotkey_error
+            .replace(Some("Shortcut unavailable".into()));
+        delegate.render();
+        for ui in delegate.panels() {
+            assert!(!ui.footer.isHidden());
+            assert_eq!(ui.footer.stringValue().to_string(), "Shortcut unavailable");
+        }
+        state.hotkey_error.replace(None);
+        state.alias_error.replace(Some("Alias unavailable".into()));
+        delegate.render();
+        for ui in delegate.panels() {
+            assert!(!ui.footer.isHidden());
+            assert_eq!(ui.footer.stringValue().to_string(), "Alias unavailable");
+        }
+        state.alias_error.replace(None);
+        for mode in [PanelMode::Search, PanelMode::Switch] {
+            state.mode.set(Some(mode));
+            for loading in [false, true] {
+                state.loading.set(loading);
+                for show_hints in [true, false] {
+                    state.config.borrow_mut().show_usage_hints = show_hints;
+                    delegate.render();
+                    for ui in delegate.panels() {
+                        assert_eq!(
+                            ui.footer.isHidden(),
+                            !show_hints && accessibility::is_trusted(),
+                            "refreshing must respect the footer toggle; permission errors stay visible"
+                        );
+                    }
+                }
+            }
+        }
+        state.loading.set(false);
+        state.demo.set(true);
+        delegate.render();
+        delegate.report_switch_error("Switch failed");
+        for ui in delegate.panels() {
+            assert!(!ui.footer.isHidden());
+            assert_eq!(ui.footer.stringValue().to_string(), "Switch failed");
+        }
+        println!(
+            "Usage hint checks passed: both modes, all displays, compact layout, settings access, alias feedback and errors."
         );
     }
 

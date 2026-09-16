@@ -46,6 +46,14 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
             );
         }
         assert!(settings.excluded.cell().unwrap().sendsActionOnEndEditing());
+        assert_eq!(settings.usage_hints.action(), Some(sel!(settingsChanged:)));
+        assert_eq!(
+            settings.usage_hints.title().to_string(),
+            match locale {
+                Locale::English => "Show footer hints and Settings button",
+                Locale::Chinese => "显示底部提示和设置按钮",
+            }
+        );
         assert!(
             settings
                 .opacity_input
@@ -100,6 +108,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
                 language,
                 excluded_apps: vec!["Example".into()],
                 appearance: Appearance::Dark,
+                show_usage_hints: index % 2 == 0,
                 ..Config::default()
             };
             settings.fill(&config);
@@ -207,6 +216,11 @@ pub fn verify_autosave_controls(settings: &SettingsWindow, saved: impl Fn() -> C
     settings.minimized.setState(NSControlStateValueOff);
     send(&settings.minimized);
     assert!(!saved().include_minimized);
+    for (state, show) in [(NSControlStateValueOff, false), (NSControlStateValueOn, true)] {
+        settings.usage_hints.setState(state);
+        send(&settings.usage_hints);
+        assert_eq!(saved().show_usage_hints, show);
+    }
     settings.sort.selectItemAtIndex(1);
     send(&settings.sort);
     assert_eq!(saved().sort, SortOrder::Application);

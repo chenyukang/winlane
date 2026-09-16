@@ -54,6 +54,7 @@ struct PanelUi {
     help: Retained<NSButton>,
     demo_button: Retained<NSButton>,
     refresh_button: Retained<NSButton>,
+    settings_button: Retained<NSButton>,
     mode_label: Retained<NSTextField>,
     rows: RefCell<Vec<RowUi>>,
     empty_labels: RefCell<Vec<Retained<NSTextField>>>,
@@ -1281,6 +1282,7 @@ impl Delegate {
             help,
             demo_button,
             refresh_button: refresh,
+            settings_button,
             shortcut_label: shortcut,
             mode_label,
             rows: RefCell::new(Vec::new()),
@@ -2384,12 +2386,15 @@ impl Delegate {
         let trusted = accessibility::is_trusted();
         let demo = state.demo.get();
         let switching = state.mode.get() == Some(PanelMode::Switch);
+        let show_hints = state.config.borrow().show_usage_hints;
+        let show_mode_label =
+            switching && (show_hints || !state.alias_input.borrow().text().is_empty());
         let root = ui.panel.contentView().unwrap();
         let previous_height = root.bounds().size.height;
         let mut frame = ui.panel.frame();
         let chrome_height = frame.size.height - previous_height;
         let visible = ui.panel.screen().map(|screen| screen.visibleFrame());
-        let mut height = panel_height(count, switching, !trusted || demo);
+        let mut height = panel_height(count, switching, !trusted || demo, show_mode_label);
         if let Some(visible) = visible {
             height = height.min((visible.size.height - chrome_height).max(1.0));
         }
@@ -2427,7 +2432,8 @@ impl Delegate {
         let unmatched_alias =
             switching && !alias_query.is_empty() && alias_match.position().is_none();
         ui.input.setHidden(switching);
-        ui.mode_label.setHidden(!switching);
+        ui.mode_label.setHidden(!show_mode_label);
+        ui.settings_button.setHidden(!show_hints);
         let config = state.config.borrow();
         ui.mode_label
             .setStringValue(&NSString::from_str(&if alias_query.is_empty() {
@@ -2480,7 +2486,7 @@ impl Delegate {
         if ui.mode_label.frame() != mode_frame {
             ui.mode_label.setFrame(mode_frame);
         }
-        let list_bottom = list_bottom + if switching { ROW_HEIGHT } else { 0.0 };
+        let list_bottom = list_bottom + if show_mode_label { ROW_HEIGHT } else { 0.0 };
         let list_top = height - if switching { 36.0 } else { HEIGHT - LIST_TOP };
         let list_height = list_top - list_bottom;
         let scroll_frame = rect(10.0, list_bottom, LIST_WIDTH, list_height);
@@ -2673,6 +2679,11 @@ impl Delegate {
             )
         };
         set_label(&ui.footer, &status);
+        let has_error = !demo
+            && (state.hotkey_error.borrow().is_some()
+                || state.alias_error.borrow().is_some()
+                || !trusted);
+        ui.footer.setHidden(!show_hints && !has_error);
     }
 
     fn create_row(&self, position: usize) -> RowUi {
@@ -2923,6 +2934,7 @@ impl Delegate {
 
     fn report_switch_error(&self, text: &str) {
         for ui in self.panels() {
+            ui.footer.setHidden(false);
             ui.footer.setStringValue(&NSString::from_str(text));
             ui.footer.setToolTip(Some(&NSString::from_str(text)));
         }
@@ -3114,10 +3126,10 @@ fn window_display_title<'a>(window: &'a WindowInfo, app_id: Option<&str>) -> Cow
 fn rect(x: f64, y: f64, width: f64, height: f64) -> NSRect {
     NSRect::new(NSPoint::new(x, y), NSSize::new(width, height))
 }
-fn panel_height(count: usize, switching: bool, extra_controls: bool) -> f64 {
+fn panel_height(count: usize, switching: bool, extra_controls: bool, show_mode_label: bool) -> f64 {
     let header = if switching { 36.0 } else { HEIGHT - LIST_TOP };
-    let footer =
-        if extra_controls { 64.0 } else { LIST_BOTTOM } + if switching { ROW_HEIGHT } else { 0.0 };
+    let footer = if extra_controls { 64.0 } else { LIST_BOTTOM }
+        + if show_mode_label { ROW_HEIGHT } else { 0.0 };
     let content = if count == 0 {
         184.0
     } else {
