@@ -1,9 +1,10 @@
 use std::cell::{Cell, OnceCell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
-use objc2::rc::Retained;
+use crate::main_wake::MainWake;
+use objc2::rc::{Retained, Weak};
 use objc2::runtime::{AnyObject, ProtocolObject, Sel};
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::*;
@@ -11,7 +12,8 @@ use objc2_foundation::{
     MainThreadMarker, NSBundle, NSNotification, NSNumber, NSObject, NSObjectProtocol, NSPoint,
     NSRect, NSRunLoop, NSRunLoopCommonModes, NSSize, NSString, NSTimer, NSURL, ns_string,
 };
-use winlane::aliases::{AliasInput, Aliases, AppIdentity, matching_alias_position};
+use std::time::{Duration, Instant};
+use winlane::aliases::{AliasInput, AliasMatch, Aliases, AppIdentity, match_alias};
 use winlane::config::{Config, visible_matches};
 use winlane::displays::{Display, Rect, placements};
 use winlane::search::WindowInfo;
@@ -45,6 +47,53 @@ struct PanelUi {
     refresh_button: Retained<NSButton>,
     mode_label: Retained<NSTextField>,
     actions: Retained<NSPopUpButton>,
+    rows: RefCell<Vec<RowUi>>,
+    empty_labels: RefCell<Vec<Retained<NSTextField>>>,
+}
+
+struct RowUi {
+    button: Retained<NSButton>,
+    title: Retained<NSTextField>,
+    app: Retained<NSTextField>,
+    alias: Retained<NSTextField>,
+    icon: Retained<NSImageView>,
+    content: Option<(WindowInfo, Option<String>)>,
+    selected: Option<bool>,
+    attached: bool,
+}
+
+impl RowUi {
+    fn select(&mut self, selected: bool) {
+        if self.selected == Some(selected) {
+            return;
+        }
+        self.selected = Some(selected);
+        self.button.setAccessibilitySelected(selected);
+        if let Some(layer) = self.button.layer() {
+            let color = if selected {
+                NSColor::selectedContentBackgroundColor()
+            } else {
+                NSColor::clearColor()
+            };
+            // SAFETY: CALayer retains the supplied CGColor.
+            unsafe {
+                let _: () = msg_send![&layer, setBackgroundColor: &*color.CGColor()];
+            }
+        }
+        let text = if selected {
+            NSColor::selectedMenuItemTextColor()
+        } else {
+            NSColor::labelColor()
+        };
+        self.title.setTextColor(Some(&text));
+        self.app.setTextColor(Some(&text));
+        let alias = if selected {
+            text
+        } else {
+            NSColor::secondaryLabelColor()
+        };
+        self.alias.setTextColor(Some(&alias));
+    }
 }
 
 #[derive(Default)]
@@ -59,6 +108,7 @@ struct AppState {
     config: RefCell<Config>,
     aliases: RefCell<Aliases>,
     identities: RefCell<HashMap<i32, AppIdentity>>,
+    icons: RefCell<HashMap<i32, Option<Retained<NSImage>>>>,
     alias_input: RefCell<AliasInput>,
     alias_error: RefCell<Option<String>>,
     aliases_writable: Cell<bool>,
@@ -68,7 +118,8 @@ struct AppState {
     timer: OnceCell<Retained<NSTimer>>,
     shortcut_tap: RefCell<Option<ShortcutTap>>,
     shortcut_rx: RefCell<Option<Receiver<Action>>>,
-    shortcut_check_tick: Cell<u32>,
+    last_shortcut_check: Cell<Option<Instant>>,
+    wake: OnceCell<MainWake>,
     mode: Cell<Option<PanelMode>>,
     session: Cell<u64>,
     switch_selection: RefCell<Option<SwitchSelection>>,
@@ -186,7 +237,7 @@ define_class!(
         fn reopen(&self, _: &NSApplication, _: bool) -> bool { self.show(); true }
         #[unsafe(method(applicationDidChangeScreenParameters:))]
         fn screens_changed(&self, _: &NSNotification) {
-            if self.ivars().status_item.get().is_some() {
+            if !self.ivars().panels.borrow().is_empty() {
                 self.sync_displays();
                 self.render();
                 if self.ivars().mode.get().is_some() { self.present_panels(); }
@@ -204,6 +255,7 @@ define_class!(
         #[unsafe(method(windowDidResignKey:))]
         fn resigned(&self, _: &NSNotification) {
             self.ivars().check_panel_focus.set(true);
+            self.ivars().wake.get().unwrap().signal();
         }
     }
     unsafe impl NSControlTextEditingDelegate for Delegate {
@@ -343,7 +395,7 @@ define_class!(
             } else { state.windows.borrow_mut().clear(); self.refresh(); }
         }
         #[unsafe(method(poll:))]
-        fn poll(&self, _: &NSTimer) {
+        fn poll(&self, _: Option<&AnyObject>) {
             if self.ivars().check_panel_focus.replace(false)
                 && !self.ivars().changing_displays.get()
                 && !self.any_panel_key()
@@ -393,7 +445,15 @@ impl Delegate {
     fn new(mtm: MainThreadMarker) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(AppState::default());
         // SAFETY: NSObject's initializer has this exact signature.
-        unsafe { msg_send![super(this), init] }
+        let this: Retained<Self> = unsafe { msg_send![super(this), init] };
+        let weak = Weak::new(&*this);
+        let wake = MainWake::new(mtm, move || {
+            if let Some(delegate) = weak.load() {
+                delegate.poll(sel!(poll:), None);
+            }
+        });
+        assert!(this.ivars().wake.set(wake).is_ok());
+        this
     }
 
     fn build_ui(&self) {
@@ -462,7 +522,6 @@ impl Delegate {
         window_item.setSubmenu(Some(&window_menu));
         main_menu.addItem(&window_item);
         app.setMainMenu(Some(&main_menu));
-        self.sync_displays();
 
         let status_item =
             NSStatusBar::systemStatusBar().statusItemWithLength(NSVariableStatusItemLength);
@@ -500,16 +559,16 @@ impl Delegate {
         // SAFETY: The application retains this delegate for the entire run loop; poll: has NSTimer signature.
         let timer = unsafe {
             NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
-                0.04,
+                1.0,
                 self,
                 sel!(poll:),
                 None,
                 true,
             )
         };
-        timer.setTolerance(0.005);
-        // SAFETY: Polling also runs during menu tracking; otherwise queued
-        // shortcut events can wait until a menu or modal interaction ends.
+        timer.setTolerance(0.1);
+        // SAFETY: Permission and event-tap health checks also run during menu tracking.
+        // Keyboard and scan results wake the run loop independently of this timer.
         unsafe { NSRunLoop::mainRunLoop().addTimer_forMode(&timer, NSRunLoopCommonModes) };
         self.ivars().timer.set(timer).unwrap();
     }
@@ -651,9 +710,10 @@ impl Delegate {
         shortcut.setTextColor(Some(&NSColor::tertiaryLabelColor()));
         root.addSubview(&shortcut);
 
+        let input_width = ((WIDTH - 32.0) * 0.618).round();
         let input = NSSearchField::initWithFrame(
             NSSearchField::alloc(mtm),
-            rect(16.0, 520.0, WIDTH - 32.0, 28.0),
+            rect((WIDTH - input_width) / 2.0, 520.0, input_width, 28.0),
         );
         input.setFont(Some(&NSFont::systemFontOfSize(16.0)));
         input.setPlaceholderString(Some(ns_string!("")));
@@ -754,6 +814,8 @@ impl Delegate {
             scope,
             mode_label,
             actions,
+            rows: RefCell::new(Vec::new()),
+            empty_labels: RefCell::new(Vec::new()),
         })
     }
 
@@ -778,6 +840,7 @@ impl Delegate {
                     self.mtm(),
                     config.shortcut.binding()?,
                     config.switch_shortcut.binding()?,
+                    self.ivars().wake.get().unwrap().handle(),
                 )
             })
         };
@@ -795,11 +858,14 @@ impl Delegate {
 
     fn check_shortcuts(&self) {
         let state = self.ivars();
-        let tick = state.shortcut_check_tick.get().wrapping_add(1);
-        state.shortcut_check_tick.set(tick);
-        if !tick.is_multiple_of(25) {
+        if state
+            .last_shortcut_check
+            .get()
+            .is_some_and(|at| at.elapsed() < Duration::from_secs(1))
+        {
             return;
         }
+        state.last_shortcut_check.set(Some(Instant::now()));
         if !accessibility::is_trusted() {
             if state.shortcut_tap.borrow().is_some() {
                 self.end_session();
@@ -896,6 +962,7 @@ impl Delegate {
             self.mtm(),
             candidate.shortcut.binding()?,
             candidate.switch_shortcut.binding()?,
+            self.ivars().wake.get().unwrap().handle(),
         )?;
         settings::save(&candidate)?;
         self.ivars().shortcut_tap.replace(Some(tap));
@@ -1133,6 +1200,10 @@ impl Delegate {
     }
 
     fn alias_position(&self) -> Option<usize> {
+        self.alias_match().position()
+    }
+
+    fn alias_match(&self) -> AliasMatch {
         let state = self.ivars();
         let windows = state.windows.borrow();
         let identities = state.identities.borrow();
@@ -1146,7 +1217,7 @@ impl Delegate {
                     .map_or("", |app| app.id.as_str())
             })
             .collect();
-        matching_alias_position(
+        match_alias(
             &state.aliases.borrow(),
             state.alias_input.borrow().text(),
             &ordered_apps,
@@ -1218,11 +1289,27 @@ impl Delegate {
                     && app.activationPolicy() == NSApplicationActivationPolicy::Regular
             })
             .map(|app| {
-                if let Some(identity) = app_identity(&app) {
+                let id = app
+                    .bundleIdentifier()
+                    .map(|id| id.to_string())
+                    .or_else(|| app.bundleURL()?.path().map(|path| path.to_string()));
+                let cached = state
+                    .identities
+                    .borrow()
+                    .get(&app.processIdentifier())
+                    .is_some_and(|app| Some(app.id.as_str()) == id.as_deref());
+                if !cached {
+                    state.icons.borrow_mut().remove(&app.processIdentifier());
                     state
                         .identities
                         .borrow_mut()
-                        .insert(app.processIdentifier(), identity);
+                        .remove(&app.processIdentifier());
+                    if let Some(identity) = app_identity(&app) {
+                        state
+                            .identities
+                            .borrow_mut()
+                            .insert(app.processIdentifier(), identity);
+                    }
                 }
                 (
                     app.processIdentifier(),
@@ -1232,11 +1319,19 @@ impl Delegate {
                 )
             })
             .collect::<Vec<_>>();
+        let live: HashSet<_> = apps.iter().map(|(pid, _)| *pid).collect();
+        state
+            .identities
+            .borrow_mut()
+            .retain(|pid, _| live.contains(pid));
+        state.icons.borrow_mut().retain(|pid, _| live.contains(pid));
         state.loading.set(true);
         let (tx, rx) = mpsc::channel();
         state.receiver.replace(Some(rx));
+        let wake = state.wake.get().unwrap().handle();
         std::thread::spawn(move || {
             let _ = tx.send(accessibility::list_windows(&apps));
+            wake.signal();
         });
         self.render();
     }
@@ -1326,6 +1421,9 @@ impl Delegate {
     }
 
     fn render(&self) {
+        if self.ivars().mode.get().is_none() {
+            return;
+        }
         self.ivars().syncing_controls.set(true);
         for ui in self.panels() {
             self.render_panel(&ui);
@@ -1346,9 +1444,6 @@ impl Delegate {
         drop(query);
         let state = self.ivars();
         let list = &ui.list;
-        for subview in list.subviews() {
-            subview.removeFromSuperview();
-        }
         let windows = state.windows.borrow();
         let matched = state.matches.borrow();
         let trusted = accessibility::is_trusted();
@@ -1358,8 +1453,9 @@ impl Delegate {
         let alias_query = alias_input.text();
         let aliases = state.aliases.borrow();
         let identities = state.identities.borrow();
+        let alias_match = self.alias_match();
         let unmatched_alias =
-            switching && !alias_query.is_empty() && self.alias_position().is_none();
+            switching && !alias_query.is_empty() && alias_match.position().is_none();
         ui.input.setHidden(switching);
         ui.scope.setHidden(switching);
         ui.actions.setHidden(switching);
@@ -1376,9 +1472,8 @@ impl Delegate {
                 format!(
                     "Alias  {alias_query}  ·  {}",
                     if unmatched_alias {
-                        if aliases.has_prefix(alias_query) && aliases.resolve(alias_query).is_none()
-                        {
-                            "继续输入第二个字母"
+                        if alias_match == AliasMatch::Ambiguous {
+                            "多个应用匹配 · 继续输入第二个字母"
                         } else {
                             "没有匹配窗口 · Backspace 修改"
                         }
@@ -1405,12 +1500,28 @@ impl Delegate {
         let list_bottom = if !trusted || demo { 64.0 } else { LIST_BOTTOM };
         let list_top = if switching { 516.0 } else { LIST_TOP };
         let list_height = list_top - list_bottom;
-        ui.scroll
-            .setFrame(rect(10.0, list_bottom, LIST_WIDTH, list_height));
-        list.setFrameSize(NSSize::new(
+        let scroll_frame = rect(10.0, list_bottom, LIST_WIDTH, list_height);
+        if ui.scroll.frame() != scroll_frame {
+            ui.scroll.setFrame(scroll_frame);
+        }
+        let list_size = NSSize::new(
             LIST_WIDTH,
             (matched.len() as f64 * ROW_HEIGHT).max(list_height),
-        ));
+        );
+        if list.frame().size != list_size {
+            list.setFrameSize(list_size);
+        }
+        let mut rows = ui.rows.borrow_mut();
+        for row in rows.iter_mut().skip(matched.len()) {
+            if row.attached {
+                row.button.removeFromSuperview();
+                row.attached = false;
+            }
+        }
+        rows.truncate(matched.len().max(windows.len().min(128)));
+        for label in ui.empty_labels.borrow_mut().drain(..) {
+            label.removeFromSuperview();
+        }
         if matched.is_empty() {
             let (title, detail) = if state.loading.get() {
                 ("正在读取窗口…", "窗口枚举在后台进行，搜索界面仍可输入。")
@@ -1431,103 +1542,60 @@ impl Delegate {
             detail.setMaximumNumberOfLines(4);
             list.addSubview(&heading);
             list.addSubview(&detail);
+            ui.empty_labels.replace(vec![heading, detail]);
         }
         for (position, &index) in matched.iter().enumerate() {
             let item = &windows[index];
             let selected = position == state.selected.get() && !unmatched_alias;
-            let row = self.button(
-                "",
-                sel!(pickWindow:),
-                rect(
-                    2.0,
-                    position as f64 * ROW_HEIGHT + 1.0,
-                    LIST_WIDTH - 4.0,
-                    ROW_HEIGHT - 2.0,
-                ),
-            );
-            row.setTag(position as isize);
-            row.setAccessibilitySelected(selected);
-            row.setBordered(false);
-            row.setWantsLayer(true);
-            if selected && let Some(layer) = row.layer() {
-                let color = NSColor::selectedContentBackgroundColor().CGColor();
-                // SAFETY: CALayer accepts a CGColor reference and a CGFloat (f64 on macOS).
-                unsafe {
-                    let _: () = msg_send![&layer, setBackgroundColor: &*color];
-                    let _: () = msg_send![&layer, setCornerRadius: 5.0f64];
-                }
+            if rows.len() <= position {
+                rows.push(self.create_row(position));
             }
-            let title = if item.title.trim().is_empty() {
-                item.app.as_str()
-            } else {
-                item.title.as_str()
-            };
+            let row = &mut rows[position];
             let alias = identities
                 .get(&item.pid)
                 .and_then(|app| aliases.get(&app.id));
-            let tooltip = format!(
-                "{} — {}{}",
-                item.app,
-                title,
-                alias.map_or(String::new(), |alias| format!(" · alias {alias}"))
-            );
-            row.setToolTip(Some(&NSString::from_str(&tooltip)));
-            row.setAccessibilityLabel(Some(&NSString::from_str(&tooltip)));
-            let title = if item.minimized {
-                format!("{title} · 已最小化")
-            } else {
-                title.to_owned()
-            };
-            let title_field = label(
-                &title,
-                13.0,
-                rect(222.0, 3.0, LIST_WIDTH - 236.0, 20.0),
-                self.mtm(),
-            );
-            title_field.setMaximumNumberOfLines(1);
-            title_field.setLineBreakMode(NSLineBreakMode::ByTruncatingTail);
-            let subtitle_field = label(&item.app, 13.0, rect(42.0, 3.0, 142.0, 20.0), self.mtm());
-            subtitle_field.setAlignment(NSTextAlignment::Right);
-            subtitle_field.setMaximumNumberOfLines(1);
-            subtitle_field.setLineBreakMode(NSLineBreakMode::ByTruncatingTail);
-            subtitle_field.setTextColor(Some(&NSColor::labelColor()));
-            if selected {
-                title_field.setTextColor(Some(&NSColor::selectedMenuItemTextColor()));
-                subtitle_field.setTextColor(Some(&NSColor::selectedMenuItemTextColor()));
-            }
-            let icon = NSImageView::initWithFrame(
-                NSImageView::alloc(self.mtm()),
-                rect(192.0, 3.0, 20.0, 20.0),
-            );
-            icon.setImageScaling(NSImageScaling::ScaleProportionallyDown);
-            let image = NSRunningApplication::runningApplicationWithProcessIdentifier(item.pid)
-                .and_then(|app| app.icon())
-                .or_else(|| {
-                    NSImage::imageWithSystemSymbolName_accessibilityDescription(
-                        ns_string!("macwindow"),
-                        Some(ns_string!("窗口")),
-                    )
-                });
-            icon.setImage(image.as_deref());
-            row.addSubview(&icon);
-            row.addSubview(&title_field);
-            row.addSubview(&subtitle_field);
-            if let Some(alias) = alias {
-                let badge = label(alias, 12.0, rect(8.0, 3.0, 28.0, 20.0), self.mtm());
-                badge.setAlignment(NSTextAlignment::Left);
-                let color = if selected {
-                    NSColor::selectedMenuItemTextColor()
+            if row
+                .content
+                .as_ref()
+                .is_none_or(|(previous, previous_alias)| {
+                    previous != item || previous_alias.as_deref() != alias
+                })
+            {
+                let title = if item.title.trim().is_empty() {
+                    &item.app
                 } else {
-                    NSColor::secondaryLabelColor()
+                    &item.title
                 };
-                badge.setTextColor(Some(&color));
-                row.addSubview(&badge);
+                let tooltip = format!(
+                    "{} — {}{}",
+                    item.app,
+                    title,
+                    alias.map_or(String::new(), |alias| format!(" · alias {alias}"))
+                );
+                row.button.setToolTip(Some(&NSString::from_str(&tooltip)));
+                row.button
+                    .setAccessibilityLabel(Some(&NSString::from_str(&tooltip)));
+                let title = if item.minimized {
+                    format!("{title} · 已最小化")
+                } else {
+                    title.clone()
+                };
+                set_label(&row.title, &title);
+                set_label(&row.app, &item.app);
+                set_label(&row.alias, alias.unwrap_or(""));
+                row.icon.setImage(self.icon(item.pid).as_deref());
+                row.content = Some((item.clone(), alias.map(str::to_owned)));
             }
-            list.addSubview(&row);
+            row.select(selected);
+            if !row.attached {
+                list.addSubview(&row.button);
+                row.attached = true;
+            }
             if selected {
-                row.scrollRectToVisible(row.bounds());
+                row.button.scrollRectToVisible(row.button.bounds());
             }
         }
+
         let status = if demo {
             format!(
                 "演示模式 · {} 个示例 · ↑↓ 选择  ↵ 预览选择  Esc 关闭",
@@ -1552,7 +1620,76 @@ impl Delegate {
                 matched.len()
             )
         };
-        ui.footer.setStringValue(&NSString::from_str(&status));
+        set_label(&ui.footer, &status);
+    }
+
+    fn create_row(&self, position: usize) -> RowUi {
+        let mtm = self.mtm();
+        let button = NSButton::initWithFrame(
+            NSButton::alloc(mtm),
+            rect(
+                2.0,
+                position as f64 * ROW_HEIGHT + 1.0,
+                LIST_WIDTH - 4.0,
+                ROW_HEIGHT - 2.0,
+            ),
+        );
+        button.setTitle(ns_string!(""));
+        button.setBordered(false);
+        button.setTag(position as isize);
+        // SAFETY: The delegate outlives its rows and pickWindow: takes a button sender.
+        unsafe {
+            button.setTarget(Some(self));
+            button.setAction(Some(sel!(pickWindow:)));
+        }
+        button.setWantsLayer(true);
+        if let Some(layer) = button.layer() {
+            unsafe {
+                let _: () = msg_send![&layer, setCornerRadius: 5.0f64];
+            }
+        }
+        let title = label("", 13.0, rect(222.0, 3.0, LIST_WIDTH - 236.0, 20.0), mtm);
+        let app = label("", 13.0, rect(42.0, 3.0, 142.0, 20.0), mtm);
+        app.setAlignment(NSTextAlignment::Right);
+        for field in [&title, &app] {
+            field.setMaximumNumberOfLines(1);
+            field.setLineBreakMode(NSLineBreakMode::ByTruncatingTail);
+            button.addSubview(field);
+        }
+        let alias = label("", 12.0, rect(8.0, 3.0, 28.0, 20.0), mtm);
+        button.addSubview(&alias);
+        let icon =
+            NSImageView::initWithFrame(NSImageView::alloc(mtm), rect(192.0, 3.0, 20.0, 20.0));
+        icon.setImageScaling(NSImageScaling::ScaleProportionallyDown);
+        button.addSubview(&icon);
+        RowUi {
+            button,
+            title,
+            app,
+            alias,
+            icon,
+            content: None,
+            selected: None,
+            attached: false,
+        }
+    }
+
+    fn icon(&self, pid: i32) -> Option<Retained<NSImage>> {
+        self.ivars()
+            .icons
+            .borrow_mut()
+            .entry(pid)
+            .or_insert_with(|| {
+                NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
+                    .and_then(|app| app.icon())
+                    .or_else(|| {
+                        NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                            ns_string!("macwindow"),
+                            Some(ns_string!("窗口")),
+                        )
+                    })
+            })
+            .clone()
     }
 
     fn activate_app(&self, app: &NSRunningApplication) -> bool {
@@ -1728,6 +1865,11 @@ fn app_identity(app: &NSRunningApplication) -> Option<AppIdentity> {
 
 fn rect(x: f64, y: f64, width: f64, height: f64) -> NSRect {
     NSRect::new(NSPoint::new(x, y), NSSize::new(width, height))
+}
+fn set_label(field: &NSTextField, text: &str) {
+    if field.stringValue().to_string() != text {
+        field.setStringValue(&NSString::from_str(text));
+    }
 }
 fn label(text: &str, size: f64, frame: NSRect, mtm: MainThreadMarker) -> Retained<NSTextField> {
     let label = NSTextField::labelWithString(&NSString::from_str(text), mtm);

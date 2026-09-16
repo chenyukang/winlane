@@ -1,6 +1,10 @@
 #![allow(dead_code)]
 
 #[cfg(target_os = "macos")]
+#[path = "../src/main_wake.rs"]
+mod main_wake;
+
+#[cfg(target_os = "macos")]
 #[path = "../src/accessibility.rs"]
 mod accessibility;
 #[cfg(target_os = "macos")]
@@ -17,6 +21,48 @@ mod window_server;
 #[cfg(target_os = "macos")]
 mod app {
     include!("../src/app.rs");
+
+    pub fn inspect_window_discovery(bundle: &str) {
+        assert!(
+            accessibility::is_trusted(),
+            "read-only scan requires existing accessibility access"
+        );
+        let apps: Vec<_> = NSWorkspace::sharedWorkspace()
+            .runningApplications()
+            .iter()
+            .filter(|app| {
+                app.bundleIdentifier()
+                    .is_some_and(|id| id.to_string() == bundle)
+            })
+            .map(|app| {
+                (
+                    app.processIdentifier(),
+                    app.localizedName().unwrap().to_string(),
+                )
+            })
+            .collect();
+        assert!(!apps.is_empty(), "requested application is not running");
+        for round in 0..12 {
+            let start = Instant::now();
+            let windows = accessibility::list_windows(&apps);
+            println!(
+                "scan round={} windows={} elapsed_ms={:.1} ids={:?}",
+                round + 1,
+                windows.len(),
+                start.elapsed().as_secs_f64() * 1000.0,
+                windows.iter().map(|window| window.id).collect::<Vec<_>>()
+            );
+            if let Ok(minimum) = std::env::var("WINLANE_EXPECT_WINDOWS") {
+                let minimum: usize = minimum
+                    .parse()
+                    .expect("expected window count must be numeric");
+                assert!(
+                    windows.len() >= minimum,
+                    "scan omitted independently verified windows"
+                );
+            }
+        }
+    }
 
     pub fn benchmark_hidden_panels() {
         use std::time::Instant;
@@ -125,6 +171,8 @@ mod app {
         }
         let app = NSApplication::sharedApplication(mtm);
         app.setActivationPolicy(NSApplicationActivationPolicy::Prohibited);
+        verify_main_wake(mtm);
+        verify_switch_alias_prefix(mtm);
         let delegate = Delegate::new(mtm);
         delegate.ivars().demo.set(true);
         delegate.ivars().windows.replace(demo_windows());
@@ -183,7 +231,11 @@ mod app {
         let rows_before: Vec<_> = panels.iter().map(|ui| ui.list.subviews()).collect();
         delegate.move_selection(1);
         for (ui, rows) in panels.iter().zip(&rows_before) {
-            assert_eq!(ui.list.subviews(), *rows, "moving selection must reuse row views");
+            assert_eq!(
+                ui.list.subviews(),
+                *rows,
+                "moving selection must reuse row views"
+            );
             let selection: Vec<_> = ui
                 .list
                 .subviews()
@@ -191,6 +243,25 @@ mod app {
                 .map(|row| row.isAccessibilitySelected())
                 .collect();
             assert_eq!(selection, [false, true]);
+        }
+        delegate.ivars().query.replace("no matching window".into());
+        delegate.filter();
+        delegate.ivars().query.replace("Safari".into());
+        delegate.filter();
+        for (ui, rows) in panels.iter().zip(&rows_before) {
+            assert_eq!(
+                ui.list.subviews(),
+                *rows,
+                "filtering should reuse detached rows"
+            );
+        }
+        let matched = delegate.ivars().matches.borrow()[0];
+        delegate.ivars().windows.borrow_mut()[matched].title = "Updated title".into();
+        delegate.render();
+        for ui in &panels {
+            let rows = ui.rows.borrow();
+            assert_eq!(rows[0].title.stringValue().to_string(), "Updated title");
+            assert_eq!(rows[0].icon.image(), rows[1].icon.image());
         }
         let scope = &panels.last().unwrap().scope;
         scope.setState(NSControlStateValueOn);
@@ -237,10 +308,185 @@ mod app {
         }
         delegate.end_session();
         assert!(delegate.panels().iter().all(|ui| !ui.panel.isVisible()));
+        let retained_rows = panels[0].list.subviews();
+        delegate.ivars().query.replace("nothing matches".into());
+        delegate.filter();
+        assert_eq!(
+            panels[0].list.subviews(),
+            retained_rows,
+            "closed panels must not redraw"
+        );
         println!(
             "Native panel checks passed on {} display(s): placement, shared query/scope/mode/alias, reuse; no panels shown or shortcuts registered.",
             panels.len()
         );
+    }
+
+    fn verify_switch_alias_prefix(mtm: MainThreadMarker) {
+        let delegate = Delegate::new(mtm);
+        let state = delegate.ivars();
+        state.demo.set(true);
+        state.session.set(7);
+        state
+            .aliases
+            .replace(Aliases::from_json(r#"{"zed":"z","zulip":"zu","zoom":"zo"}"#).unwrap());
+        state.windows.replace(vec![
+            WindowInfo {
+                id: 41,
+                pid: -41,
+                app: "Code".into(),
+                title: "Project".into(),
+                minimized: false,
+            },
+            WindowInfo {
+                id: 42,
+                pid: -42,
+                app: "Zulip".into(),
+                title: "Messages".into(),
+                minimized: false,
+            },
+        ]);
+        state.identities.borrow_mut().insert(
+            -42,
+            AppIdentity {
+                id: "zulip".into(),
+                english_name: "Zulip".into(),
+            },
+        );
+        state.mode.set(Some(PanelMode::Switch));
+        state
+            .switch_selection
+            .replace(Some(SwitchSelection::new(0)));
+        delegate.sync_displays();
+        delegate.filter();
+        delegate.prepare_switch_selection();
+        delegate.shortcut_action(Action {
+            session: 7,
+            kind: ActionKind::Alias('z'),
+        });
+        assert_eq!(delegate.selected_window().unwrap().id, 42);
+        for ui in delegate.panels() {
+            assert!(!ui.mode_label.stringValue().to_string().contains("没有匹配"));
+            assert!(
+                ui.rows.borrow()[state.selected.get()]
+                    .button
+                    .isAccessibilitySelected()
+            );
+        }
+        delegate.shortcut_action(Action {
+            session: 7,
+            kind: ActionKind::Accept,
+        });
+        assert_eq!(state.mode.get(), Some(PanelMode::Search));
+        assert!(delegate.panels().iter().all(|ui| {
+            ui.footer
+                .stringValue()
+                .to_string()
+                .contains("演示选择：Zulip")
+        }));
+
+        state.windows.borrow_mut().push(WindowInfo {
+            id: 43,
+            pid: -43,
+            app: "Zoom".into(),
+            title: "Meeting".into(),
+            minimized: false,
+        });
+        state.identities.borrow_mut().insert(
+            -43,
+            AppIdentity {
+                id: "zoom".into(),
+                english_name: "Zoom".into(),
+            },
+        );
+        state.mode.set(Some(PanelMode::Switch));
+        state
+            .switch_selection
+            .replace(Some(SwitchSelection::new(0)));
+        delegate.filter();
+        delegate.prepare_switch_selection();
+        delegate.shortcut_action(Action {
+            session: 7,
+            kind: ActionKind::Alias('z'),
+        });
+        assert_eq!(delegate.alias_match(), AliasMatch::Ambiguous);
+        for ui in delegate.panels() {
+            assert!(
+                ui.mode_label
+                    .stringValue()
+                    .to_string()
+                    .contains("继续输入第二个字母")
+            );
+            assert!(
+                ui.rows
+                    .borrow()
+                    .iter()
+                    .all(|row| !row.button.isAccessibilitySelected())
+            );
+        }
+        delegate.shortcut_action(Action {
+            session: 7,
+            kind: ActionKind::Alias('u'),
+        });
+        assert_eq!(delegate.selected_window().unwrap().id, 42);
+        delegate.shortcut_action(Action {
+            session: 7,
+            kind: ActionKind::AliasBackspace,
+        });
+        assert_eq!(delegate.alias_match(), AliasMatch::Ambiguous);
+        delegate.shortcut_action(Action {
+            session: 7,
+            kind: ActionKind::Accept,
+        });
+        assert_eq!(
+            state.mode.get(),
+            None,
+            "ambiguous release must cancel instead of committing the previous selection"
+        );
+        assert!(delegate.panels().iter().all(|ui| !ui.panel.isVisible()));
+    }
+
+    fn verify_main_wake(mtm: MainThreadMarker) {
+        use core_foundation::runloop::{CFRunLoop, kCFRunLoopDefaultMode};
+        let received = Rc::new(RefCell::new(Vec::new()));
+        let captured = received.clone();
+        let calls = Rc::new(Cell::new(0));
+        let callback_calls = calls.clone();
+        let (tx, rx) = mpsc::channel();
+        let wake = MainWake::new(mtm, move || {
+            assert!(MainThreadMarker::new().is_some());
+            callback_calls.set(callback_calls.get() + 1);
+            captured.borrow_mut().extend(rx.try_iter());
+        });
+        let handle = wake.handle();
+        let worker_handle = handle.clone();
+        std::thread::spawn(move || {
+            for value in 0..100 {
+                tx.send(value).unwrap();
+                worker_handle.signal();
+            }
+        })
+        .join()
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while received.borrow().len() < 100 && Instant::now() < deadline {
+            CFRunLoop::run_in_mode(
+                unsafe { kCFRunLoopDefaultMode },
+                Duration::from_millis(10),
+                true,
+            );
+        }
+        assert_eq!(*received.borrow(), (0..100).collect::<Vec<_>>());
+        let before_drop = calls.get();
+        drop(wake);
+        handle.signal();
+        CFRunLoop::run_in_mode(
+            unsafe { kCFRunLoopDefaultMode },
+            Duration::from_millis(5),
+            false,
+        );
+        assert_eq!(received.borrow().len(), 100);
+        assert_eq!(calls.get(), before_drop);
     }
 
     fn export_hidden_previews(delegate: &Delegate, directory: &str) {
@@ -317,7 +563,9 @@ mod app {
 fn main() {
     #[cfg(target_os = "macos")]
     objc2::rc::autoreleasepool(|_| {
-        if std::env::var_os("WINLANE_BENCHMARK").is_some() {
+        if let Ok(bundle) = std::env::var("WINLANE_SCAN_BUNDLE") {
+            app::inspect_window_discovery(&bundle);
+        } else if std::env::var_os("WINLANE_BENCHMARK").is_some() {
             app::benchmark_hidden_panels();
         } else {
             app::verify_hidden_panels();

@@ -346,18 +346,25 @@ fn all_windows(application: &Element, pid: i32, inventory: &Inventory) -> Vec<El
         scan.elements.retain(|id, _| targets.contains(id));
         scan.targets = targets;
     }
-    for (&server_id, &element_id) in &scan.elements {
+    let mut invalid_cached_element = false;
+    scan.elements.retain(|&server_id, element_id| {
         if !missing.contains(&server_id) {
-            continue;
+            return true;
         }
-        if let Some(window) = Element::from_remote_id(pid, element_id)
+        if let Some(window) = Element::from_remote_id(pid, *element_id)
             && window.server_id() == Some(server_id)
+            && window.is_window()
         {
             missing.remove(&server_id);
-            if window.is_window() {
-                windows.push(window);
-            }
+            windows.push(window);
+            true
+        } else {
+            invalid_cached_element = true;
+            false
         }
+    });
+    if invalid_cached_element {
+        scan.next = 0;
     }
     let started = Instant::now();
     while !missing.is_empty() && started.elapsed() < Duration::from_millis(250) {
@@ -365,12 +372,14 @@ fn all_windows(application: &Element, pid: i32, inventory: &Inventory) -> Vec<El
         scan.next = scan.next.wrapping_add(1);
         if let Some(window) = Element::from_remote_id(pid, element_id)
             && let Some(server_id) = window.server_id()
-            && missing.remove(&server_id)
+            && missing.contains(&server_id)
+            && window.is_window()
         {
+            // Electron can expose an AXUnknown object before the real AXWindow
+            // for the same WindowServer ID. Only a validated window resolves it.
+            missing.remove(&server_id);
             scan.elements.insert(server_id, element_id);
-            if window.is_window() {
-                windows.push(window);
-            }
+            windows.push(window);
         }
     }
     if std::env::var_os("WINDOWLANE_DEBUG_WINDOWS").is_some() {

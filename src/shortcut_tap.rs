@@ -1,3 +1,4 @@
+use crate::main_wake::WakeHandle;
 use core_foundation::base::TCFType;
 use core_foundation::mach_port::{CFMachPort, CFMachPortInvalidate, CFMachPortRef};
 use core_foundation::runloop::{CFRunLoop, CFRunLoopSource, kCFRunLoopCommonModes};
@@ -32,6 +33,7 @@ unsafe extern "C" {
 struct TapState {
     keys: RefCell<ShortcutRouter>,
     actions: Sender<Action>,
+    wake: WakeHandle,
     port: Cell<CFMachPortRef>,
 }
 
@@ -47,6 +49,7 @@ impl ShortcutTap {
         mtm: MainThreadMarker,
         search: Binding,
         switch: Binding,
+        wake: WakeHandle,
     ) -> Result<(Self, Receiver<Action>), String> {
         if !crate::accessibility::is_trusted() {
             return Err("启用全局快捷键需要先在系统设置中允许 Winlane 控制应用。".into());
@@ -55,6 +58,7 @@ impl ShortcutTap {
         let mut state = Box::new(TapState {
             keys: RefCell::new(ShortcutRouter::new(search, switch)),
             actions,
+            wake,
             port: Cell::new(ptr::null_mut()),
         });
         // SAFETY: The boxed context stays at a stable address until the tap is
@@ -147,6 +151,7 @@ unsafe extern "C" fn callback(
     if event_type == TAP_DISABLED_TIMEOUT || event_type == TAP_DISABLED_USER {
         if let Ok(mut keys) = state.keys.try_borrow_mut() {
             let _ = state.actions.send(keys.cancel());
+            state.wake.signal();
         }
         if event_type == TAP_DISABLED_TIMEOUT {
             // SAFETY: The tap retains its own port while a callback is in flight.
@@ -169,10 +174,11 @@ unsafe extern "C" fn callback(
         return event;
     };
     let (consume, action) = keys.handle(event_type, key, flags, repeat);
-    if let Some(action) = action
-        && state.actions.send(action).is_err()
-    {
-        return event;
+    if let Some(action) = action {
+        if state.actions.send(action).is_err() {
+            return event;
+        }
+        state.wake.signal();
     }
     if consume { ptr::null_mut() } else { event }
 }

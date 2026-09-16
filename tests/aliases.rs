@@ -1,5 +1,7 @@
 use std::collections::{BTreeSet, HashMap};
-use winlane::aliases::{AliasInput, Aliases, AppIdentity, matching_alias_position};
+use winlane::aliases::{
+    AliasInput, AliasMatch, Aliases, AppIdentity, match_alias, matching_alias_position,
+};
 use winlane::config::{Config, Shortcut, visible_matches};
 use winlane::search::WindowInfo;
 use winlane::shortcuts::*;
@@ -45,6 +47,42 @@ fn automatic_aliases_are_lowercase_unique_and_deterministic() {
     reversed.ensure(&apps.into_iter().rev().collect::<Vec<_>>());
     assert_eq!(aliases, reversed);
     assert_eq!(aliases.resolve(" W "), Some(wechat().id.as_str()));
+}
+
+#[test]
+fn switch_prefix_matches_current_windows_when_the_exact_app_is_absent() {
+    let aliases = Aliases::from_json(r#"{"zed":"z","zulip":"zu","zoom":"zo"}"#).unwrap();
+    assert_eq!(
+        matching_alias_position(&aliases, "z", &["code", "zulip"]),
+        Some(1)
+    );
+    assert_eq!(
+        matching_alias_position(&aliases, "z", &["zulip", "zulip"]),
+        Some(0)
+    );
+    assert_eq!(
+        matching_alias_position(&aliases, "z", &["zulip", "zed"]),
+        Some(1)
+    );
+    assert_eq!(
+        matching_alias_position(&aliases, "z", &["zoom", "zulip"]),
+        None
+    );
+    assert_eq!(
+        matching_alias_position(&aliases, "zu", &["zoom", "zulip"]),
+        Some(1)
+    );
+    assert_eq!(matching_alias_position(&aliases, "z", &["code"]), None);
+    assert_eq!(matching_alias_position(&aliases, "", &["zulip"]), None);
+    assert_eq!(
+        matching_alias_position(&aliases, " Z ", &["zulip"]),
+        Some(0)
+    );
+    assert_eq!(
+        match_alias(&aliases, "z", &["zoom", "zulip", "zulip"]),
+        AliasMatch::Ambiguous
+    );
+    assert_eq!(match_alias(&aliases, "z", &["code"]), AliasMatch::Missing);
 }
 
 #[test]
@@ -240,7 +278,7 @@ fn pending_alias_overrides_initial_cycle_after_discovery_and_only_commits_once()
     assert_eq!(selection.take_commit(), Some(1));
     assert_eq!(selection.take_commit(), None);
     assert_eq!(matching_alias_position(&aliases, "zz", &apps), None);
-    assert_eq!(matching_alias_position(&aliases, "w", &["warp"]), None);
+    assert_eq!(matching_alias_position(&aliases, "w", &["warp"]), Some(0));
 }
 
 #[test]

@@ -52,10 +52,6 @@ impl Aliases {
             .map(|(app, _)| app.as_str())
     }
 
-    pub fn has_prefix(&self, query: &str) -> bool {
-        self.0.values().any(|alias| alias.starts_with(query))
-    }
-
     pub fn filter_order(
         &self,
         query: &str,
@@ -170,6 +166,51 @@ pub fn matching_alias_position(
     query: &str,
     ordered_apps: &[&str],
 ) -> Option<usize> {
-    let app = aliases.resolve(query)?;
-    ordered_apps.iter().position(|id| *id == app)
+    match_alias(aliases, query, ordered_apps).position()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AliasMatch {
+    Matched(usize),
+    Ambiguous,
+    Missing,
+}
+
+impl AliasMatch {
+    pub fn position(self) -> Option<usize> {
+        match self {
+            Self::Matched(position) => Some(position),
+            Self::Ambiguous | Self::Missing => None,
+        }
+    }
+}
+
+pub fn match_alias(aliases: &Aliases, query: &str, ordered_apps: &[&str]) -> AliasMatch {
+    let query = query.trim().to_ascii_lowercase();
+    if query.is_empty() {
+        return AliasMatch::Missing;
+    }
+    if let Some(app) = aliases.resolve(&query)
+        && let Some(position) = ordered_apps.iter().position(|id| *id == app)
+    {
+        return AliasMatch::Matched(position);
+    }
+    let mut candidate = None;
+    for (position, &app) in ordered_apps.iter().enumerate() {
+        if aliases
+            .get(app)
+            .is_some_and(|alias| alias.starts_with(&query))
+        {
+            if let Some((_, previous_app)) = candidate {
+                if previous_app != app {
+                    return AliasMatch::Ambiguous;
+                }
+            } else {
+                candidate = Some((position, app));
+            }
+        }
+    }
+    candidate.map_or(AliasMatch::Missing, |(position, _)| {
+        AliasMatch::Matched(position)
+    })
 }
