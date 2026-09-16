@@ -1,173 +1,73 @@
 # Winlane
 
-用 Rust 和 AppKit 实现的 macOS 窗口切换工具。**搜索模式**默认使用 Control + Option + Space（⌃⌥Space），输入应用名或窗口标题，Enter 确认；**切换模式**默认使用 Command + Tab（⌘Tab），按住 Command，重复按 Tab 选择，松开 Command 确认。两种模式可以分别设置快捷键，升级时保留已有的搜索快捷键。
+A native macOS window switcher, built with Rust and AppKit.
 
-搜索支持多个词、不连续字母和单词首字母匹配。空搜索和切换模式只显示独立的标准窗口；同一应用的多个真实窗口分别保留，不添加应用占位项、标签页或菜单栏辅助进程。输入关键词后，搜索结果还会加入匹配的已安装应用，标记为“启动应用”。最小化窗口是否显示由设置控制。
+Hold a shortcut to move between windows, or type to find the one you need. Winlane runs in the menu bar and stays out of the way until you call it up.
 
-## 构建与启动
+## Get started
 
-需要 macOS、Rust 工具链和 Xcode Command Line Tools。目标系统为 macOS 14 或更新版本；当前在 Apple Silicon 机器上构建 ARM64 版本，尚未验证 macOS 14 实机兼容性或提供通用二进制。
+You need **macOS 14 or later**, a Rust toolchain, and Xcode Command Line Tools. Installation currently uses a local build.
 
-在项目目录运行：
+First, [set up a code-signing identity](docs/development.md#development-signing). Keeping the same identity lets development builds retain their Accessibility permission.
 
 ```sh
+git clone https://github.com/chenyukang/winlane.git
+cd winlane
 ./scripts/build-app.sh
 ```
 
-首次构建前，先完成下面的“开发签名”设置。脚本执行锁定依赖的 release 构建，生成 `dist/Winlane.app`，并使用固定证书签名。它不会安装、启动应用或申请辅助功能权限。需要调试构建时使用：
+The script builds a release version at `dist/Winlane.app`. Quit any running copy, copy the app to `~/Applications/Winlane.app`, and open it. Use this same installation location for subsequent builds.
 
-```sh
-./scripts/build-app.sh --debug
-```
+Open **System Settings → Privacy & Security → Accessibility**, add the installed Winlane app, and enable access. On macOS 27, this pane is called **Device Control and Data Access**. Open Winlane's panel again after granting permission.
 
-构建后，退出正在运行的 Winlane，将 `dist/Winlane.app` 复制到固定位置 `~/Applications/Winlane.app`，再打开该位置的应用。后续构建始终更新同一位置，避免同时运行多个副本。运行期间菜单栏会显示 Winlane 入口；退出请使用菜单中的“退出 Winlane”。
+Once authorized, Winlane starts quietly in the menu bar. Its menu provides access to the window picker, settings, and Quit.
 
-应用名称为 Winlane；为沿用更名前的授权与设置，内部应用标识仍固定为 `app.windowlane.desktop`，设置存储键和签名证书也保持不变。从旧版升级时，退出 Windowlane，用 `Winlane.app` 替换已安装的旧应用，避免保留两个运行副本。如果存在 `resources/AppIcon.icns`，打包时会自动带上图标。产物为当前 Rust 工具链的主机架构版本，没有公证。
+## Everyday use
 
-## 开发签名
+### Switch without stopping to search
 
-ad hoc 签名（`codesign --sign -`）默认用可执行文件的哈希标识应用，重新编译可能导致辅助功能授权失效。开发时改用同一张证书签名，让 macOS 通过稳定的签名要求识别后续版本。debug 和 release 构建使用相同证书和应用标识，可以共用授权。
+Hold **Command**, press **Tab** to open the switcher, then keep pressing Tab to move through the list. Release Command to switch to the selected window. Add Shift to move backward, or press Esc to cancel.
 
-本机开发可以使用自签名的代码签名证书，无需购买 Apple Developer 会员。按 Apple 的 [Code Signing Guide](https://developer.apple.com/library/archive/documentation/Security/Conceptual/CodeSigningGuide/Procedures/Procedures.html) 创建一次：
+Each row represents an independent window. Separate editor projects appear separately; browser tabs and background helpers do not become extra entries. On multiple displays, the same picker appears on every screen, with a shared selection.
 
-1. 打开 **Keychain Access（钥匙串访问）**，选择 **Keychain Access → Certificate Assistant → Create a Certificate…**。
-2. Name 填 `Windowlane Development`，Identity Type 选 **Self Signed Root**，Certificate Type 选 **Code Signing**。
-3. 勾选 **Let me override defaults**，将有效期设为合适的开发周期，例如 3650 天；其余保持默认，保存到 **login** 钥匙串。不需要将它设为所有用途的 Always Trust。
-4. 运行 `./scripts/build-app.sh`。第一次使用私钥时，系统可能询问是否允许 `/usr/bin/codesign` 使用它；核对证书名和请求程序后按需允许。
+The letters beside each window are its **alias**. Type those letters while holding Command, then release Command to jump directly to that window. Aliases are assigned automatically from English app names, stay unique across windows, and are remembered when Winlane restarts. Additional window aliases may change when the target app closes and creates new windows.
 
-证书与私钥留在钥匙串中，不存入项目，也不要每次构建重新创建。构建脚本会查找这个名称对应的唯一签名身份；缺少证书或存在同名歧义时，在编译前报错，不自动退回 ad hoc 签名。也可使用已有的 Apple Development 证书：
+### Search when you know what you want
 
-```sh
-security find-identity -p codesigning
-WINLANE_SIGNING_IDENTITY='证书的完整名称或 40 位 SHA-1 指纹' ./scripts/build-app.sh --debug
-```
+Press **Control + Option + Space** to open search. Type an app name, a window title, an alias, or a few keywords. Use the arrow keys to select a result and Enter to open it.
 
-旧环境变量 `WINDOWLANE_SIGNING_IDENTITY` 仍兼容，新变量优先。
+An empty search shows existing windows. Once you type, matching installed apps also appear with a **↗ Launch app** label, so you can open an app that is not running yet. Apps that already have windows are not repeated as launch results.
 
-从旧 ad hoc 版本迁移到证书签名后，需要为固定安装位置的新版本重新授权一次。之后保留同一证书、应用标识和安装位置，正常重编译应沿用授权。更换证书、清除系统隐私设置等仍可能要求重新授权。自签名证书适合本机开发，公开分发应另行配置 Developer ID 签名和公证。
+Press **Space** in the switcher to start searching. In an empty search field, Space returns to switching; with text already entered, it remains a normal space. Input-method composition keeps its usual keyboard behavior.
 
-仅需临时构建、且接受重新授权时，可显式运行 `./scripts/build-app.sh --adhoc`；不要用这个产物覆盖已授权的日常开发版本。
+### Give frequent apps a permanent shortcut
 
-## 辅助功能授权
+Open **Settings → Shortcuts → App Shortcuts**, choose an app, and assign a combination such as **Command + 1** for your browser or **Command + 2** for chat. Save to enable it globally.
 
-读取其他应用的窗口标题并切换窗口需要 macOS 的“辅助功能”权限，请手动授权：
+These shortcuts work without opening the picker and launch the app if needed. They target an application; use a window's alias when you need a particular project or document. A global binding overrides the same combination in other apps—for example, a browser's numbered-tab shortcut.
 
-1. 打开“系统设置 → 隐私与安全性 → 辅助功能”。在 macOS 27 中，该权限页面名称为 “Device Control and Data Access”。
-2. 点击添加按钮，选择实际运行位置的 `Winlane.app`，并打开开关。
-3. 重新呼出 Winlane 搜索面板，自动读取窗口列表。已授权后不再显示“刷新”按钮。
+## Make it yours
 
-授权对象应是固定安装位置的 `.app`。直接运行 `cargo run` 或可执行文件不会经过上述证书签名流程，系统也可能把权限归到启动它的终端。更换签名身份后，如果旧授权失效，请在系统设置里移除旧项，再添加当前的 `.app`。
+Open Settings from the menu bar or press **Command + ,** while using Winlane.
 
-未授权时可以点击“查看演示”，用示例窗口体验搜索和选择。演示模式中的 Enter 和鼠标选择只更新提示，不读取、激活或修改真实窗口；点击“返回真实窗口”退出演示。
-
-## 操作
-
-| 按键或操作 | 功能 |
+| Settings tab | What you can change |
 | --- | --- |
-| Control + Option + Space（默认，可自定义） | 打开或收起搜索面板 |
-| Command + Tab（切换模式默认，可自定义） | 按住 Command，重复按 Tab 向后选择；松开 Command 确认 |
-| Command + Shift + Tab | 切换模式中反向选择 |
-| Space | 切换模式进入搜索；搜索框为空且未进行输入法选词时返回切换模式 |
-| 输入 alias、应用名、标题或多个关键词 | 筛选窗口；关键词也可以找到已安装应用 |
-| 切换模式中输入 1–2 个字母 | 定位 alias 对应的独立窗口，松开主修饰键确认 |
-| 切换模式中 Backspace | 删除一个 alias 字母；Tab / 方向键清空 alias 并继续移动 |
-| ↓ / Tab | 选择下一项 |
-| ↑ / Shift + Tab | 选择上一项 |
-| Enter / 点击结果 | 切换到所选窗口，或启动所选应用；最小化窗口会尝试恢复 |
-| Esc | 关闭面板 |
-| Command + 1…9 | 未配置为应用快捷键时，切换到搜索结果中的第 1…9 个窗口 |
-| Command + M | 最小化或恢复所选窗口 |
-| Command + H | 隐藏所选应用；之后选择它的窗口并按 Enter 可重新打开 |
-| Command + Shift + C | 复制所选窗口标题到剪贴板 |
-| Command + R | 手动重新读取窗口列表；每次呼出面板也会自动更新 |
-| Command + , / 设置 | 打开原生设置窗口 |
-| 仅当前应用 | 只显示呼出面板前正在使用的应用；演示模式以 Safari 为例 |
+| **Shortcuts** | Separate shortcuts for search and switching, plus fixed app shortcuts. |
+| **Appearance & Language** | System, light, or dark appearance; system language, Chinese, or English. |
+| **Window List** | Sorting, minimized windows, and apps to exclude. Recent sorting reflects selections made through Winlane. |
+| **Startup** | Launch at login and access to macOS login-item settings. |
 
-切换模式中的字母优先用于 alias，包括 ⌘W、⌘Q、⌘M 等组合；相应的窗口操作请先按 Space 进入搜索模式。窗口操作也可以从搜索框下方的“窗口操作”菜单执行。操作快捷键只在搜索面板可见且有结果时启用，在设置界面中不会操作其他应用。Command + W 可关闭当前窗口。
+Click **Save Settings** to apply changes. Language changes update the interface immediately, without a restart. By default, Winlane uses the first supported language in your macOS preferences, falling back to English. The launch-at-login toggle takes effect immediately, independently of Save.
 
-搜索模式呼出后搜索框直接接收输入；松开快捷键修饰键后保持面板打开。切换模式中按 Space 进入搜索后，松开修饰键也不会确认。搜索框有文字时 Space 正常输入空格，中文输入法组合文字时 Space、方向键、Tab、Enter 和 Esc 交由输入法处理。空搜索按 Space 进入切换模式会保留当前选择；如果此时没有按住切换快捷键的主修饰键，可按 Enter 确认，或再次按住该修饰键进行选择、松开确认。
+The search panel's **Window Actions** menu also lets you minimize or restore a window, hide its app, and copy its title. **Command + R** refreshes the list if something looks out of date.
 
-切换过程中保持列表顺序稳定，后台更新在本次选择结束后应用。首次读取尚未完成时，连续选择和松键动作会保留，读取完成后执行；Esc 可以取消等待。窗口候选只接收 Accessibility 返回的标准窗口（`AXWindow` / `AXStandardWindow`），不添加应用占位项，也不把窗口菜单项当作窗口。工具面板、对话框、标签页以及类型无法确认的对象不会单独列出。同一应用的不同真实窗口分别保留，即使标题相同；可按 VS Code 项目名等窗口标题搜索。最小化窗口由设置中的“显示最小化窗口”控制。
+## Privacy and permissions
 
-再次输入相同搜索词时，之前通过 Winlane 选择过的窗口会获得排序优先级。默认排序下，空搜索也优先显示通过 Winlane 选择过的窗口。这个记录只覆盖应用内的选择，不追踪从 Dock、鼠标或其他工具进行的切换，因此不是系统全局的最近使用顺序（MRU）。
+Winlane uses Accessibility access to read and control windows, and a keyboard event filter to handle its shortcuts. It does not log keystrokes, capture window screenshots, or send window data to a server.
 
-## 搜索并启动应用
+Settings and aliases are stored locally. Window titles, search terms, and selection history stay in memory and are discarded when Winlane quits. Copying a window title explicitly places it on the clipboard.
 
-搜索框为空时只显示现有窗口。输入关键词后，窗口结果排在前面，匹配的已安装应用随后显示，使用 `↗` 和“启动应用”区分。Enter 或点击启动项会启动应用并请求置前；应用已在运行但没有窗口时，由应用处理重新打开请求。已有窗口的应用不再重复显示启动项。
-
-支持应用的显示名称、安装包名称和英文名称（取决于应用提供的元数据），也支持多个关键词和首字母匹配。已有的窗口 alias 优先匹配；当该应用没有窗口时，原有的应用 alias 也可以用于启动。开启“仅当前应用”时不显示启动项，排除应用设置同样适用。启动项不会进入切换模式或演示模式。
-
-应用清单从系统与用户的 Applications 目录及 Spotlight 索引读取，过滤应用内的 Helper、系统及 Library 内部组件、废纸篓和挂载的安装镜像。位于其他目录且尚未被 Spotlight 索引的应用可能无法找到。清单在首次进入搜索模式时后台读取并缓存在内存中；再次进入搜索时，超过一分钟会后台更新，⌘R 可立即重新读取。输入关键词只匹配缓存，匹配项的图标按需生成小尺寸副本。
-
-## 多显示器
-
-搜索模式和切换模式会在每个扩展显示器上同时显示一份面板，搜索词、应用范围、候选列表、选中窗口、alias 和提示保持同步。呼出时默认由鼠标所在屏幕的面板接收键盘；点击另一份面板可以继续操作。系统同时只有一个键盘焦点，在 Winlane 面板之间转移焦点不会关闭整组窗口。
-
-确认切换成功、Esc 取消或点击其他应用时，所有面板一起收起。显示器拔插或重新排列时，按显示器标识保留、补建或移除面板，并更新位置；镜像显示器不叠加重复面板。面板按各屏幕的逻辑坐标放置，避开菜单栏和 Dock，并允许显示在各屏幕当前的 Space 中。
-
-## 窗口 alias
-
-每个独立窗口都有一个不重复的 alias，使用一个或两个小写字母，显示在候选行左侧。按应用安装包里的英文名称自动分配：已有的应用 alias 留给一个窗口，其余窗口使用未占用的字母组合，也不会占用其他应用预留的 alias。例如同一应用的三个窗口可能分别获得 `co`、`cd`、`ce`，具体取决于已有分配。`w` 仍保留给 WeChat 的一个窗口，Warp 通常获得 `wa`。
-
-- 切换模式：按住主修饰键呼出，输入行左侧的完整 alias，松键直接切换到那个窗口。输入两字母 alias 时，在第一个字母后继续按住修饰键。切换快捷键也支持 Command + Backquote（`⌘` 加反引号键）。
-- 搜索模式：输入完整 alias，只显示对应的那个窗口；Enter 确认。输入应用名仍可搜索该应用的所有窗口，多关键词搜索保持原行为。
-- 切换模式先匹配当前列表中的完整 alias，否则使用唯一前缀。例如当前只有 `zu`，输入 `z` 可以定位它；如果多个窗口的 alias 都以 `z` 开头，则需要继续输入第二个字母。同一应用的不同窗口也需要区分。
-- Backspace 删除一个字母，Tab 或方向键清空 alias 并继续选择。第三个字母会开始新的 alias。没有匹配或前缀仍有多个候选窗口时，松键会取消。按住快捷键选择期间，后台刷新不会改变当前列表的 alias。
-
-窗口 alias 绑定窗口 ID，刷新、排序、改标题和重启 Winlane 不会重排仍在运行的窗口。窗口关闭后释放额外 alias，应用原有的 alias 继续保留；目标应用退出重开会产生新的窗口 ID，因此额外窗口会重新分配，不承诺跟随某个项目。窗口范围、排除应用和最小化筛选仍然生效。
-
-分配表独立于快捷键设置，以 `WinlaneAliasesV2` 保存应用标识、窗口 ID 和 alias，不保存窗口标题。首次升级读取旧应用分配并保留原数据；“恢复默认设置”不会重置 alias。
-
-## 应用快捷键
-
-在 **设置 → 快捷键 → 配置应用快捷键 → 添加** 中选择一个 `.app` 应用，勾选修饰键并选择按键，最后点击 **保存快捷键**。例如，可以将 Command + 1 绑定到浏览器、Command + 2 绑定到 Discord。支持最多 32 组绑定，默认不占用任何新增快捷键。
-
-组合键在全局立即生效，无需打开搜索或切换面板，也无需回车或松开 Command 确认。应用已经运行时切换到它；没有运行时先启动再切换，重复按键不会创建新进程。绑定面向应用，其多个窗口由 macOS 和目标应用决定置前顺序；需要定位某个独立窗口时仍使用窗口 alias。
-
-应用快捷键优先于搜索、切换模式中的局部操作，也会替代其他应用原有的相同组合键，例如浏览器的 Command + 1 标签页操作。重复组合、与搜索或切换快捷键（含 Shift 反向组合）的冲突会阻止保存。需要 Command、Control、Option 中至少一个修饰键，可以附加 Shift，支持数字、字母及按键菜单中的其他按键。
-
-绑定的应用标识、安装路径和名称随设置保存在本机，重启后保留。应用移动后会尝试按应用标识重新查找；找不到时显示提示，需重新选择应用。移除一行并保存即可释放其快捷键。保存应用快捷键不会覆盖其他尚未保存的设置。
-
-## 设置与登录启动
-
-设置窗口分为四个标签页：
-
-- **快捷键**：搜索模式、切换模式和固定应用快捷键。
-- **外观与语言**：跟随系统、浅色或深色外观；跟随系统、中文或 English 界面。
-- **窗口列表**：按最近切换、应用名或标题排序，显示最小化窗口，以及排除应用。
-- **启动**：登录时自动启动和系统登录项管理。
-
-语言默认跟随 macOS 的首选语言顺序，在中文和英文中选择第一个匹配项；没有匹配时使用英文。手动选择优先于系统语言，保存后立即更新菜单、搜索与切换面板、设置和应用快捷键窗口，无需重启。旧配置自动使用“跟随系统”，原有快捷键、筛选和 alias 保留。
-
-排除规则按列表中显示的完整应用名匹配，忽略大小写，用中英文逗号或换行分隔。
-
-两组快捷键不能相同，也不能让搜索快捷键占用切换模式的 Shift 反向组合。切换快捷键不能使用 Space，因为它用于模式切换。Command + Tab 和 Command + Backquote 可以直接使用；其他组合需包含 Control 或 Option，可搭配 Shift、Command 和所列按键。如果切换快捷键本身没有 Shift，额外按 Shift 会反向选择。多个修饰键同时使用时，主修饰键按 Command、Control、Option 的顺序确定，松开该键才确认。
-
-新组合通过校验、监听成功并保存后替换旧组合；失败时保留原设置。点击“保存设置”后立即生效，下次启动仍然有效。“恢复默认设置”先填入默认值，保存后应用。如果旧版把搜索设为 Command + Tab，升级会保留搜索绑定，并将新增的切换绑定设为 Option + Tab；可以在设置中重新分配。
-
-全局快捷键需要辅助功能授权。Winlane 运行期间接管配置的组合；退出或修改快捷键时移除监听，不修改系统快捷键配置。若 Contexts 等工具接管同一组合，需要避免同时启用；安全输入或更早拦截按键的工具可能影响触发。设置中会显示监听是否启用，但无法检测所有第三方工具的拦截。重新授权后会自动尝试恢复监听。
-
-“登录时自动启动”独立于保存按钮，默认关闭，点击后立即通过 macOS 的 [SMAppService](https://developer.apple.com/documentation/servicemanagement/smappservice) 更新。若系统要求允许，界面会显示等待状态，点击“管理登录项”自行完成。已获得辅助功能权限时，应用启动后只保留菜单栏入口；未授权时才自动显示权限提示。按全局快捷键、点击菜单栏入口或再次打开正在运行的应用，仍可显示搜索面板。旧版本保存的“启动时显示搜索面板”设置不再生效。恢复默认设置不会更改系统的登录启动状态。
-
-## 数据与权限
-
-窗口标题、搜索词和选择记录仅保存在进程内存中，退出后清空，不写入历史文件或上传。主动使用“复制窗口标题”时，所选标题会写入系统剪贴板。快捷键、外观、筛选及窗口 alias 通过 NSUserDefaults 保存在应用的本机偏好中。应用通过 Accessibility 读取窗口。全局快捷键统一使用需要辅助功能授权的 CoreGraphics 事件过滤，只比较按键和修饰键，不记录输入内容，也不采集窗口截图。仅拦截配置的快捷键及切换模式中的 Tab、方向键、字母、Backspace、Space、Enter、Esc；搜索模式的文字输入交由 AppKit 和输入法处理。
-
-## 当前边界
-
-- 窗口枚举同时读取应用的窗口列表、主窗口和焦点窗口，并与系统窗口清单核对，补齐其他 Space 上的独立窗口。普通列表仍未返回的窗口，通过可选的 macOS AX 私有接口查找真实窗口对象，每个应用每轮扫描约 250 毫秒，刷新时可继续扫描；系统接口变化时这一补充能力可能不可用。不会通过隐藏应用或切换桌面来枚举窗口，也不把菜单项或标签页补成候选。
-- 跨 Space 切换受 macOS“桌面与程序坞 → 调度中心 → 切换到某个应用程序时，切换到包含该应用程序打开窗口的空间”设置及目标应用行为影响。Winlane 不移动窗口所属的 Space。可参考 [Apple 的多空间说明](https://support.apple.com/guide/mac-help/mh14112/mac)。
-- 部分应用没有完整实现 Accessibility 接口，可能不提供窗口、标题或恢复与聚焦操作。读取超时会延长等待并重试一次，扫描在最多四个后台线程中进行。仍无法读取或无法确认类型的窗口不会进入列表；仅扫描 macOS 标记为普通应用（Regular）的进程，排除菜单栏附件与后台辅助进程。窗口关闭后需要刷新列表。
-- 目前没有常驻侧栏，也不跟踪系统全局的窗口使用顺序。
-
-## 参考项目
-
-- [Contexts](https://contexts.co/)：窗口搜索和键盘切换的产品参考。
-- [青简 Qingjian](https://github.com/qingjian-team/qingjian)：以 Rust 实现原生桌面能力的项目参考；青简本身是输入法。
-
-Winlane 的实现为独立编写，没有复制青简的源码。
-
-## 开发检查
+## Development
 
 ```sh
 RUSTC_WRAPPER= cargo test --locked
@@ -175,36 +75,4 @@ RUSTC_WRAPPER= cargo clippy --locked --all-targets -- -D warnings
 cargo fmt --all -- --check
 ```
 
-搜索测试使用内存中的样例数据；alias 测试覆盖自动分配、冲突、持久化往返、应用身份、窗口唯一分配、标题及排序变化、重启恢复、多窗口筛选及按住 Command 输入字母；快捷键测试覆盖重复按键、反向选择、松键确认、模式切换、提前松键、输入法空格条件和旧设置迁移。真实窗口枚举、最小化恢复和跨 Space 切换需要在授权后的 macOS 桌面环境中人工验证。
-
-多屏测试覆盖左右与上下排列、负坐标、镜像屏幕、焦点屏幕选择和拔插后的布局。macOS 原生控件检查在主线程运行，在连接的显示器上创建隐藏面板，检查布局及搜索、筛选、选择和模式同步；不会呼出面板、注册快捷键或修改偏好。实际点击转移焦点、全屏 Space 覆盖和物理拔插仍需交互验证。
-
-应用搜索测试覆盖空搜索隐藏、名称与关键词匹配、窗口去重、排除规则、alias、窗口和启动项混合选择、刷新时保留选中应用，以及应用出现真实窗口后的选择迁移。目录检查使用临时应用包，覆盖子目录、重复安装、符号链接循环、Helper 和内部组件过滤。以下命令只读扫描本机已安装应用，不启动它们：
-
-```sh
-RUSTC_WRAPPER= WINLANE_APP_SCAN=1 cargo test --locked --test native_panels
-```
-
-应用快捷键测试覆盖旧设置迁移、保存往返、数字键映射、冲突校验、长按抑制、松键不重复确认，以及原生设置控件的添加、移除和回填。可运行下列检查，以临时后台应用验证选中搜索结果后从未运行状态启动、复用已有进程和拒绝错误应用标识；检查完成后退出并移除测试应用，不操作日常应用。真实应用的前台激活、最小化恢复及跨 Space 行为仍需交互验证。
-
-```sh
-RUSTC_WRAPPER= WINLANE_LAUNCH_SMOKE=1 cargo test --locked --test native_panels
-```
-
-如果测试进程已有辅助功能权限，可以只读检查指定应用的真实窗口枚举。以下命令连续扫描 12 次，要求每次至少识别到 3 个独立 VS Code 窗口；请按实际打开的窗口数量设置 `WINLANE_EXPECT_WINDOWS`，或省略它以仅输出结果。检查不会激活窗口、显示面板或修改设置，日志只包含数量、耗时和窗口 ID。
-
-```sh
-RUSTC_WRAPPER= WINLANE_SCAN_BUNDLE=com.microsoft.VSCode WINLANE_EXPECT_WINDOWS=3 cargo test --release --locked --test native_panels
-```
-
-加入 `WINLANE_SCAN_TRANSITIONS=1` 可以验证当前窗口变化时的补查：使用至少 3 个真实窗口的 AX 对象，依次模拟系统只返回其中一个窗口，再检查补查能否找回其余窗口，并覆盖空列表、窗口移除及新增。这个检查替换测试中的窗口清单，不会实际切换 Space、关闭或激活窗口。
-
-性能基准使用隐藏面板、24 个模拟窗口和本机应用图标，执行 120 次选择移动和 50 次搜索。不会操作真实窗口或修改快捷键；可以用 `WINLANE_BENCH_WINDOWS` 调整候选数量。
-
-```sh
-RUSTC_WRAPPER= WINLANE_BENCHMARK=1 cargo test --release --locked --test native_panels
-```
-
-输出面板初始化、首次列表构建、选择与搜索的中位数/P95，以及 `ps` RSS 和 `vmmap` physical footprint。计时只覆盖隐藏面板的界面更新，不包含真实窗口枚举、上屏绘制或目标应用激活；内存数字也不能直接等同于日常运行的应用。对比时保持显示器、候选数量和编译配置一致。
-
-列表复用行控件，图标按进程共享；刷新应用清单时清理已退出应用的缓存。关闭面板后停止重绘，启动时按需创建面板。快捷键和后台扫描结果通过主线程事件源唤醒处理，每秒定时器仅负责权限与监听健康检查。
+See the [development guide](docs/development.md) for signing, debug builds, native diagnostics, and platform limitations. The current build targets the host architecture and is not notarized.

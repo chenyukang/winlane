@@ -6,7 +6,7 @@ usage() {
     printf 'Build dist/Winlane.app using the Windowlane Development signing identity.\n'
     printf 'Override with WINLANE_SIGNING_IDENTITY (exact certificate name or SHA-1).\n'
     printf 'Use --adhoc only for disposable builds; permissions may reset after rebuilding.\n'
-    printf 'The app is not installed or launched. See README.md for one-time certificate setup.\n'
+    printf 'The app is not installed or launched. See docs/development.md for one-time certificate setup.\n'
 }
 
 profile=release
@@ -37,7 +37,7 @@ if [[ "$adhoc" == false ]]; then
         sort -u)
     if [[ ! "$signing_identity" =~ ^[[:xdigit:]]{40}$ ]]; then
         printf 'Expected one code-signing identity matching: %s\n' "$requested_identity" >&2
-        printf 'Create Windowlane Development in Keychain Access (README.md: development signing).\n' >&2
+        printf 'Create Windowlane Development in Keychain Access (docs/development.md: development signing).\n' >&2
         printf 'For multiple matches, set WINLANE_SIGNING_IDENTITY to the certificate SHA-1.\n' >&2
         printf 'Refusing to silently fall back to ad hoc signing.\n' >&2
         exit 1
