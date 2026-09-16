@@ -82,6 +82,10 @@ fn command_tab_is_accepted_and_survives_saved_preferences() {
             command: true,
             key: "Tab".into(),
         },
+        switch_shortcut: Shortcut {
+            key: "Tab".into(),
+            ..Shortcut::default()
+        },
         ..Config::default()
     };
     assert!(config.shortcut.hotkey().is_ok());

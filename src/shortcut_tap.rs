@@ -6,7 +6,7 @@ use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::ptr;
 use std::sync::mpsc::{self, Receiver, Sender};
-use winlane::shortcuts::{CommandTabAction, CommandTabState, FLAGS_CHANGED, KEY_DOWN, KEY_UP};
+use winlane::shortcuts::{Action, Binding, FLAGS_CHANGED, KEY_DOWN, KEY_UP, ShortcutRouter};
 
 type EventRef = *mut c_void;
 type TapCallback = unsafe extern "C" fn(*mut c_void, u32, EventRef, *mut c_void) -> EventRef;
@@ -30,26 +30,30 @@ unsafe extern "C" {
 }
 
 struct TapState {
-    keys: RefCell<CommandTabState>,
-    actions: Sender<CommandTabAction>,
+    keys: RefCell<ShortcutRouter>,
+    actions: Sender<Action>,
     port: Cell<CFMachPortRef>,
 }
 
-pub struct CommandTabTap {
+pub struct ShortcutTap {
     port: CFMachPort,
     source: CFRunLoopSource,
     _state: Box<TapState>,
     _main_thread: MainThreadMarker,
 }
 
-impl CommandTabTap {
-    pub fn new(mtm: MainThreadMarker) -> Result<(Self, Receiver<CommandTabAction>), String> {
+impl ShortcutTap {
+    pub fn new(
+        mtm: MainThreadMarker,
+        search: Binding,
+        switch: Binding,
+    ) -> Result<(Self, Receiver<Action>), String> {
         if !crate::accessibility::is_trusted() {
-            return Err("启用 ⌘Tab 需要先在系统设置中允许 Winlane 控制应用。".into());
+            return Err("启用全局快捷键需要先在系统设置中允许 Winlane 控制应用。".into());
         }
         let (actions, receiver) = mpsc::channel();
         let mut state = Box::new(TapState {
-            keys: RefCell::new(CommandTabState::default()),
+            keys: RefCell::new(ShortcutRouter::new(search, switch)),
             actions,
             port: Cell::new(ptr::null_mut()),
         });
@@ -66,7 +70,7 @@ impl CommandTabTap {
             )
         };
         if raw.is_null() {
-            return Err("未能启用 ⌘Tab。请检查 Winlane 的系统授权，再保存设置重试。".into());
+            return Err("未能启用全局快捷键。请检查 Winlane 的系统授权，再保存设置重试。".into());
         }
         // SAFETY: Create returned a non-null, retained Mach port owned here.
         let port = unsafe { CFMachPort::wrap_under_create_rule(raw) };
@@ -88,9 +92,29 @@ impl CommandTabTap {
             _main_thread: mtm,
         };
         if !tap.is_enabled() {
-            return Err("⌘Tab 监听未启用，请检查系统授权。".into());
+            return Err("快捷键监听未启用，请检查系统授权。".into());
         }
         Ok((tap, receiver))
+    }
+
+    pub fn open_search(&self) -> Action {
+        self._state.keys.borrow_mut().open_search()
+    }
+
+    pub fn enter_switch(&self, flags: u64) -> Action {
+        self._state.keys.borrow_mut().enter_switch(flags)
+    }
+
+    pub fn finish(&self, session: u64) {
+        self._state.keys.borrow_mut().finish(session);
+    }
+
+    pub fn resume_search(&self, session: u64) {
+        self._state.keys.borrow_mut().resume_search(session);
+    }
+
+    pub fn cancel(&self) {
+        self._state.keys.borrow_mut().cancel();
     }
 
     pub fn is_enabled(&self) -> bool {
@@ -99,7 +123,7 @@ impl CommandTabTap {
     }
 }
 
-impl Drop for CommandTabTap {
+impl Drop for ShortcutTap {
     fn drop(&mut self) {
         // SAFETY: Destruction runs on the same thread as callbacks. Invalidate
         // before releasing the run-loop source and callback context.
@@ -117,12 +141,12 @@ unsafe extern "C" fn callback(
     if user_info.is_null() {
         return event;
     }
-    // SAFETY: CommandTabTap owns this context until after invalidating the port.
+    // SAFETY: ShortcutTap owns this context until after invalidating the port.
     // The callback runs on the main run loop and never calls AppKit or waits.
     let state = unsafe { &*user_info.cast::<TapState>() };
     if event_type == TAP_DISABLED_TIMEOUT || event_type == TAP_DISABLED_USER {
         if let Ok(mut keys) = state.keys.try_borrow_mut() {
-            *keys = CommandTabState::default();
+            let _ = state.actions.send(keys.cancel());
         }
         if event_type == TAP_DISABLED_TIMEOUT {
             // SAFETY: The tap retains its own port while a callback is in flight.

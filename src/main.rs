@@ -5,9 +5,9 @@ mod accessibility;
 #[cfg(target_os = "macos")]
 mod app;
 #[cfg(target_os = "macos")]
-mod command_tab;
-#[cfg(target_os = "macos")]
 mod settings;
+#[cfg(target_os = "macos")]
+mod shortcut_tap;
 #[cfg(target_os = "macos")]
 mod window_server;
 

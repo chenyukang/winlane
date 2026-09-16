@@ -1,6 +1,6 @@
 [package]
 name = "winlane"
-version = "0.2.11"
+version = "0.5.3"
 edition = "2024"
 description = "A native macOS window search and switcher"
 license = "MIT"
@@ -19,3 +19,8 @@ objc2-service-management = "0.3.2"
 lto = "thin"
 # Unstripped proc macros avoid the macOS 27 loader issue in rust-lang/rust#157750.
 strip = "none"
+
+[[test]]
+name = "native_panels"
+path = "tests/native_panels.rs"
+harness = false

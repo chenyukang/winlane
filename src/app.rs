@@ -1,52 +1,79 @@
 use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
-use global_hotkey::hotkey::HotKey;
-use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject, Sel};
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::*;
 use objc2_foundation::{
-    MainThreadMarker, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRect, NSRunLoop,
-    NSRunLoopCommonModes, NSSize, NSString, NSTimer, NSURL, ns_string,
+    MainThreadMarker, NSBundle, NSNotification, NSNumber, NSObject, NSObjectProtocol, NSPoint,
+    NSRect, NSRunLoop, NSRunLoopCommonModes, NSSize, NSString, NSTimer, NSURL, ns_string,
 };
-use winlane::config::{Config, Shortcut, visible_matches};
+use winlane::aliases::{AliasInput, Aliases, AppIdentity, matching_alias_position};
+use winlane::config::{Config, visible_matches};
+use winlane::displays::{Display, Rect, placements};
 use winlane::search::WindowInfo;
-use winlane::shortcuts::{CommandTabAction, PanelCommand, PressLatch, panel_command};
+use winlane::shortcuts::{
+    Action, ActionKind, PanelCommand, PanelMode, SPACE, SwitchSelection, panel_command,
+    space_changes_mode,
+};
 
 use crate::accessibility;
-use crate::command_tab::CommandTabTap;
 use crate::settings::{self, SettingsWindow};
+use crate::shortcut_tap::ShortcutTap;
 
-const WIDTH: f64 = 660.0;
+const WIDTH: f64 = 700.0;
 const HEIGHT: f64 = 590.0;
-const ROW_HEIGHT: f64 = 64.0;
-const LIST_HEIGHT: f64 = 372.0;
+const ROW_HEIGHT: f64 = 28.0;
+const LIST_TOP: f64 = 484.0;
+const LIST_BOTTOM: f64 = 36.0;
+const LIST_WIDTH: f64 = WIDTH - 20.0;
+
+struct PanelUi {
+    display_id: u32,
+    shortcut_label: Retained<NSTextField>,
+    scope: Retained<NSButton>,
+    panel: Retained<SearchPanel>,
+    input: Retained<NSSearchField>,
+    scroll: Retained<NSScrollView>,
+    list: Retained<ListView>,
+    footer: Retained<NSTextField>,
+    help: Retained<NSButton>,
+    demo_button: Retained<NSButton>,
+    refresh_button: Retained<NSButton>,
+    mode_label: Retained<NSTextField>,
+    actions: Retained<NSPopUpButton>,
+}
 
 #[derive(Default)]
 struct AppState {
+    panels: RefCell<Vec<Rc<PanelUi>>>,
+    query: RefCell<String>,
+    current_app_only: Cell<bool>,
+    keyboard_display: Cell<Option<u32>>,
+    changing_displays: Cell<bool>,
+    syncing_controls: Cell<bool>,
+    check_panel_focus: Cell<bool>,
     config: RefCell<Config>,
+    aliases: RefCell<Aliases>,
+    identities: RefCell<HashMap<i32, AppIdentity>>,
+    alias_input: RefCell<AliasInput>,
+    alias_error: RefCell<Option<String>>,
+    aliases_writable: Cell<bool>,
     settings: OnceCell<SettingsWindow>,
-    shortcut_label: OnceCell<Retained<NSTextField>>,
     show_menu_item: OnceCell<Retained<NSMenuItem>>,
-    scope: OnceCell<Retained<NSButton>>,
-    panel: OnceCell<Retained<SearchPanel>>,
-    input: OnceCell<Retained<NSSearchField>>,
-    list: OnceCell<Retained<ListView>>,
-    footer: OnceCell<Retained<NSTextField>>,
-    help: OnceCell<Retained<NSButton>>,
-    demo_button: OnceCell<Retained<NSButton>>,
-    refresh_button: OnceCell<Retained<NSButton>>,
     status_item: OnceCell<Retained<NSStatusItem>>,
     timer: OnceCell<Retained<NSTimer>>,
-    hotkey_manager: RefCell<Option<GlobalHotKeyManager>>,
-    hotkey: Cell<Option<HotKey>>,
-    hotkey_press: RefCell<PressLatch>,
-    command_tab: RefCell<Option<CommandTabTap>>,
-    command_tab_rx: RefCell<Option<Receiver<CommandTabAction>>>,
+    shortcut_tap: RefCell<Option<ShortcutTap>>,
+    shortcut_rx: RefCell<Option<Receiver<Action>>>,
     shortcut_check_tick: Cell<u32>,
+    mode: Cell<Option<PanelMode>>,
+    session: Cell<u64>,
+    switch_selection: RefCell<Option<SwitchSelection>>,
+    switch_anchor: Cell<Option<u64>>,
+    deferred_windows: RefCell<Option<Vec<WindowInfo>>>,
     hotkey_error: RefCell<Option<String>>,
     windows: RefCell<Vec<WindowInfo>>,
     matches: RefCell<Vec<usize>>,
@@ -77,6 +104,17 @@ define_class!(
                 let composing = self.firstResponder()
                     .and_then(|responder| responder.downcast::<NSTextView>().ok())
                     .is_some_and(|editor| NSTextInputClient::hasMarkedText(&*editor));
+                if i64::from(event.keyCode()) == SPACE {
+                    let delegate: Option<Retained<Delegate>> = unsafe { msg_send![self, delegate] };
+                    if let Some(delegate) = delegate {
+                        let mode = delegate.ivars().mode.get().unwrap_or(PanelMode::Search);
+                        let empty = delegate.ivars().query.borrow().is_empty();
+                        if space_changes_mode(mode, empty, composing) {
+                            if !event.isARepeat() { delegate.toggle_mode(event.modifierFlags().bits() as u64); }
+                            return;
+                        }
+                    }
+                }
                 if let Some(command) = panel_command(i64::from(event.keyCode()), event.modifierFlags().bits() as u64, composing) {
                     // SAFETY: build_ui installs our retained Delegate as this panel's sole delegate.
                     let delegate: Option<Retained<Delegate>> = unsafe { msg_send![self, delegate] };
@@ -132,29 +170,51 @@ define_class!(
                 Ok(config) => { self.ivars().config.replace(config); }
                 Err(error) => { self.ivars().hotkey_error.replace(Some(error)); }
             }
+            match settings::load_aliases() {
+                Ok(aliases) => {
+                    self.ivars().aliases.replace(aliases);
+                    self.ivars().aliases_writable.set(true);
+                }
+                Err(error) => { self.ivars().alias_error.replace(Some(error)); }
+            }
             settings::apply_appearance(&self.ivars().config.borrow(), self.mtm());
             self.build_ui();
-            self.register_hotkey();
-            if !accessibility::is_trusted() { self.show(); }
+            self.register_hotkeys();
+            if !accessibility::is_trusted() { self.show(); } else { self.refresh(); }
         }
         #[unsafe(method(applicationShouldHandleReopen:hasVisibleWindows:))]
         fn reopen(&self, _: &NSApplication, _: bool) -> bool { self.show(); true }
+        #[unsafe(method(applicationDidChangeScreenParameters:))]
+        fn screens_changed(&self, _: &NSNotification) {
+            if self.ivars().status_item.get().is_some() {
+                self.sync_displays();
+                self.render();
+                if self.ivars().mode.get().is_some() { self.present_panels(); }
+            }
+        }
     }
     unsafe impl NSWindowDelegate for Delegate {
         #[unsafe(method(windowDidBecomeKey:))]
         fn became_key(&self, _: &NSNotification) {
+            self.ivars().check_panel_focus.set(false);
             self.focus_search();
         }
         #[unsafe(method(windowShouldClose:))]
         fn should_close(&self, _: &NSWindow) -> bool { self.dismiss(); false }
         #[unsafe(method(windowDidResignKey:))]
         fn resigned(&self, _: &NSNotification) {
-            if let Some(panel) = self.ivars().panel.get() { panel.orderOut(None); }
+            self.ivars().check_panel_focus.set(true);
         }
     }
     unsafe impl NSControlTextEditingDelegate for Delegate {
         #[unsafe(method(controlTextDidChange:))]
-        fn text_changed(&self, _: &NSNotification) { self.filter(); }
+        fn text_changed(&self, notification: &NSNotification) {
+            if self.ivars().syncing_controls.get() { return; }
+            if let Some(input) = notification.object().and_then(|object| object.downcast::<NSSearchField>().ok()) {
+                self.ivars().query.replace(input.stringValue().to_string());
+                self.filter();
+            }
+        }
         #[unsafe(method(control:textView:doCommandBySelector:))]
         fn text_command(&self, _: &NSControl, editor: &NSTextView, command: Sel) -> bool {
             if NSTextInputClient::hasMarkedText(editor) { false }
@@ -176,7 +236,7 @@ define_class!(
         fn validate_menu_item(&self, item: &NSMenuItem) -> bool {
             let action = item.action();
             if [sel!(minimizeChosen:), sel!(hideChosen:), sel!(copyTitle:), sel!(quickSelect:)].into_iter().any(|sel| action == Some(sel)) {
-                let visible = self.ivars().panel.get().is_some_and(|panel| panel.isVisible());
+                let visible = self.any_panel_visible();
                 visible && if action == Some(sel!(quickSelect:)) {
                     (item.tag() as usize) < self.ivars().matches.borrow().len()
                 } else { self.selected_window().is_some() }
@@ -186,7 +246,8 @@ define_class!(
     impl Delegate {
         #[unsafe(method(showSettings:))]
         fn settings_action(&self, _: Option<&AnyObject>) {
-            self.ivars().panel.get().unwrap().orderOut(None);
+            self.cancel_routing();
+            self.end_session();
             let settings = self.ivars().settings.get_or_init(|| SettingsWindow::new(self, self.mtm()));
             NSApplication::sharedApplication(self.mtm()).activate();
             settings.show(&self.ivars().config.borrow());
@@ -215,14 +276,17 @@ define_class!(
         #[unsafe(method(manageLogin:))]
         fn manage_login(&self, _: Option<&AnyObject>) { settings::manage_login(); }
         #[unsafe(method(changeScope:))]
-        fn change_scope(&self, _: Option<&AnyObject>) { self.filter(); }
+        fn change_scope(&self, sender: &NSButton) {
+            self.ivars().current_app_only.set(sender.state() == NSControlStateValueOn);
+            self.filter();
+        }
         #[unsafe(method(minimizeChosen:))]
         fn minimize_chosen(&self, _: Option<&AnyObject>) { self.minimize_selected(); }
         #[unsafe(method(hideChosen:))]
         fn hide_chosen(&self, _: Option<&AnyObject>) { self.hide_selected(); }
         #[unsafe(method(copyTitle:))]
         fn copy_title(&self, _: Option<&AnyObject>) {
-            if !self.ivars().panel.get().unwrap().isVisible() { return; }
+            if !self.any_panel_visible() { return; }
             if let Some(window) = self.selected_window() {
                 let pasteboard = NSPasteboard::generalPasteboard();
                 pasteboard.clearContents();
@@ -234,7 +298,7 @@ define_class!(
         }
         #[unsafe(method(quickSelect:))]
         fn quick_select(&self, sender: &NSMenuItem) {
-            if !self.ivars().panel.get().unwrap().isVisible() { return; }
+            if !self.any_panel_visible() { return; }
             if (sender.tag() as usize) < self.ivars().matches.borrow().len() {
                 self.ivars().selected.set(sender.tag() as usize);
                 self.render(); self.activate_selected();
@@ -242,11 +306,13 @@ define_class!(
         }
         #[unsafe(method(showSearch:))]
         fn show_action(&self, _: Option<&AnyObject>) { self.show(); }
+        #[unsafe(method(showSwitcher:))]
+        fn switch_action(&self, _: Option<&AnyObject>) { self.open_switcher(); }
         #[unsafe(method(closeWindow:))]
         fn close_window(&self, _: Option<&AnyObject>) {
             if let Some(settings) = self.ivars().settings.get() && settings.window.isKeyWindow() {
                 settings.window.close();
-            } else if self.ivars().panel.get().unwrap().isKeyWindow() { self.dismiss(); }
+            } else if self.any_panel_key() { self.dismiss(); }
         }
         #[unsafe(method(refreshWindows:))]
         fn refresh_action(&self, _: Option<&AnyObject>) {
@@ -269,7 +335,7 @@ define_class!(
         fn toggle_demo(&self, _: Option<&AnyObject>) {
             let state = self.ivars();
             state.demo.set(!state.demo.get());
-            state.input.get().unwrap().setStringValue(ns_string!(""));
+            state.query.borrow_mut().clear();
             if state.demo.get() {
                 state.windows.replace(demo_windows());
                 state.loading.set(false);
@@ -278,33 +344,41 @@ define_class!(
         }
         #[unsafe(method(poll:))]
         fn poll(&self, _: &NSTimer) {
-            self.check_command_tab();
-            let actions: Vec<_> = self.ivars().command_tab_rx.borrow().as_ref()
+            if self.ivars().check_panel_focus.replace(false)
+                && !self.ivars().changing_displays.get()
+                && !self.any_panel_key()
+            { self.end_session(); }
+            self.check_shortcuts();
+            let actions: Vec<_> = self.ivars().shortcut_rx.borrow().as_ref()
                 .map(|rx| rx.try_iter().collect()).unwrap_or_default();
-            for action in actions { self.command_tab_action(action); }
-            while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
-                if self.ivars().hotkey.get().is_some_and(|key| key.id() == event.id) {
-                    let first_press = self.ivars().hotkey_press.borrow_mut().update(event.state == HotKeyState::Pressed);
-                    if first_press {
-                        let panel = self.ivars().panel.get().unwrap();
-                        if panel.isKeyWindow() { self.dismiss(); } else { self.show(); }
-                    }
-                }
-            }
+            for action in actions { self.shortcut_action(action); }
             let result = self.ivars().receiver.borrow().as_ref().map(|rx| rx.try_recv());
             if let Some(Ok(mut windows)) = result {
                 self.ivars().receiver.replace(None);
                 self.ivars().loading.set(false);
                 if !self.ivars().demo.get() {
                     if !accessibility::is_trusted() { windows.clear(); }
-                    let selected_id = self.selected_window().map(|window| window.id);
-                    self.ivars().windows.replace(windows);
-                    self.filter_preserving(selected_id);
+                    self.update_aliases(&windows);
+                    let snapshot_ready = self.ivars().switch_selection.borrow().as_ref()
+                        .is_some_and(|selection| selection.selected().is_some());
+                    if self.ivars().mode.get() == Some(PanelMode::Switch) && snapshot_ready {
+                        self.ivars().deferred_windows.replace(Some(windows));
+                        self.select_alias();
+                        self.render();
+                        self.commit_switch_if_ready();
+                    } else {
+                        let selected_id = self.selected_window().map(|window| window.id);
+                        self.ivars().windows.replace(windows);
+                        self.filter_preserving(selected_id);
+                        self.prepare_switch_selection();
+                        self.commit_switch_if_ready();
+                    }
                 }
             } else if matches!(result, Some(Err(TryRecvError::Disconnected))) {
                 self.ivars().receiver.replace(None);
                 self.ivars().loading.set(false);
                 self.render();
+                if self.ivars().mode.get().is_some() { self.switch_to_search(); }
                 self.report_switch_error("读取窗口失败，请按 ⌘R 重试。");
             }
         }
@@ -388,145 +462,7 @@ impl Delegate {
         window_item.setSubmenu(Some(&window_menu));
         main_menu.addItem(&window_item);
         app.setMainMenu(Some(&main_menu));
-        // SAFETY: We own the window and disable AppKit's release-on-close behavior below.
-        let panel: Retained<SearchPanel> = unsafe {
-            msg_send![super(SearchPanel::alloc(mtm).set_ivars(())), initWithContentRect:
-                rect(0.0, 0.0, WIDTH, HEIGHT),
-                styleMask: NSWindowStyleMask::Titled
-                    | NSWindowStyleMask::Closable
-                    | NSWindowStyleMask::FullSizeContentView
-                    | NSWindowStyleMask::NonactivatingPanel,
-                backing: NSBackingStoreType::Buffered,
-                defer: false]
-        };
-        unsafe { panel.setReleasedWhenClosed(false) };
-        panel.setTitle(ns_string!("Winlane"));
-        panel.setTitleVisibility(NSWindowTitleVisibility::Hidden);
-        panel.setTitlebarAppearsTransparent(true);
-        panel.setLevel(NSFloatingWindowLevel);
-        panel.setCollectionBehavior(
-            NSWindowCollectionBehavior::MoveToActiveSpace
-                | NSWindowCollectionBehavior::FullScreenAuxiliary,
-        );
-        panel.setDelegate(Some(ProtocolObject::from_ref(self)));
-        panel.setHidesOnDeactivate(false);
-        panel.setBecomesKeyOnlyIfNeeded(false);
-        panel.setMovableByWindowBackground(true);
-        let root = NSVisualEffectView::initWithFrame(
-            NSVisualEffectView::alloc(mtm),
-            rect(0.0, 0.0, WIDTH, HEIGHT),
-        );
-        root.setMaterial(NSVisualEffectMaterial::Popover);
-        root.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
-        root.setState(NSVisualEffectState::Active);
-        panel.setContentView(Some(&root));
-
-        let brand = label("Winlane", 15.0, rect(90.0, 546.0, 270.0, 25.0), mtm);
-        brand.setTextColor(Some(&NSColor::secondaryLabelColor()));
-        root.addSubview(&brand);
-        let shortcut = label(
-            &self.ivars().config.borrow().shortcut.display(),
-            12.0,
-            rect(420.0, 548.0, 206.0, 21.0),
-            mtm,
-        );
-        shortcut.setAlignment(NSTextAlignment::Right);
-        shortcut.setTextColor(Some(&NSColor::tertiaryLabelColor()));
-        root.addSubview(&shortcut);
-        self.ivars().shortcut_label.set(shortcut).unwrap();
-
-        let input = NSSearchField::initWithFrame(
-            NSSearchField::alloc(mtm),
-            rect(22.0, 492.0, WIDTH - 44.0, 38.0),
-        );
-        input.setFont(Some(&NSFont::systemFontOfSize(20.0)));
-        input.setPlaceholderString(Some(ns_string!("搜索应用或窗口标题…")));
-        input.setSendsSearchStringImmediately(true);
-        input.setMaximumRecents(0);
-        panel.setInitialFirstResponder(Some(&input));
-        unsafe {
-            input.setDelegate(Some(ProtocolObject::from_ref(self)));
-            root.addSubview(&input);
-        }
-        let scope = self.button(
-            "仅当前应用",
-            sel!(changeScope:),
-            rect(22.0, 454.0, 280.0, 25.0),
-        );
-        scope.setButtonType(NSButtonType::Switch);
-        scope.setToolTip(Some(ns_string!(
-            "只显示呼出面板前正在使用的应用；演示模式以 Safari 为例。"
-        )));
-        root.addSubview(&scope);
-        self.ivars().scope.set(scope).unwrap();
-        let actions = NSPopUpButton::initWithFrame_pullsDown(
-            NSPopUpButton::alloc(mtm),
-            rect(480.0, 451.0, 160.0, 29.0),
-            true,
-        );
-        let actions_menu = NSMenu::new(mtm);
-        let heading = NSMenuItem::new(mtm);
-        heading.setTitle(ns_string!("窗口操作"));
-        actions_menu.addItem(&heading);
-        self.add_window_actions(&actions_menu);
-        actions.setMenu(Some(&actions_menu));
-        root.addSubview(&actions);
-
-        let scroll = NSScrollView::initWithFrame(
-            NSScrollView::alloc(mtm),
-            rect(10.0, 76.0, WIDTH - 20.0, LIST_HEIGHT),
-        );
-        scroll.setHasVerticalScroller(true);
-        scroll.setAutohidesScrollers(true);
-        scroll.setDrawsBackground(false);
-        scroll.setBorderType(NSBorderType::NoBorder);
-        let list: Retained<ListView> = unsafe {
-            msg_send![ListView::alloc(mtm), initWithFrame: rect(0.0, 0.0, WIDTH - 36.0, LIST_HEIGHT)]
-        };
-        scroll.setDocumentView(Some(&list));
-        root.addSubview(&scroll);
-
-        let footer = label(
-            "正在准备窗口列表…",
-            12.0,
-            rect(24.0, 43.0, 480.0, 24.0),
-            mtm,
-        );
-        footer.setTextColor(Some(&NSColor::secondaryLabelColor()));
-        root.addSubview(&footer);
-        let help = self.button(
-            "辅助功能设置…",
-            sel!(openPermissions:),
-            rect(22.0, 12.0, 138.0, 25.0),
-        );
-        root.addSubview(&help);
-        let demo_button = self.button(
-            "查看演示",
-            sel!(toggleDemo:),
-            rect(170.0, 12.0, 100.0, 25.0),
-        );
-        root.addSubview(&demo_button);
-        let refresh = self.button(
-            "刷新 ↻",
-            sel!(refreshWindows:),
-            rect(WIDTH - 100.0, 41.0, 76.0, 25.0),
-        );
-        refresh.setHidden(accessibility::is_trusted());
-        root.addSubview(&refresh);
-        let settings_button = self.button(
-            "设置…  ⌘,",
-            sel!(showSettings:),
-            rect(WIDTH - 112.0, 12.0, 90.0, 25.0),
-        );
-        root.addSubview(&settings_button);
-
-        self.ivars().panel.set(panel).unwrap();
-        self.ivars().input.set(input).unwrap();
-        self.ivars().list.set(list).unwrap();
-        self.ivars().footer.set(footer).unwrap();
-        self.ivars().help.set(help).unwrap();
-        self.ivars().demo_button.set(demo_button).unwrap();
-        self.ivars().refresh_button.set(refresh).unwrap();
+        self.sync_displays();
 
         let status_item =
             NSStatusBar::systemStatusBar().statusItemWithLength(NSVariableStatusItemLength);
@@ -537,6 +473,7 @@ impl Delegate {
         let menu = NSMenu::new(mtm);
         for (title, action, key) in [
             ("打开窗口搜索", sel!(showSearch:), ""),
+            ("打开窗口切换", sel!(showSwitcher:), ""),
             ("设置…", sel!(showSettings:), ","),
             ("刷新窗口列表", sel!(refreshWindows:), ""),
             ("辅助功能设置…", sel!(openPermissions:), ""),
@@ -577,6 +514,249 @@ impl Delegate {
         self.ivars().timer.set(timer).unwrap();
     }
 
+    fn panels(&self) -> Vec<Rc<PanelUi>> {
+        self.ivars().panels.borrow().clone()
+    }
+
+    fn any_panel_visible(&self) -> bool {
+        self.panels().iter().any(|ui| ui.panel.isVisible())
+    }
+
+    fn any_panel_key(&self) -> bool {
+        self.panels().iter().any(|ui| ui.panel.isKeyWindow())
+    }
+
+    fn sync_displays(&self) {
+        let state = self.ivars();
+        state.changing_displays.set(true);
+        let existing = self.panels();
+        let focused = existing
+            .iter()
+            .find(|ui| ui.panel.isKeyWindow())
+            .map(|ui| ui.display_id);
+        let displays: Vec<_> = NSScreen::screens(self.mtm())
+            .iter()
+            .enumerate()
+            .map(|(index, screen)| {
+                let id = screen
+                    .deviceDescription()
+                    .objectForKey(ns_string!("NSScreenNumber"))
+                    .and_then(|value| value.downcast::<NSNumber>().ok())
+                    .map_or(index as u32, |number| number.unsignedIntValue());
+                Display {
+                    id,
+                    frame: display_rect(screen.frame()),
+                    visible: display_rect(screen.visibleFrame()),
+                }
+            })
+            .collect();
+        let pointer = NSEvent::mouseLocation();
+        let positions = placements(&displays, (WIDTH, HEIGHT), (pointer.x, pointer.y), focused);
+        state.keyboard_display.set(
+            positions
+                .iter()
+                .find(|position| position.receives_keyboard)
+                .map(|position| position.display_id),
+        );
+        let mut panels = Vec::new();
+        for position in positions {
+            let ui = existing
+                .iter()
+                .find(|ui| ui.display_id == position.display_id)
+                .cloned()
+                .unwrap_or_else(|| self.create_panel(position.display_id));
+            ui.panel
+                .setFrameOrigin(NSPoint::new(position.x, position.y));
+            panels.push(ui);
+        }
+        state.panels.replace(panels.clone());
+        for ui in existing
+            .iter()
+            .filter(|ui| !panels.iter().any(|new| new.display_id == ui.display_id))
+        {
+            ui.panel.setDelegate(None);
+            ui.panel.orderOut(None);
+            ui.panel.close();
+        }
+        state.changing_displays.set(false);
+    }
+
+    fn present_panels(&self) {
+        let state = self.ivars();
+        state.changing_displays.set(true);
+        let panels = self.panels();
+        for ui in &panels {
+            ui.panel.orderFrontRegardless();
+        }
+        if let Some(ui) = panels
+            .iter()
+            .find(|ui| Some(ui.display_id) == state.keyboard_display.get())
+        {
+            ui.panel.makeKeyAndOrderFront(None);
+            if state.mode.get() == Some(PanelMode::Switch) {
+                ui.panel.makeFirstResponder(None);
+            } else {
+                self.focus_search();
+            }
+        }
+        state.changing_displays.set(false);
+    }
+
+    fn create_panel(&self, display_id: u32) -> Rc<PanelUi> {
+        let mtm = self.mtm();
+        // SAFETY: We own the window and disable AppKit's release-on-close behavior below.
+        let panel: Retained<SearchPanel> = unsafe {
+            msg_send![super(SearchPanel::alloc(mtm).set_ivars(())), initWithContentRect:
+                rect(0.0, 0.0, WIDTH, HEIGHT),
+                styleMask: NSWindowStyleMask::Titled
+                    | NSWindowStyleMask::Closable
+                    | NSWindowStyleMask::FullSizeContentView
+                    | NSWindowStyleMask::NonactivatingPanel,
+                backing: NSBackingStoreType::Buffered,
+                defer: false]
+        };
+        unsafe { panel.setReleasedWhenClosed(false) };
+        panel.setTitle(ns_string!("Winlane"));
+        panel.setTitleVisibility(NSWindowTitleVisibility::Hidden);
+        panel.setTitlebarAppearsTransparent(true);
+        panel.setLevel(NSFloatingWindowLevel);
+        panel.setCollectionBehavior(
+            NSWindowCollectionBehavior::CanJoinAllSpaces
+                | NSWindowCollectionBehavior::IgnoresCycle
+                | NSWindowCollectionBehavior::FullScreenAuxiliary,
+        );
+        panel.setDelegate(Some(ProtocolObject::from_ref(self)));
+        panel.setHidesOnDeactivate(false);
+        panel.setBecomesKeyOnlyIfNeeded(false);
+        panel.setMovableByWindowBackground(true);
+        let root = NSVisualEffectView::initWithFrame(
+            NSVisualEffectView::alloc(mtm),
+            rect(0.0, 0.0, WIDTH, HEIGHT),
+        );
+        root.setMaterial(NSVisualEffectMaterial::Popover);
+        root.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
+        root.setState(NSVisualEffectState::Active);
+        panel.setContentView(Some(&root));
+
+        let brand = label("Winlane", 13.0, rect(90.0, 556.0, 270.0, 20.0), mtm);
+        brand.setTextColor(Some(&NSColor::secondaryLabelColor()));
+        root.addSubview(&brand);
+        let shortcut = label(
+            &self.ivars().config.borrow().shortcut.display(),
+            11.0,
+            rect(WIDTH - 160.0, 557.0, 144.0, 18.0),
+            mtm,
+        );
+        shortcut.setAlignment(NSTextAlignment::Right);
+        shortcut.setTextColor(Some(&NSColor::tertiaryLabelColor()));
+        root.addSubview(&shortcut);
+
+        let input = NSSearchField::initWithFrame(
+            NSSearchField::alloc(mtm),
+            rect(16.0, 520.0, WIDTH - 32.0, 28.0),
+        );
+        input.setFont(Some(&NSFont::systemFontOfSize(16.0)));
+        input.setPlaceholderString(Some(ns_string!("")));
+        input.setSendsSearchStringImmediately(true);
+        input.setMaximumRecents(0);
+        panel.setInitialFirstResponder(Some(&input));
+        unsafe {
+            input.setDelegate(Some(ProtocolObject::from_ref(self)));
+            root.addSubview(&input);
+        }
+        let scope = self.button(
+            "仅当前应用",
+            sel!(changeScope:),
+            rect(16.0, 490.0, 180.0, 22.0),
+        );
+        scope.setButtonType(NSButtonType::Switch);
+        scope.setToolTip(Some(ns_string!(
+            "只显示呼出面板前正在使用的应用；演示模式以 Safari 为例。"
+        )));
+        root.addSubview(&scope);
+        let actions = NSPopUpButton::initWithFrame_pullsDown(
+            NSPopUpButton::alloc(mtm),
+            rect(WIDTH - 146.0, 488.0, 130.0, 26.0),
+            true,
+        );
+        let actions_menu = NSMenu::new(mtm);
+        let heading = NSMenuItem::new(mtm);
+        heading.setTitle(ns_string!("窗口操作"));
+        actions_menu.addItem(&heading);
+        self.add_window_actions(&actions_menu);
+        actions.setMenu(Some(&actions_menu));
+        actions.setFont(Some(&NSFont::systemFontOfSize(12.0)));
+        root.addSubview(&actions);
+        let mode_label = label("", 13.0, rect(16.0, 524.0, WIDTH - 32.0, 22.0), mtm);
+        mode_label.setHidden(true);
+        root.addSubview(&mode_label);
+
+        let scroll = NSScrollView::initWithFrame(
+            NSScrollView::alloc(mtm),
+            rect(10.0, LIST_BOTTOM, LIST_WIDTH, LIST_TOP - LIST_BOTTOM),
+        );
+        scroll.setHasVerticalScroller(true);
+        scroll.setScrollerStyle(NSScrollerStyle::Overlay);
+        scroll.setAutohidesScrollers(true);
+        scroll.setDrawsBackground(false);
+        scroll.setBorderType(NSBorderType::NoBorder);
+        let list: Retained<ListView> = unsafe {
+            msg_send![ListView::alloc(mtm), initWithFrame: rect(0.0, 0.0, LIST_WIDTH, LIST_TOP - LIST_BOTTOM)]
+        };
+        scroll.setDocumentView(Some(&list));
+        root.addSubview(&scroll);
+
+        let footer = label(
+            "正在准备窗口列表…",
+            11.0,
+            rect(16.0, 9.0, WIDTH - 128.0, 18.0),
+            mtm,
+        );
+        footer.setTextColor(Some(&NSColor::secondaryLabelColor()));
+        root.addSubview(&footer);
+        let help = self.button(
+            "辅助功能设置…",
+            sel!(openPermissions:),
+            rect(16.0, 34.0, 138.0, 25.0),
+        );
+        root.addSubview(&help);
+        let demo_button = self.button(
+            "查看演示",
+            sel!(toggleDemo:),
+            rect(164.0, 34.0, 100.0, 25.0),
+        );
+        root.addSubview(&demo_button);
+        let refresh = self.button(
+            "刷新 ↻",
+            sel!(refreshWindows:),
+            rect(WIDTH - 92.0, 34.0, 76.0, 25.0),
+        );
+        refresh.setHidden(accessibility::is_trusted());
+        root.addSubview(&refresh);
+        let settings_button = self.button(
+            "设置…  ⌘,",
+            sel!(showSettings:),
+            rect(WIDTH - 106.0, 6.0, 90.0, 24.0),
+        );
+        root.addSubview(&settings_button);
+
+        Rc::new(PanelUi {
+            display_id,
+            panel,
+            input,
+            scroll,
+            list,
+            footer,
+            help,
+            demo_button,
+            refresh_button: refresh,
+            shortcut_label: shortcut,
+            scope,
+            mode_label,
+            actions,
+        })
+    }
+
     fn button(&self, title: &str, action: Sel, frame: NSRect) -> Retained<NSButton> {
         let button = NSButton::initWithFrame(NSButton::alloc(self.mtm()), frame);
         button.setTitle(&NSString::from_str(title));
@@ -590,105 +770,58 @@ impl Delegate {
         button
     }
 
-    fn register_hotkey(&self) {
-        let shortcut = self.ivars().config.borrow().shortcut.clone();
-        if let Err(error) = self.replace_hotkey(&shortcut) {
-            self.ivars().hotkey_error.replace(Some(error));
-        } else {
-            self.ivars().hotkey_error.replace(None);
+    fn register_hotkeys(&self) {
+        let result = {
+            let config = self.ivars().config.borrow();
+            config.validate().and_then(|()| {
+                ShortcutTap::new(
+                    self.mtm(),
+                    config.shortcut.binding()?,
+                    config.switch_shortcut.binding()?,
+                )
+            })
+        };
+        match result {
+            Ok((tap, receiver)) => {
+                self.ivars().shortcut_tap.replace(Some(tap));
+                self.ivars().shortcut_rx.replace(Some(receiver));
+                self.ivars().hotkey_error.replace(None);
+            }
+            Err(error) => {
+                self.ivars().hotkey_error.replace(Some(error));
+            }
         }
     }
 
-    fn replace_hotkey(&self, shortcut: &Shortcut) -> Result<(), String> {
-        let key = shortcut.hotkey()?;
-        let old = self.ivars().hotkey.get();
-        if shortcut.is_command_tab() {
-            if self
-                .ivars()
-                .command_tab
-                .borrow()
-                .as_ref()
-                .is_some_and(CommandTabTap::is_enabled)
-            {
-                return Ok(());
-            }
-            let (tap, receiver) = CommandTabTap::new(self.mtm())?;
-            if let Some(old) = old
-                && let Some(manager) = self.ivars().hotkey_manager.borrow().as_ref()
-            {
-                manager
-                    .unregister(old)
-                    .map_err(|error| format!("无法替换旧快捷键：{error}"))?;
-            }
-            self.ivars().command_tab.replace(Some(tap));
-            self.ivars().command_tab_rx.replace(Some(receiver));
-            self.ivars().hotkey.set(None);
-            self.ivars().hotkey_press.replace(PressLatch::default());
-            return Ok(());
-        }
-        if old == Some(key) {
-            return Ok(());
-        }
-        let mut manager = self.ivars().hotkey_manager.borrow_mut();
-        if manager.is_none() {
-            *manager = Some(
-                GlobalHotKeyManager::new().map_err(|error| format!("无法初始化快捷键：{error}"))?,
-            );
-        }
-        let manager = manager.as_ref().unwrap();
-        manager.register(key).map_err(|error| {
-            format!("这个快捷键无法注册，可能已被占用。原设置未改变；可从菜单栏打开。\n{error}")
-        })?;
-        if let Some(old) = old
-            && let Err(error) = manager.unregister(old)
-        {
-            let rollback = manager.unregister(key);
-            return Err(format!(
-                "无法替换旧快捷键：{error}。{}",
-                if rollback.is_ok() {
-                    "新快捷键已撤销，请重试。"
-                } else {
-                    "请重启应用后重试。"
-                }
-            ));
-        }
-        self.ivars().hotkey.set(Some(key));
-        self.ivars().hotkey_press.replace(PressLatch::default());
-        self.ivars().command_tab.replace(None);
-        self.ivars().command_tab_rx.replace(None);
-        Ok(())
-    }
-
-    fn check_command_tab(&self) {
+    fn check_shortcuts(&self) {
         let state = self.ivars();
         let tick = state.shortcut_check_tick.get().wrapping_add(1);
         state.shortcut_check_tick.set(tick);
-        if !tick.is_multiple_of(25) || !state.config.borrow().shortcut.is_command_tab() {
+        if !tick.is_multiple_of(25) {
             return;
         }
         if !accessibility::is_trusted() {
-            if state.command_tab.borrow().is_some() {
-                state.command_tab.replace(None);
-                state.command_tab_rx.replace(None);
-                state
-                    .hotkey_error
-                    .replace(Some("⌘Tab 未启用，请在系统设置中重新允许 Winlane。".into()));
+            if state.shortcut_tap.borrow().is_some() {
+                self.end_session();
+                state.shortcut_tap.replace(None);
+                state.shortcut_rx.replace(None);
+                state.hotkey_error.replace(Some(
+                    "全局快捷键未启用，请在系统设置中重新允许 Winlane。".into(),
+                ));
                 self.report_shortcut_status();
-                self.render();
             }
-        } else if state.command_tab.borrow().is_none() {
-            self.register_hotkey();
+        } else if state.shortcut_tap.borrow().is_none() {
+            self.register_hotkeys();
             self.report_shortcut_status();
-            self.render();
         } else if !state
-            .command_tab
+            .shortcut_tap
             .borrow()
             .as_ref()
-            .is_some_and(CommandTabTap::is_enabled)
+            .is_some_and(ShortcutTap::is_enabled)
         {
             state
                 .hotkey_error
-                .replace(Some("⌘Tab 监听已暂停，请重新保存快捷键设置。".into()));
+                .replace(Some("快捷键监听已暂停，请重新保存快捷键设置。".into()));
             self.report_shortcut_status();
         }
     }
@@ -698,43 +831,75 @@ impl Delegate {
             if let Some(error) = self.ivars().hotkey_error.borrow().as_deref() {
                 settings.report(error, true);
             } else {
-                let shortcut = self.ivars().config.borrow().shortcut.display();
-                settings.report(&format!("{shortcut} 已启用，设置已保存在本机。"), false);
+                let config = self.ivars().config.borrow();
+                settings.report(
+                    &format!(
+                        "搜索 {} · 切换 {} 已启用。",
+                        config.shortcut.display(),
+                        config.switch_shortcut.display()
+                    ),
+                    false,
+                );
             }
         }
     }
 
-    fn command_tab_action(&self, action: CommandTabAction) {
-        if action == CommandTabAction::Cancel {
-            if self.ivars().panel.get().unwrap().isVisible() {
-                self.dismiss();
+    fn shortcut_action(&self, action: Action) {
+        match action.kind {
+            ActionKind::Search => {
+                if self.ivars().mode.get().is_some() && self.ivars().session.get() == action.session
+                {
+                    self.display_search(action.session);
+                } else {
+                    self.show_mode(PanelMode::Search, action.session, 0);
+                }
             }
-            return;
-        }
-        let direction = if action == CommandTabAction::Previous {
-            -1
-        } else {
-            1
-        };
-        if self.ivars().panel.get().unwrap().isVisible() {
-            self.ivars().panel.get().unwrap().makeKeyAndOrderFront(None);
-            self.focus_search();
-            self.move_selection(direction);
-        } else {
-            if let Some(settings) = self.ivars().settings.get() {
-                settings.window.orderOut(None);
+            ActionKind::Switch { direction, fresh } => {
+                if fresh {
+                    self.show_mode(PanelMode::Switch, action.session, direction);
+                } else if self.ivars().session.get() == action.session {
+                    self.move_selection(isize::from(direction));
+                }
             }
-            self.show();
-            if direction < 0 {
-                self.move_selection(-1);
+            ActionKind::Accept if self.ivars().session.get() == action.session => {
+                if let Some(selection) = self.ivars().switch_selection.borrow_mut().as_mut() {
+                    selection.release();
+                }
+                self.commit_switch_if_ready();
             }
+            ActionKind::Alias(ch)
+                if self.ivars().session.get() == action.session
+                    && self.ivars().mode.get() == Some(PanelMode::Switch) =>
+            {
+                self.ivars().alias_input.borrow_mut().push(ch);
+                self.select_alias();
+                self.render();
+            }
+            ActionKind::AliasBackspace
+                if self.ivars().session.get() == action.session
+                    && self.ivars().mode.get() == Some(PanelMode::Switch) =>
+            {
+                self.ivars().alias_input.borrow_mut().pop();
+                self.select_alias();
+                self.render();
+            }
+            ActionKind::Cancel if self.ivars().session.get() == action.session => {
+                self.end_session();
+            }
+            _ => {}
         }
     }
 
     fn apply_config(&self, candidate: Config) -> Result<(), String> {
         candidate.validate()?;
-        self.replace_hotkey(&candidate.shortcut)?;
+        let (tap, receiver) = ShortcutTap::new(
+            self.mtm(),
+            candidate.shortcut.binding()?,
+            candidate.switch_shortcut.binding()?,
+        )?;
         settings::save(&candidate)?;
+        self.ivars().shortcut_tap.replace(Some(tap));
+        self.ivars().shortcut_rx.replace(Some(receiver));
         settings::apply_appearance(&candidate, self.mtm());
         self.ivars().config.replace(candidate);
         self.ivars().hotkey_error.replace(None);
@@ -745,11 +910,6 @@ impl Delegate {
 
     fn update_shortcut_labels(&self) {
         let display = self.ivars().config.borrow().shortcut.display();
-        self.ivars()
-            .shortcut_label
-            .get()
-            .unwrap()
-            .setStringValue(&NSString::from_str(&display));
         self.ivars()
             .show_menu_item
             .get()
@@ -782,59 +942,258 @@ impl Delegate {
     }
 
     fn show(&self) {
+        self.cancel_routing();
+        let action = self
+            .ivars()
+            .shortcut_tap
+            .borrow()
+            .as_ref()
+            .map(ShortcutTap::open_search);
+        let session = action.map_or_else(
+            || self.ivars().session.get().wrapping_add(1),
+            |action| action.session,
+        );
+        self.show_mode(PanelMode::Search, session, 0);
+    }
+
+    fn open_switcher(&self) {
+        let action = self
+            .ivars()
+            .shortcut_tap
+            .borrow()
+            .as_ref()
+            .map(|tap| tap.enter_switch(NSEvent::modifierFlags_class().bits() as u64));
+        if let Some(action) = action {
+            self.shortcut_action(action);
+        } else {
+            self.show();
+        }
+    }
+
+    fn show_mode(&self, mode: PanelMode, session: u64, direction: i8) {
+        if let Some(settings) = self.ivars().settings.get() {
+            settings.window.orderOut(None);
+        }
+        let preserve = self.selected_window().map(|window| window.id);
+        let deferred = self.ivars().deferred_windows.borrow_mut().take();
+        if let Some(windows) = deferred {
+            self.ivars().windows.replace(windows);
+        }
         let workspace = NSWorkspace::sharedWorkspace();
         if let Some(front) = workspace.frontmostApplication()
             && front.processIdentifier() != std::process::id() as i32
+            && !self.any_panel_key()
         {
             self.ivars().previous_pid.set(front.processIdentifier());
         }
+        self.sync_displays();
+        self.ivars().query.borrow_mut().clear();
+        self.ivars().session.set(session);
+        self.ivars().mode.set(Some(mode));
+        self.ivars().alias_input.borrow_mut().clear();
         self.ivars()
-            .input
-            .get()
-            .unwrap()
-            .setStringValue(ns_string!(""));
+            .switch_selection
+            .replace((mode == PanelMode::Switch).then(|| SwitchSelection::new(direction)));
+        self.ivars()
+            .switch_anchor
+            .set(if direction == 0 { preserve } else { None });
+        if mode == PanelMode::Switch {
+            self.ivars().current_app_only.set(false);
+        }
+        self.filter_preserving(preserve);
+        self.prepare_switch_selection();
         if !self.ivars().demo.get() {
             self.refresh();
-        } else {
-            self.filter();
         }
-        let panel = self.ivars().panel.get().unwrap();
-        let mouse = NSEvent::mouseLocation();
-        let screens = NSScreen::screens(self.mtm());
-        if let Some(screen) = screens.iter().find(|screen| {
-            let f = screen.frame();
-            mouse.x >= f.origin.x
-                && mouse.x <= f.origin.x + f.size.width
-                && mouse.y >= f.origin.y
-                && mouse.y <= f.origin.y + f.size.height
-        }) {
-            let frame = screen.visibleFrame();
-            panel.setFrameOrigin(NSPoint::new(
-                frame.origin.x + (frame.size.width - WIDTH) / 2.0,
-                frame.origin.y + (frame.size.height - HEIGHT) * 0.58,
-            ));
-        } else {
-            panel.center();
-        }
-        panel.makeKeyAndOrderFront(None);
-        self.focus_search();
+        self.present_panels();
     }
 
     fn focus_search(&self) {
-        if let (Some(panel), Some(input)) = (self.ivars().panel.get(), self.ivars().input.get())
-            && panel.isKeyWindow()
-            && input.currentEditor().is_none()
+        for ui in self
+            .panels()
+            .into_iter()
+            .filter(|ui| ui.panel.isKeyWindow())
         {
-            panel.makeFirstResponder(Some(input));
+            match self.ivars().mode.get() {
+                Some(PanelMode::Search) if ui.input.currentEditor().is_none() => {
+                    ui.panel.makeFirstResponder(Some(&ui.input));
+                }
+                Some(PanelMode::Switch) => {
+                    ui.panel.makeFirstResponder(None);
+                }
+                _ => {}
+            }
         }
     }
 
     fn dismiss(&self) {
-        self.ivars().panel.get().unwrap().orderOut(None);
+        self.cancel_routing();
+        self.end_session();
         if let Some(previous) = NSRunningApplication::runningApplicationWithProcessIdentifier(
             self.ivars().previous_pid.get(),
         ) {
             self.activate_app(&previous);
+        }
+    }
+
+    fn cancel_routing(&self) {
+        if let Some(tap) = self.ivars().shortcut_tap.borrow().as_ref() {
+            tap.cancel();
+        }
+        if let Some(receiver) = self.ivars().shortcut_rx.borrow().as_ref() {
+            for _ in receiver.try_iter() {}
+        }
+    }
+
+    fn end_session(&self) {
+        let state = self.ivars();
+        if state.mode.replace(None).is_none() {
+            return;
+        }
+        if let Some(tap) = state.shortcut_tap.borrow().as_ref() {
+            tap.finish(state.session.get());
+        }
+        state.switch_selection.replace(None);
+        state.check_panel_focus.set(false);
+        for ui in self.panels() {
+            ui.panel.orderOut(None);
+        }
+        let deferred = state.deferred_windows.borrow_mut().take();
+        if let Some(windows) = deferred {
+            state.windows.replace(windows);
+            self.filter();
+        }
+    }
+
+    fn toggle_mode(&self, flags: u64) {
+        if self.ivars().mode.get() == Some(PanelMode::Switch) {
+            self.switch_to_search();
+        } else {
+            let action = self
+                .ivars()
+                .shortcut_tap
+                .borrow()
+                .as_ref()
+                .map(|tap| tap.enter_switch(flags));
+            if let Some(action) = action {
+                self.shortcut_action(action);
+            }
+        }
+    }
+
+    fn switch_to_search(&self) {
+        let state = self.ivars();
+        let action = state
+            .shortcut_tap
+            .borrow()
+            .as_ref()
+            .map(ShortcutTap::open_search);
+        self.display_search(action.map_or(state.session.get(), |action| action.session));
+    }
+
+    fn display_search(&self, session: u64) {
+        let state = self.ivars();
+        let selected_id = self.selected_window().map(|window| window.id);
+        state.session.set(session);
+        state.mode.set(Some(PanelMode::Search));
+        state.alias_input.borrow_mut().clear();
+        state.switch_selection.replace(None);
+        let deferred = state.deferred_windows.borrow_mut().take();
+        if let Some(windows) = deferred {
+            state.windows.replace(windows);
+        }
+        self.filter_preserving(selected_id);
+        self.focus_search();
+    }
+
+    fn prepare_switch_selection(&self) {
+        let state = self.ivars();
+        if state.mode.get() != Some(PanelMode::Switch) {
+            return;
+        }
+        let matches = state.matches.borrow();
+        let windows = state.windows.borrow();
+        let anchor = if let Some(id) = state.switch_anchor.get() {
+            matches.iter().position(|&index| windows[index].id == id)
+        } else {
+            matches
+                .iter()
+                .position(|&index| windows[index].pid == state.previous_pid.get())
+        };
+        if let Some(selection) = state.switch_selection.borrow_mut().as_mut() {
+            selection.install(matches.len(), anchor);
+            if let Some(index) = selection.selected() {
+                state.selected.set(index);
+            }
+        }
+        drop(windows);
+        drop(matches);
+        self.select_alias();
+        self.render();
+    }
+
+    fn alias_position(&self) -> Option<usize> {
+        let state = self.ivars();
+        let windows = state.windows.borrow();
+        let identities = state.identities.borrow();
+        let ordered_apps: Vec<_> = state
+            .matches
+            .borrow()
+            .iter()
+            .map(|&index| {
+                identities
+                    .get(&windows[index].pid)
+                    .map_or("", |app| app.id.as_str())
+            })
+            .collect();
+        matching_alias_position(
+            &state.aliases.borrow(),
+            state.alias_input.borrow().text(),
+            &ordered_apps,
+        )
+    }
+
+    fn select_alias(&self) {
+        if let Some(index) = self.alias_position() {
+            if let Some(selection) = self.ivars().switch_selection.borrow_mut().as_mut() {
+                selection.select(index);
+            }
+            self.ivars().selected.set(index);
+        }
+    }
+
+    fn commit_switch_if_ready(&self) {
+        let state = self.ivars();
+        if state.mode.get() != Some(PanelMode::Switch) {
+            return;
+        }
+        if !state.alias_input.borrow().text().is_empty() && self.alias_position().is_none() {
+            let released = state
+                .switch_selection
+                .borrow()
+                .as_ref()
+                .is_some_and(SwitchSelection::released);
+            if released && !state.loading.get() {
+                self.end_session();
+            }
+            return;
+        }
+        let commit = state
+            .switch_selection
+            .borrow_mut()
+            .as_mut()
+            .and_then(SwitchSelection::take_commit);
+        if let Some(index) = commit {
+            state.selected.set(index);
+            self.activate_selected();
+        } else if !state.loading.get()
+            && state
+                .switch_selection
+                .borrow()
+                .as_ref()
+                .is_some_and(SwitchSelection::released)
+        {
+            self.end_session();
         }
     }
 
@@ -847,7 +1206,7 @@ impl Delegate {
             return;
         }
         if state.receiver.borrow().is_some() {
-            self.filter();
+            self.render();
             return;
         }
         let apps = NSWorkspace::sharedWorkspace()
@@ -859,6 +1218,12 @@ impl Delegate {
                     && app.activationPolicy() == NSApplicationActivationPolicy::Regular
             })
             .map(|app| {
+                if let Some(identity) = app_identity(&app) {
+                    state
+                        .identities
+                        .borrow_mut()
+                        .insert(app.processIdentifier(), identity);
+                }
                 (
                     app.processIdentifier(),
                     app.localizedName()
@@ -873,7 +1238,18 @@ impl Delegate {
         std::thread::spawn(move || {
             let _ = tx.send(accessibility::list_windows(&apps));
         });
-        self.filter();
+        self.render();
+    }
+
+    fn update_aliases(&self, windows: &[WindowInfo]) {
+        let apps: Vec<_> = windows
+            .iter()
+            .filter_map(|window| self.ivars().identities.borrow().get(&window.pid).cloned())
+            .collect();
+        let mut aliases = self.ivars().aliases.borrow_mut();
+        if aliases.ensure(&apps) && self.ivars().aliases_writable.get() {
+            settings::save_aliases(&aliases);
+        }
     }
 
     fn filter(&self) {
@@ -881,7 +1257,7 @@ impl Delegate {
     }
 
     fn filter_preserving(&self, selected_id: Option<u64>) {
-        let query = self.ivars().input.get().unwrap().stringValue().to_string();
+        let query = self.ivars().query.borrow().clone();
         let preferred = self
             .ivars()
             .preferences
@@ -889,7 +1265,7 @@ impl Delegate {
             .get(&query.trim().to_lowercase())
             .copied();
         let windows = self.ivars().windows.borrow();
-        let scope_pid = if self.ivars().scope.get().unwrap().state() == NSControlStateValueOn {
+        let scope_pid = if self.ivars().current_app_only.get() {
             Some(if self.ivars().demo.get() {
                 -1
             } else {
@@ -898,15 +1274,26 @@ impl Delegate {
         } else {
             None
         };
+        let aliases = self.ivars().aliases.borrow();
+        let is_alias = aliases.resolve(&query).is_some();
         let matched = visible_matches(
             &windows,
-            &query,
+            if is_alias { "" } else { &query },
             preferred,
             &self.ivars().config.borrow(),
             scope_pid,
             &self.ivars().recency.borrow(),
             self.ivars().previous_pid.get(),
         );
+        let matched = aliases
+            .filter_order(
+                &query,
+                &matched,
+                &windows,
+                &self.ivars().identities.borrow(),
+            )
+            .unwrap_or(matched);
+        drop(aliases);
         let selected = selected_id
             .and_then(|id| matched.iter().position(|&index| windows[index].id == id))
             .unwrap_or(0);
@@ -917,6 +1304,17 @@ impl Delegate {
     }
 
     fn move_selection(&self, direction: isize) {
+        if self.ivars().mode.get() == Some(PanelMode::Switch) {
+            self.ivars().alias_input.borrow_mut().clear();
+            if let Some(selection) = self.ivars().switch_selection.borrow_mut().as_mut() {
+                selection.step(direction.signum() as i8);
+                if let Some(index) = selection.selected() {
+                    self.ivars().selected.set(index);
+                }
+            }
+            self.render();
+            return;
+        }
         let count = self.ivars().matches.borrow().len();
         if count == 0 {
             return;
@@ -928,8 +1326,26 @@ impl Delegate {
     }
 
     fn render(&self) {
+        self.ivars().syncing_controls.set(true);
+        for ui in self.panels() {
+            self.render_panel(&ui);
+        }
+        self.ivars().syncing_controls.set(false);
+    }
+
+    fn render_panel(&self, ui: &PanelUi) {
+        let query = self.ivars().query.borrow();
+        if ui.input.stringValue().to_string() != *query {
+            ui.input.setStringValue(&NSString::from_str(&query));
+        }
+        ui.scope.setState(if self.ivars().current_app_only.get() {
+            NSControlStateValueOn
+        } else {
+            NSControlStateValueOff
+        });
+        drop(query);
         let state = self.ivars();
-        let list = state.list.get().unwrap();
+        let list = &ui.list;
         for subview in list.subviews() {
             subview.removeFromSuperview();
         }
@@ -937,21 +1353,63 @@ impl Delegate {
         let matched = state.matches.borrow();
         let trusted = accessibility::is_trusted();
         let demo = state.demo.get();
-        state.help.get().unwrap().setHidden(trusted || demo);
-        state
-            .refresh_button
-            .get()
-            .unwrap()
-            .setHidden(trusted || demo);
-        state.demo_button.get().unwrap().setHidden(trusted && !demo);
-        state.demo_button.get().unwrap().setTitle(if demo {
+        let switching = state.mode.get() == Some(PanelMode::Switch);
+        let alias_input = state.alias_input.borrow();
+        let alias_query = alias_input.text();
+        let aliases = state.aliases.borrow();
+        let identities = state.identities.borrow();
+        let unmatched_alias =
+            switching && !alias_query.is_empty() && self.alias_position().is_none();
+        ui.input.setHidden(switching);
+        ui.scope.setHidden(switching);
+        ui.actions.setHidden(switching);
+        ui.mode_label.setHidden(!switching);
+        let config = state.config.borrow();
+        ui.mode_label
+            .setStringValue(&NSString::from_str(&if alias_query.is_empty() {
+                format!(
+                    "切换模式 · {} 选择 · 松开 {} 或 ↵ 确认",
+                    config.switch_shortcut.display(),
+                    config.switch_shortcut.release_label()
+                )
+            } else {
+                format!(
+                    "Alias  {alias_query}  ·  {}",
+                    if unmatched_alias {
+                        if aliases.has_prefix(alias_query) && aliases.resolve(alias_query).is_none()
+                        {
+                            "继续输入第二个字母"
+                        } else {
+                            "没有匹配窗口 · Backspace 修改"
+                        }
+                    } else {
+                        "松开修饰键确认 · Backspace 修改"
+                    }
+                )
+            }));
+        ui.shortcut_label
+            .setStringValue(&NSString::from_str(&if switching {
+                config.switch_shortcut.display()
+            } else {
+                config.shortcut.display()
+            }));
+        drop(config);
+        ui.help.setHidden(trusted || demo);
+        ui.refresh_button.setHidden(trusted || demo);
+        ui.demo_button.setHidden(trusted && !demo);
+        ui.demo_button.setTitle(if demo {
             ns_string!("返回真实窗口")
         } else {
             ns_string!("查看演示")
         });
+        let list_bottom = if !trusted || demo { 64.0 } else { LIST_BOTTOM };
+        let list_top = if switching { 516.0 } else { LIST_TOP };
+        let list_height = list_top - list_bottom;
+        ui.scroll
+            .setFrame(rect(10.0, list_bottom, LIST_WIDTH, list_height));
         list.setFrameSize(NSSize::new(
-            WIDTH - 36.0,
-            (matched.len() as f64 * ROW_HEIGHT).max(LIST_HEIGHT),
+            LIST_WIDTH,
+            (matched.len() as f64 * ROW_HEIGHT).max(list_height),
         ));
         if matched.is_empty() {
             let (title, detail) = if state.loading.get() {
@@ -976,11 +1434,16 @@ impl Delegate {
         }
         for (position, &index) in matched.iter().enumerate() {
             let item = &windows[index];
-            let selected = position == state.selected.get();
+            let selected = position == state.selected.get() && !unmatched_alias;
             let row = self.button(
                 "",
                 sel!(pickWindow:),
-                rect(8.0, position as f64 * ROW_HEIGHT + 2.0, WIDTH - 58.0, 60.0),
+                rect(
+                    2.0,
+                    position as f64 * ROW_HEIGHT + 1.0,
+                    LIST_WIDTH - 4.0,
+                    ROW_HEIGHT - 2.0,
+                ),
             );
             row.setTag(position as isize);
             row.setAccessibilitySelected(selected);
@@ -991,7 +1454,7 @@ impl Delegate {
                 // SAFETY: CALayer accepts a CGColor reference and a CGFloat (f64 on macOS).
                 unsafe {
                     let _: () = msg_send![&layer, setBackgroundColor: &*color];
-                    let _: () = msg_send![&layer, setCornerRadius: 10.0f64];
+                    let _: () = msg_send![&layer, setCornerRadius: 5.0f64];
                 }
             }
             let title = if item.title.trim().is_empty() {
@@ -999,39 +1462,42 @@ impl Delegate {
             } else {
                 item.title.as_str()
             };
-            let tooltip = format!("{} — {}", item.app, title);
-            row.setToolTip(Some(&NSString::from_str(&tooltip)));
-            let title_field = label(
+            let alias = identities
+                .get(&item.pid)
+                .and_then(|app| aliases.get(&app.id));
+            let tooltip = format!(
+                "{} — {}{}",
+                item.app,
                 title,
-                15.0,
-                rect(58.0, 30.0, WIDTH - 220.0, 23.0),
+                alias.map_or(String::new(), |alias| format!(" · alias {alias}"))
+            );
+            row.setToolTip(Some(&NSString::from_str(&tooltip)));
+            row.setAccessibilityLabel(Some(&NSString::from_str(&tooltip)));
+            let title = if item.minimized {
+                format!("{title} · 已最小化")
+            } else {
+                title.to_owned()
+            };
+            let title_field = label(
+                &title,
+                13.0,
+                rect(222.0, 3.0, LIST_WIDTH - 236.0, 20.0),
                 self.mtm(),
             );
             title_field.setMaximumNumberOfLines(1);
             title_field.setLineBreakMode(NSLineBreakMode::ByTruncatingTail);
-            let subtitle = format!(
-                "{}{}",
-                item.app,
-                if item.minimized {
-                    "  ·  已最小化"
-                } else {
-                    ""
-                }
-            );
-            let subtitle_field = label(
-                &subtitle,
-                12.0,
-                rect(58.0, 9.0, WIDTH - 166.0, 20.0),
-                self.mtm(),
-            );
-            subtitle_field.setTextColor(Some(&NSColor::secondaryLabelColor()));
+            let subtitle_field = label(&item.app, 13.0, rect(42.0, 3.0, 142.0, 20.0), self.mtm());
+            subtitle_field.setAlignment(NSTextAlignment::Right);
+            subtitle_field.setMaximumNumberOfLines(1);
+            subtitle_field.setLineBreakMode(NSLineBreakMode::ByTruncatingTail);
+            subtitle_field.setTextColor(Some(&NSColor::labelColor()));
             if selected {
                 title_field.setTextColor(Some(&NSColor::selectedMenuItemTextColor()));
                 subtitle_field.setTextColor(Some(&NSColor::selectedMenuItemTextColor()));
             }
             let icon = NSImageView::initWithFrame(
                 NSImageView::alloc(self.mtm()),
-                rect(12.0, 12.0, 36.0, 36.0),
+                rect(192.0, 3.0, 20.0, 20.0),
             );
             icon.setImageScaling(NSImageScaling::ScaleProportionallyDown);
             let image = NSRunningApplication::runningApplicationWithProcessIdentifier(item.pid)
@@ -1046,20 +1512,16 @@ impl Delegate {
             row.addSubview(&icon);
             row.addSubview(&title_field);
             row.addSubview(&subtitle_field);
-            if position < 9 {
-                let key = label(
-                    &format!("⌘{}", position + 1),
-                    12.0,
-                    rect(WIDTH - 116.0, 20.0, 42.0, 22.0),
-                    self.mtm(),
-                );
+            if let Some(alias) = alias {
+                let badge = label(alias, 12.0, rect(8.0, 3.0, 28.0, 20.0), self.mtm());
+                badge.setAlignment(NSTextAlignment::Left);
                 let color = if selected {
                     NSColor::selectedMenuItemTextColor()
                 } else {
-                    NSColor::tertiaryLabelColor()
+                    NSColor::secondaryLabelColor()
                 };
-                key.setTextColor(Some(&color));
-                row.addSubview(&key);
+                badge.setTextColor(Some(&color));
+                row.addSubview(&badge);
             }
             list.addSubview(&row);
             if selected {
@@ -1073,18 +1535,24 @@ impl Delegate {
             )
         } else if let Some(error) = state.hotkey_error.borrow().as_ref() {
             error.clone()
+        } else if let Some(error) = state.alias_error.borrow().as_ref() {
+            error.clone()
         } else if !trusted {
             "需要辅助功能权限；也可以先查看演示。".into()
         } else if state.loading.get() {
             "正在刷新窗口…".into()
+        } else if switching {
+            format!(
+                "{} 项 · 字母定位 · ↑↓ 选择 · Space 搜索 · Esc 取消",
+                matched.len()
+            )
         } else {
-            format!("{} 项 · ↑↓ 选择  ↵ 切换  Esc 取消", matched.len())
+            format!(
+                "{} 项 · 输入 alias 或标题 · ↵ 切换 · Space 切换模式",
+                matched.len()
+            )
         };
-        state
-            .footer
-            .get()
-            .unwrap()
-            .setStringValue(&NSString::from_str(&status));
+        ui.footer.setStringValue(&NSString::from_str(&status));
     }
 
     fn activate_app(&self, app: &NSRunningApplication) -> bool {
@@ -1094,48 +1562,42 @@ impl Delegate {
     }
 
     fn activate_selected(&self) {
+        if let Some(tap) = self.ivars().shortcut_tap.borrow().as_ref() {
+            tap.finish(self.ivars().session.get());
+        }
+        self.ivars().switch_selection.replace(None);
         let Some(window) = self.selected_window() else {
+            self.selection_failed("没有匹配的窗口，请重新搜索。");
             return;
         };
         if self.ivars().demo.get() {
-            self.ivars()
-                .footer
-                .get()
-                .unwrap()
-                .setStringValue(&NSString::from_str(&format!(
-                    "演示选择：{} · {}（未切换真实窗口）",
-                    window.app, window.title
-                )));
+            self.selection_failed(&format!(
+                "演示选择：{} · {}（未切换真实窗口）",
+                window.app, window.title
+            ));
             return;
         }
         let Some(target_app) =
             NSRunningApplication::runningApplicationWithProcessIdentifier(window.pid)
         else {
-            self.report_switch_error("应用已退出，请刷新窗口列表。");
+            self.selection_failed("应用已退出，请按 ⌘R 更新窗口列表。");
             return;
         };
         target_app.unhide();
         if let Err(error) = accessibility::raise_window(window.pid, window.id) {
-            self.report_switch_error(&error);
+            self.selection_failed(&error);
             return;
         }
         if !self.activate_app(&target_app) {
-            self.report_switch_error("系统未接受切换请求，请重试或检查辅助功能权限。");
+            self.selection_failed("系统未接受切换请求，请重试或检查辅助功能权限。");
             return;
         }
         let mut recent = self.ivars().recency.borrow_mut();
         recent.retain(|id| *id != window.id);
         recent.insert(0, window.id);
         recent.truncate(128);
-        let query = self
-            .ivars()
-            .input
-            .get()
-            .unwrap()
-            .stringValue()
-            .to_string()
-            .trim()
-            .to_lowercase();
+        drop(recent);
+        let query = self.ivars().query.borrow().trim().to_lowercase();
         if !query.is_empty() {
             let mut preferences = self.ivars().preferences.borrow_mut();
             if preferences.len() > 128 {
@@ -1143,25 +1605,31 @@ impl Delegate {
             }
             preferences.insert(query, window.id);
         }
-        self.ivars().panel.get().unwrap().orderOut(None);
+        self.end_session();
+    }
+
+    fn selection_failed(&self, text: &str) {
+        let session = self.ivars().session.get();
+        if let Some(tap) = self.ivars().shortcut_tap.borrow().as_ref() {
+            tap.resume_search(session);
+        }
+        self.display_search(session);
+        self.report_switch_error(text);
     }
 
     fn report_switch_error(&self, text: &str) {
-        self.ivars()
-            .footer
-            .get()
-            .unwrap()
-            .setStringValue(&NSString::from_str(text));
-        self.ivars()
-            .footer
-            .get()
-            .unwrap()
-            .setToolTip(Some(&NSString::from_str(text)));
+        for ui in self.panels() {
+            ui.footer.setStringValue(&NSString::from_str(text));
+            ui.footer.setToolTip(Some(&NSString::from_str(text)));
+        }
     }
 
     fn minimize_selected(&self) {
-        if !self.ivars().panel.get().unwrap().isVisible() {
+        if !self.any_panel_visible() {
             return;
+        }
+        if self.ivars().mode.get() == Some(PanelMode::Switch) {
+            self.switch_to_search();
         }
         let Some(window) = self.selected_window() else {
             return;
@@ -1195,7 +1663,7 @@ impl Delegate {
     }
 
     fn hide_selected(&self) {
-        if !self.ivars().panel.get().unwrap().isVisible() {
+        if !self.any_panel_visible() {
             return;
         }
         let Some(window) = self.selected_window() else {
@@ -1221,6 +1689,41 @@ impl Delegate {
             .get(state.selected.get())
             .and_then(|&index| state.windows.borrow().get(index).cloned())
     }
+}
+
+fn display_rect(frame: NSRect) -> Rect {
+    Rect {
+        x: frame.origin.x,
+        y: frame.origin.y,
+        width: frame.size.width,
+        height: frame.size.height,
+    }
+}
+
+fn app_identity(app: &NSRunningApplication) -> Option<AppIdentity> {
+    let url = app.bundleURL()?;
+    let id = app
+        .bundleIdentifier()
+        .map(|id| id.to_string())
+        .or_else(|| url.path().map(|path| path.to_string()))?;
+    let info = NSBundle::bundleWithURL(&url).and_then(|bundle| bundle.infoDictionary());
+    let metadata_name = ["CFBundleDisplayName", "CFBundleName", "CFBundleExecutable"]
+        .iter()
+        .filter_map(|key| {
+            info.as_ref()?
+                .objectForKey(&NSString::from_str(key))?
+                .downcast::<NSString>()
+                .ok()
+                .map(|name| name.to_string())
+        })
+        .find(|name| name.chars().any(|ch| ch.is_ascii_alphabetic()));
+    let english_name = metadata_name
+        .or_else(|| {
+            url.lastPathComponent()
+                .map(|name| name.to_string().trim_end_matches(".app").to_owned())
+        })
+        .unwrap_or_default();
+    Some(AppIdentity { id, english_name })
 }
 
 fn rect(x: f64, y: f64, width: f64, height: f64) -> NSRect {

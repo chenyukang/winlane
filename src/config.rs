@@ -69,13 +69,98 @@ impl Default for Shortcut {
 }
 
 impl Shortcut {
+    pub fn switch_default() -> Self {
+        Self {
+            control: false,
+            option: false,
+            shift: false,
+            command: true,
+            key: "Tab".into(),
+        }
+    }
+
+    pub fn binding(&self) -> Result<crate::shortcuts::Binding, String> {
+        use crate::shortcuts::{Binding, COMMAND, CONTROL, OPTION, SHIFT};
+        self.hotkey()?;
+        let key = match self.key.as_str() {
+            "KeyA" => 0,
+            "KeyS" => 1,
+            "KeyD" => 2,
+            "KeyF" => 3,
+            "KeyH" => 4,
+            "KeyG" => 5,
+            "KeyZ" => 6,
+            "KeyX" => 7,
+            "KeyC" => 8,
+            "KeyV" => 9,
+            "KeyB" => 11,
+            "KeyQ" => 12,
+            "KeyW" => 13,
+            "KeyE" => 14,
+            "KeyR" => 15,
+            "KeyY" => 16,
+            "KeyT" => 17,
+            "KeyO" => 31,
+            "KeyU" => 32,
+            "KeyI" => 34,
+            "KeyP" => 35,
+            "KeyL" => 37,
+            "KeyJ" => 38,
+            "KeyK" => 40,
+            "KeyN" => 45,
+            "KeyM" => 46,
+            "Tab" => 48,
+            "Space" => 49,
+            "Backquote" => 50,
+            "F1" => 122,
+            "F2" => 120,
+            "F3" => 99,
+            "F4" => 118,
+            "F5" => 96,
+            "F6" => 97,
+            "F7" => 98,
+            "F8" => 100,
+            "F9" => 101,
+            "F10" => 109,
+            "F11" => 103,
+            "F12" => 111,
+            _ => return Err("无法识别快捷键。".into()),
+        };
+        let mut modifiers = 0;
+        for (enabled, flag) in [
+            (self.control, CONTROL),
+            (self.option, OPTION),
+            (self.shift, SHIFT),
+            (self.command, COMMAND),
+        ] {
+            if enabled {
+                modifiers |= flag;
+            }
+        }
+        Ok(Binding { key, modifiers })
+    }
+
+    pub fn release_label(&self) -> &str {
+        if self.command {
+            "⌘"
+        } else if self.control {
+            "⌃"
+        } else {
+            "⌥"
+        }
+    }
+
     pub fn is_command_tab(&self) -> bool {
         self.command && !self.control && !self.option && !self.shift && self.key == "Tab"
     }
 
     pub fn hotkey(&self) -> Result<HotKey, String> {
-        if !self.control && !self.option && !self.is_command_tab() {
-            return Err("请选择 Command + Tab，或包含 Control / Option 的组合。".into());
+        let command_window_key =
+            self.command && !self.shift && matches!(self.key.as_str(), "Tab" | "Backquote");
+        if !self.control && !self.option && !command_window_key {
+            return Err(
+                "请选择 Command + Tab、Command + `，或包含 Control / Option 的组合。".into(),
+            );
         }
         if !KEYS.contains(&self.key.as_str()) {
             return Err("不支持这个按键，请重新选择。".into());
@@ -134,6 +219,7 @@ pub enum Appearance {
 #[serde(default)]
 pub struct Config {
     pub shortcut: Shortcut,
+    pub switch_shortcut: Shortcut,
     pub sort: SortOrder,
     pub appearance: Appearance,
     pub include_minimized: bool,
@@ -144,6 +230,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             shortcut: Shortcut::default(),
+            switch_shortcut: Shortcut::switch_default(),
             sort: SortOrder::Recent,
             appearance: Appearance::System,
             include_minimized: true,
@@ -154,7 +241,14 @@ impl Default for Config {
 
 impl Config {
     pub fn validate(&self) -> Result<(), String> {
-        self.shortcut.hotkey()?;
+        let search = self.shortcut.binding()?;
+        let switch = self.switch_shortcut.binding()?;
+        if self.switch_shortcut.key == "Space" {
+            return Err("Space 用于切换模式，请为切换快捷键选择其他按键。".into());
+        }
+        if search.conflicts_with_switch(switch) {
+            return Err("搜索和切换快捷键不能相同，也不能占用切换模式的 Shift 反向组合。".into());
+        }
         if self.excluded_apps.len() > 100
             || self
                 .excluded_apps
@@ -167,8 +261,24 @@ impl Config {
     }
 
     pub fn from_json(json: &str) -> Result<Self, String> {
-        let config: Self =
+        let value: serde_json::Value =
             serde_json::from_str(json).map_err(|_| "保存的设置无法读取，请在设置中重新保存。")?;
+        let legacy = value.get("switch_shortcut").is_none();
+        let mut config: Self = serde_json::from_value(value)
+            .map_err(|_| "保存的设置无法读取，请在设置中重新保存。")?;
+        if legacy
+            && config
+                .shortcut
+                .binding()?
+                .conflicts_with_switch(config.switch_shortcut.binding()?)
+        {
+            config.switch_shortcut = Shortcut {
+                control: false,
+                option: true,
+                key: "Tab".into(),
+                ..Shortcut::default()
+            };
+        }
         config.validate()?;
         Ok(config)
     }
