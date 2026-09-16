@@ -199,7 +199,10 @@ fn shortcut_mapping_and_conflict_validation_cover_all_selectable_keys() {
     };
     assert!(invalid.validate().is_err());
     let invalid = Config {
-        switch_shortcut: Shortcut::default(),
+        switch_shortcut: Shortcut {
+            key: "Space".into(),
+            ..Shortcut::default()
+        },
         ..config
     };
     assert!(invalid.validate().is_err());

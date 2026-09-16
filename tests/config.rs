@@ -33,6 +33,31 @@ fn saved_preferences_round_trip_without_window_data() {
     assert_eq!(Config::from_json(&json).unwrap(), config);
     assert!(!json.contains("Zebra"));
     assert_eq!(Config::from_json("{}").unwrap(), Config::default());
+    assert_eq!(Config::default().shortcut.display(), "⌃I");
+    assert!(Config::default().switch_shortcut.is_command_tab());
+}
+
+#[test]
+fn saved_search_shortcuts_survive_default_changes() {
+    for (shortcut, expected) in [
+        (
+            r#"{"control":true,"option":true,"shift":false,"command":false,"key":"Space"}"#,
+            "⌃⌥Space",
+        ),
+        (
+            r#"{"control":false,"option":true,"shift":false,"command":false,"key":"KeyU"}"#,
+            "⌥U",
+        ),
+    ] {
+        let json = format!(r#"{{"shortcut":{shortcut}}}"#);
+        let config = Config::from_json(&json).unwrap();
+        assert_eq!(config.shortcut.display(), expected);
+        assert!(config.switch_shortcut.is_command_tab());
+        assert_eq!(
+            Config::from_json(&config.to_json().unwrap()).unwrap(),
+            config
+        );
+    }
 }
 
 #[test]

@@ -57,7 +57,7 @@ Custom aliases take priority over automatic ones and are reserved even when thei
 
 ### Search when you know what you want
 
-Press **Control + Option + Space** to open search. Type an app name, a window title, an alias, or a few keywords. Use the arrow keys to select a result and Enter to open it.
+Press **Control + I** to open search. Type an app name, a window title, an alias, or a few keywords. Use the arrow keys to select a result and Enter to open it. Change the shortcut in **Settings → Shortcuts**; updates keep your saved bindings.
 
 An empty search shows existing windows. Once you type, matching installed apps also appear with a **↗ Launch app** label, so you can open an app that is not running yet. Apps that already have windows are not repeated as launch results.
 

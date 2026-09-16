@@ -72,10 +72,10 @@ impl Default for Shortcut {
     fn default() -> Self {
         Self {
             control: true,
-            option: true,
+            option: false,
             shift: false,
             command: false,
-            key: "Space".into(),
+            key: "KeyI".into(),
         }
     }
 }
