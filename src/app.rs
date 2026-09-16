@@ -179,6 +179,7 @@ struct AppState {
     loading: Cell<bool>,
     demo: Cell<bool>,
     recency: RefCell<Vec<u64>>,
+    focus_observer: RefCell<Option<crate::focus_observer::FocusObserver>>,
     preferences: RefCell<HashMap<String, u64>>,
 }
 
@@ -461,6 +462,8 @@ define_class!(
         }
     }
     impl Delegate {
+        #[unsafe(method(workspaceActivated:))]
+        fn workspace_activated(&self, _: &NSNotification) { self.track_frontmost(); }
         #[unsafe(method(inputSourceChanged:))]
         fn input_source_changed(&self, _: &NSNotification) {
             if !self.ivars().changing_input_source.get() {
@@ -695,6 +698,18 @@ impl Delegate {
                 None,
             );
         }
+        // SAFETY: Workspace delivers application activation notifications on the main thread.
+        unsafe {
+            NSWorkspace::sharedWorkspace()
+                .notificationCenter()
+                .addObserver_selector_name_object(
+                    self,
+                    sel!(workspaceActivated:),
+                    Some(NSWorkspaceDidActivateApplicationNotification),
+                    None,
+                );
+        }
+        self.track_frontmost();
         // SAFETY: The application retains this delegate for the entire run loop; poll: has NSTimer signature.
         let timer = unsafe {
             NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
@@ -1233,6 +1248,7 @@ impl Delegate {
         }
         state.last_shortcut_check.set(Some(Instant::now()));
         if !accessibility::is_trusted() {
+            state.focus_observer.replace(None);
             if state.shortcut_tap.borrow().is_some() {
                 self.end_session();
                 state.shortcut_tap.replace(None);
@@ -1248,6 +1264,7 @@ impl Delegate {
             }
         } else if state.shortcut_tap.borrow().is_none() {
             self.register_hotkeys();
+            self.track_frontmost();
             self.report_shortcut_status();
         } else if !state
             .shortcut_tap
@@ -2590,6 +2607,43 @@ impl Delegate {
                 image
             })
             .clone()
+    }
+
+    fn track_frontmost(&self) {
+        if self.ivars().demo.get() {
+            return;
+        }
+        let Some(app) = NSWorkspace::sharedWorkspace().frontmostApplication() else {
+            return;
+        };
+        let pid = app.processIdentifier();
+        if pid == std::process::id() as i32
+            || app.activationPolicy() != NSApplicationActivationPolicy::Regular
+        {
+            return;
+        }
+        self.remember_application(pid);
+        if self
+            .ivars()
+            .focus_observer
+            .borrow()
+            .as_ref()
+            .is_some_and(|observer| observer.pid == pid)
+        {
+            return;
+        }
+        let weak = Weak::new(self);
+        let observer = crate::focus_observer::FocusObserver::new(pid, self.mtm(), move |id| {
+            if let Some(delegate) = weak.load()
+                && !delegate.ivars().demo.get()
+                && NSWorkspace::sharedWorkspace()
+                    .frontmostApplication()
+                    .is_some_and(|app| app.processIdentifier() == pid)
+            {
+                delegate.remember_window(id);
+            }
+        });
+        self.ivars().focus_observer.replace(observer);
     }
 
     fn remember_frontmost_window(&self) {

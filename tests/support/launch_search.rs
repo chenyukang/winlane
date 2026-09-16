@@ -1,3 +1,52 @@
+fn verify_external_focus_history(mtm: MainThreadMarker) {
+    let delegate = Delegate::new(mtm);
+    let state = delegate.ivars();
+    state.windows.replace(
+        [(1, -10), (2, -20), (3, -20), (4, -30)]
+            .into_iter()
+            .map(|(id, pid)| WindowInfo {
+                id,
+                pid,
+                app: format!("App {pid}"),
+                title: format!("Window {id}"),
+                minimized: false,
+            })
+            .collect(),
+    );
+    // App activation followed by focus notifications, including a project
+    // switch inside one app. A duplicate notification must not change history.
+    for id in [1, 2, 4, 3, 3] {
+        delegate.remember_window(id);
+    }
+    state.mode.set(Some(PanelMode::Switch));
+    state.previous_pid.set(-20);
+    state.previous_window.set(Some(3));
+    state
+        .switch_selection
+        .replace(Some(SwitchSelection::new(1)));
+    delegate.filter();
+    delegate.prepare_switch_selection();
+    assert_eq!(*state.recency.borrow(), [3, 4, 2, 1]);
+    assert_eq!(delegate.selected_window().unwrap().id, 4);
+    let snapshot = state.matches.borrow().clone();
+    delegate.remember_window(1);
+    assert_eq!(
+        *state.matches.borrow(),
+        snapshot,
+        "focus events must not reshuffle an active gesture"
+    );
+    assert_eq!(delegate.selected_window().unwrap().id, 4);
+    state
+        .switch_selection
+        .replace(Some(SwitchSelection::new(1)));
+    state.previous_pid.set(-10);
+    state.previous_window.set(Some(1));
+    delegate.filter();
+    delegate.prepare_switch_selection();
+    assert_eq!(delegate.selected_window().unwrap().id, 3);
+    assert!(crate::focus_observer::FocusObserver::new(-1, mtm, |_| {}).is_none());
+}
+
 fn verify_shortcut_recency(mtm: MainThreadMarker) {
     let delegate = Delegate::new(mtm);
     let state = delegate.ivars();

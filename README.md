@@ -70,7 +70,7 @@ Open Settings from the menu bar or press **Command + ,** while using Winlane.
 | **Shortcuts** | Separate shortcuts for search and switching, plus fixed app shortcuts. |
 | **Appearance & Language** | System, light, or dark appearance; system language, Chinese, or English. |
 | **Input** | Keep the current input source, start searches in English or Chinese, or remember the last input source used in Winlane. |
-| **Window List** | Sorting, minimized windows, and apps to exclude. Recent sorting includes window selections and app shortcuts. |
+| **Window List** | Sorting, minimized windows, and apps to exclude. Recent sorting follows window focus, including mouse, Dock, and shortcut switches. |
 | **Startup** | Launch at login and access to macOS login-item settings. |
 
 Settings save automatically. Menus, switches, and sliders apply immediately; text fields save when you press Return or finish editing. Invalid values and conflicting shortcuts leave the last valid configuration in effect and show an error. Restore Defaults also applies immediately.

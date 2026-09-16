@@ -5,6 +5,9 @@
 mod main_wake;
 
 #[cfg(target_os = "macos")]
+#[path = "../src/focus_observer.rs"]
+mod focus_observer;
+#[cfg(target_os = "macos")]
 #[path = "../src/input_source.rs"]
 mod input_source;
 
@@ -274,6 +277,7 @@ mod app {
         verify_catalog_refresh(mtm);
         verify_launch_search(mtm);
         verify_shortcut_recency(mtm);
+        verify_external_focus_history(mtm);
         verify_adaptive_panels(mtm);
         delegate.ivars().demo.set(true);
         delegate.ivars().windows.replace(demo_windows());

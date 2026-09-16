@@ -7,6 +7,8 @@ mod app;
 #[cfg(target_os = "macos")]
 mod app_shortcuts;
 #[cfg(target_os = "macos")]
+mod focus_observer;
+#[cfg(target_os = "macos")]
 mod input_source;
 #[cfg(target_os = "macos")]
 mod installed_apps;
