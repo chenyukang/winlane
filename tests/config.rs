@@ -1,0 +1,158 @@
+use winlane::config::{
+    Appearance, Config, KEYS, Shortcut, SortOrder, parse_excluded, visible_matches,
+};
+use winlane::search::WindowInfo;
+
+fn windows() -> Vec<WindowInfo> {
+    [
+        (1, 10, "Safari", "Zebra", false),
+        (2, 20, "Terminal", "Alpha", false),
+        (3, 10, "Safari", "Beta", true),
+        (4, 30, "Obsidian", "项目笔记", false),
+    ]
+    .into_iter()
+    .map(|(id, pid, app, title, minimized)| WindowInfo {
+        id,
+        pid,
+        app: app.into(),
+        title: title.into(),
+        minimized,
+    })
+    .collect()
+}
+
+#[test]
+fn saved_preferences_round_trip_without_window_data() {
+    let config = Config {
+        sort: SortOrder::Title,
+        appearance: Appearance::Dark,
+        excluded_apps: vec!["Safari".into()],
+        ..Config::default()
+    };
+    let json = config.to_json().unwrap();
+    assert_eq!(Config::from_json(&json).unwrap(), config);
+    assert!(!json.contains("Zebra"));
+    assert_eq!(Config::from_json("{}").unwrap(), Config::default());
+}
+
+#[test]
+fn legacy_launch_preference_is_ignored_without_losing_other_settings() {
+    for show_on_launch in [false, true] {
+        let json = format!(
+            r#"{{"show_on_launch":{show_on_launch},"sort":"Title","excluded_apps":["Safari"]}}"#
+        );
+        let config = Config::from_json(&json).unwrap();
+        assert_eq!(config.sort, SortOrder::Title);
+        assert_eq!(config.excluded_apps, ["Safari"]);
+        assert!(!config.to_json().unwrap().contains("show_on_launch"));
+    }
+}
+
+#[test]
+fn invalid_settings_fail_without_silently_using_a_different_shortcut() {
+    assert!(Config::from_json(r#"{"shortcut":{"key":"Invalid"}}"#).is_err());
+    assert!(Config::from_json("broken").is_err());
+    let unsafe_shortcut = Shortcut {
+        control: false,
+        option: false,
+        command: true,
+        key: "KeyQ".into(),
+        ..Shortcut::default()
+    };
+    assert!(unsafe_shortcut.hotkey().is_err());
+    for key in KEYS {
+        assert!(
+            Shortcut {
+                key: key.to_string(),
+                ..Shortcut::default()
+            }
+            .hotkey()
+            .is_ok()
+        );
+    }
+}
+
+#[test]
+fn command_tab_is_accepted_and_survives_saved_preferences() {
+    let config = Config {
+        shortcut: Shortcut {
+            control: false,
+            option: false,
+            shift: false,
+            command: true,
+            key: "Tab".into(),
+        },
+        ..Config::default()
+    };
+    assert!(config.shortcut.hotkey().is_ok());
+    assert_eq!(
+        Config::from_json(&config.to_json().unwrap()).unwrap(),
+        config
+    );
+}
+
+#[test]
+fn filters_compose_without_changing_the_result_identity() {
+    let config = Config {
+        include_minimized: false,
+        excluded_apps: vec!["terminal".into()],
+        ..Config::default()
+    };
+    let items = windows();
+    assert_eq!(
+        visible_matches(&items, "", None, &config, None, &[], 0),
+        vec![0, 3]
+    );
+    assert_eq!(
+        visible_matches(&items, "", None, &config, Some(10), &[], 0),
+        vec![0]
+    );
+    assert!(visible_matches(&items, "beta", None, &config, None, &[], 0).is_empty());
+    assert!(visible_matches(&items, "", None, &config, Some(99), &[], 0).is_empty());
+}
+
+#[test]
+fn sorting_preserves_search_relevance_and_original_indices() {
+    let config = Config {
+        sort: SortOrder::Application,
+        ..Config::default()
+    };
+    let items = windows();
+    assert_eq!(
+        visible_matches(&items, "", None, &config, None, &[], 0),
+        vec![3, 2, 0, 1]
+    );
+    assert_eq!(
+        visible_matches(&items, "safari beta", None, &config, None, &[], 0),
+        vec![2]
+    );
+    let config = Config {
+        sort: SortOrder::Title,
+        ..config
+    };
+    assert_eq!(
+        visible_matches(&items, "", None, &config, None, &[], 0),
+        vec![1, 2, 0, 3]
+    );
+    let config = Config::default();
+    assert_eq!(
+        visible_matches(&items, "", None, &config, None, &[3, 2], 10),
+        vec![2, 1, 0, 3]
+    );
+}
+
+#[test]
+fn exclusions_accept_chinese_punctuation_and_deduplicate_exact_app_names() {
+    assert_eq!(
+        parse_excluded("Safari，Terminal\nsafari, 备忘录 , ,"),
+        vec!["Safari", "Terminal", "备忘录"]
+    );
+    let config = Config {
+        excluded_apps: parse_excluded("Term"),
+        ..Config::default()
+    };
+    assert_eq!(
+        visible_matches(&windows(), "Terminal", None, &config, None, &[], 0),
+        vec![1]
+    );
+}
