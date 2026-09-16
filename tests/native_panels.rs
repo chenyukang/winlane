@@ -287,6 +287,7 @@ mod app {
         verify_switch_delay(mtm);
         verify_project_rule_search(mtm);
         verify_adaptive_panels(mtm);
+        verify_editor_window_titles(mtm);
         delegate.ivars().demo.set(true);
         delegate.ivars().windows.replace(demo_windows());
         delegate.ivars().mode.set(Some(PanelMode::Search));
@@ -482,6 +483,105 @@ mod app {
             "Native panel checks passed on {} display(s): placement, shared query/scope/mode/alias, reuse; no panels shown or shortcuts registered.",
             panels.len()
         );
+    }
+
+    fn verify_editor_window_titles(mtm: MainThreadMarker) {
+        let delegate = Delegate::new(mtm);
+        let state = delegate.ivars();
+        state.demo.set(true);
+        state.mode.set(Some(PanelMode::Search));
+        delegate.sync_displays();
+        let cases = [
+            (
+                "com.microsoft.VSCode",
+                "snapshot2.rs — ckb",
+                "ckb: snapshot2.rs",
+            ),
+            (
+                "com.microsoft.VSCode",
+                "README.md (added in abc123) (README.md ((deleted)) ↔ README.md (Working Tree)) — project",
+                "project: README.md (added in abc123) (README.md ((deleted)) ↔ README.md (Working Tree))",
+            ),
+            (
+                "com.microsoft.VSCode",
+                "● main.rs — my - project — Visual Studio Code",
+                "my - project: ● main.rs",
+            ),
+            (
+                "com.microsoft.VSCodeInsiders",
+                "main.rs — project [SSH: dev] — Visual Studio Code - Insiders",
+                "project [SSH: dev]: main.rs",
+            ),
+            (
+                "com.microsoft.VSCode",
+                "main.rs - project - Visual Studio Code",
+                "project: main.rs",
+            ),
+            (
+                "com.microsoft.VSCodeInsiders",
+                "main.rs - project - Visual Studio Code - Insiders",
+                "project: main.rs",
+            ),
+            (
+                "com.microsoft.VSCode",
+                "Welcome — Visual Studio Code",
+                "Welcome — Visual Studio Code",
+            ),
+            ("com.microsoft.VSCode", "project", "project"),
+            ("com.microsoft.VSCode", "main.rs — ", "main.rs — "),
+            (
+                "com.example.other",
+                "snapshot2.rs — ckb",
+                "snapshot2.rs — ckb",
+            ),
+        ];
+        for (bundle, original, expected) in cases {
+            state.identities.borrow_mut().insert(
+                -100,
+                AppIdentity {
+                    id: bundle.into(),
+                    english_name: "Code".into(),
+                },
+            );
+            let window = WindowInfo {
+                id: 100,
+                pid: -100,
+                app: "Code".into(),
+                title: original.into(),
+                minimized: false,
+            };
+            state.windows.replace(vec![window.clone()]);
+            for mode in [PanelMode::Search, PanelMode::Switch] {
+                state.mode.set(Some(mode));
+                state.query.borrow_mut().clear();
+                delegate.filter();
+                assert_eq!(delegate.selected_window().unwrap(), window);
+                for ui in delegate.panels() {
+                    assert_eq!(
+                        ui.rows.borrow()[0].title.stringValue().to_string(),
+                        expected
+                    );
+                    assert!(!ui.panel.isVisible());
+                }
+            }
+        }
+        state.identities.borrow_mut().get_mut(&-100).unwrap().id = "com.microsoft.VSCode".into();
+        state.windows.borrow_mut()[0].minimized = true;
+        state.mode.set(Some(PanelMode::Search));
+        state.query.replace("snapshot2.rs ckb".into());
+        delegate.filter();
+        assert_eq!(
+            delegate.match_count(),
+            1,
+            "search must still use the original title"
+        );
+        for ui in delegate.panels() {
+            assert_eq!(
+                ui.rows.borrow()[0].title.stringValue().to_string(),
+                "ckb: snapshot2.rs · 已最小化"
+            );
+        }
+        println!("VS Code project-first titles passed in search and switch panels.");
     }
 
     fn verify_autosave(mtm: MainThreadMarker) {

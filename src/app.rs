@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -2593,10 +2594,15 @@ impl Delegate {
                                 .as_deref()
                                 .map_or(String::new(), |alias| format!(" · alias {alias}"))
                         );
+                        let identities = state.identities.borrow();
+                        let title = window_display_title(
+                            item,
+                            identities.get(&item.pid).map(|app| app.id.as_str()),
+                        );
                         let title = if item.minimized {
                             trf!("{title} · 已最小化", "{title} · Minimized")
                         } else {
-                            title.clone()
+                            title.into_owned()
                         };
                         set_label(&row.title, &title);
                         set_label(&row.app, &item.app);
@@ -3061,6 +3067,48 @@ fn app_identity(app: &NSRunningApplication) -> Option<AppIdentity> {
         })
         .unwrap_or_default();
     Some(AppIdentity { id, english_name })
+}
+
+fn window_display_title<'a>(window: &'a WindowInfo, app_id: Option<&str>) -> Cow<'a, str> {
+    if window.title.trim().is_empty() {
+        return Cow::Borrowed(&window.app);
+    }
+    let is_vscode = match app_id {
+        Some(id) => matches!(id, "com.microsoft.VSCode" | "com.microsoft.VSCodeInsiders"),
+        None => matches!(
+            window.app.as_str(),
+            "Code" | "Visual Studio Code" | "Code - Insiders"
+        ),
+    };
+    if !is_vscode {
+        return Cow::Borrowed(&window.title);
+    }
+    let split = |title: &'a str| {
+        title
+            .rsplit_once(" — ")
+            .or_else(|| title.rsplit_once(" - "))
+    };
+    let title = [
+        "Visual Studio Code - Insiders",
+        "Visual Studio Code",
+        "Code - Insiders",
+        "Code",
+    ]
+    .into_iter()
+    .find_map(|name| {
+        let title = window.title.strip_suffix(name)?;
+        title
+            .strip_suffix(" — ")
+            .or_else(|| title.strip_suffix(" - "))
+    })
+    .unwrap_or(&window.title);
+    let Some((detail, project)) = split(title) else {
+        return Cow::Borrowed(&window.title);
+    };
+    if detail.trim().is_empty() || project.trim().is_empty() {
+        return Cow::Borrowed(&window.title);
+    }
+    Cow::Owned(format!("{}: {}", project.trim(), detail.trim()))
 }
 
 fn rect(x: f64, y: f64, width: f64, height: f64) -> NSRect {
