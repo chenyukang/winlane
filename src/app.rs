@@ -161,6 +161,7 @@ struct AppState {
     catalog_checked: Cell<Option<Instant>>,
     application_icons: RefCell<HashMap<String, Retained<NSImage>>>,
     show_menu_item: RefCell<Option<Retained<NSMenuItem>>>,
+    switch_menu_item: RefCell<Option<Retained<NSMenuItem>>>,
     status_item: OnceCell<Retained<NSStatusItem>>,
     timer: OnceCell<Retained<NSTimer>>,
     shortcut_tap: RefCell<Option<ShortcutTap>>,
@@ -913,6 +914,8 @@ impl Delegate {
             menu.addItem(&item);
             if action == sel!(showSearch:) {
                 self.ivars().show_menu_item.replace(Some(item));
+            } else if action == sel!(showSwitcher:) {
+                self.ivars().switch_menu_item.replace(Some(item));
             }
         }
         status_item.setMenu(Some(&menu));
@@ -1653,16 +1656,26 @@ impl Delegate {
     }
 
     fn update_shortcut_labels(&self) {
-        let display = self.ivars().config.borrow().shortcut.display();
-        self.ivars()
-            .show_menu_item
-            .borrow()
-            .as_ref()
-            .unwrap()
-            .setTitle(&NSString::from_str(&trf!(
-                "打开窗口搜索    {display}",
-                "Open Window Search    {display}"
-            )));
+        let config = self.ivars().config.borrow();
+        for (item, title, shortcut) in [
+            (
+                &self.ivars().show_menu_item,
+                tr!("打开窗口搜索", "Open Window Search"),
+                &config.shortcut,
+            ),
+            (
+                &self.ivars().switch_menu_item,
+                tr!("打开窗口切换", "Open Window Switcher"),
+                &config.switch_shortcut,
+            ),
+        ] {
+            if let Some(item) = item.borrow().as_ref() {
+                item.setTitle(&NSString::from_str(&format!(
+                    "{title}    {}",
+                    shortcut.display()
+                )));
+            }
+        }
     }
 
     fn menu_item(&self, title: &str, action: Sel, key: &str) -> Retained<NSMenuItem> {
