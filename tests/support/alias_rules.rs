@@ -100,5 +100,24 @@ pub fn verify_rules_editor(
             )
         );
     }
+    let row = window.rows.borrow()[0].clone();
+    // SAFETY: The retained field belongs to this hidden native window.
+    unsafe { row.title.selectText(None) };
+    let editor = window
+        .window
+        .firstResponder()
+        .unwrap()
+        .downcast::<NSTextView>()
+        .unwrap();
+    editor.setString(ns_string!("compiler"));
+    window.window.sendEvent(&crate::settings::escape_event(
+        &window.window,
+        NSEventModifierFlags::empty(),
+    ));
+    assert_eq!(
+        saved().alias_rules[0].title_contains,
+        "compiler",
+        "Escape must finish and save the active rule edit"
+    );
     assert!(!window.window.isVisible());
 }

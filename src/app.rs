@@ -3106,8 +3106,8 @@ fn selection_gradient() -> &'static NSGradient {
     GRADIENT.get_or_init(|| {
         NSGradient::initWithStartingColor_endingColor(
             NSGradient::alloc(),
-            &tint(0x2855e8, 1.0),
-            &tint(0x087f98, 1.0),
+            &tint(0x4c6bd6, 1.0),
+            &tint(0x367f91, 1.0),
         )
         .unwrap()
     })

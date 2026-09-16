@@ -1,4 +1,4 @@
-use crate::settings::{button, hint, label, rect};
+use crate::settings::{button, hint, label, preferences_window, rect};
 use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
@@ -44,18 +44,7 @@ pub struct AliasRulesWindow {
 
 impl AliasRulesWindow {
     pub fn new(target: &AnyObject, mtm: MainThreadMarker) -> Self {
-        let window = unsafe {
-            NSWindow::initWithContentRect_styleMask_backing_defer(
-                NSWindow::alloc(mtm),
-                rect(0.0, 0.0, 700.0, 570.0),
-                NSWindowStyleMask::Titled | NSWindowStyleMask::Closable,
-                NSBackingStoreType::Buffered,
-                false,
-            )
-        };
-        unsafe {
-            window.setReleasedWhenClosed(false);
-        }
+        let window = preferences_window(rect(0.0, 0.0, 700.0, 570.0), mtm);
         window.setTitle(&NSString::from_str(tr!(
             "Winlane · Alias 规则",
             "Winlane · Alias Rules"

@@ -71,7 +71,7 @@ These shortcuts work without opening the picker and launch the app if needed. Th
 
 ## Make it yours
 
-Open Settings from the menu bar or press **Command + ,** while using Winlane.
+Open Settings from the menu bar or press **Command + ,** while using Winlane. Press **Esc** to close the current settings window, including App Shortcuts and Alias Rules. While composing text with an input method, Esc keeps its normal cancellation behavior.
 
 | Settings tab | What you can change |
 | --- | --- |

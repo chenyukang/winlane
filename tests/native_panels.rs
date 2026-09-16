@@ -90,6 +90,7 @@ mod installed_apps {
 mod settings {
     include!("../src/settings.rs");
     include!("support/localization.rs");
+    include!("support/settings_escape.rs");
 }
 #[cfg(target_os = "macos")]
 #[path = "../src/shortcut_tap.rs"]
@@ -542,10 +543,17 @@ mod app {
         crate::app_shortcuts::verify_autosave_target(&shortcuts, &delegate, mtm, saved);
         assert!(!settings.window.isVisible() && !shortcuts.window.isVisible());
         let rules = delegate.ensure_alias_rules_window();
+        crate::settings::verify_escape_close(&rules.window);
         crate::alias_rules::verify_rules_editor(&rules, &delegate, mtm, saved);
         assert_eq!(
             settings.candidate().unwrap().alias_rules,
             saved().alias_rules
+        );
+        crate::settings::verify_escape_close(&settings.window);
+        crate::settings::verify_escape_close(&shortcuts.window);
+        crate::settings::verify_escape_autosave(&settings, saved);
+        println!(
+            "Settings Escape checks passed: all three windows close, active edits save, IME composition and modified Escape do not close windows."
         );
         store.removePersistentDomainForName(&domain);
         winlane::i18n::set_locale(previous_locale);

@@ -1,9 +1,10 @@
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Sel};
-use objc2::{MainThreadOnly, sel};
+use objc2::{MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::*;
 use objc2_foundation::{
-    MainThreadMarker, NSLocale, NSPoint, NSRect, NSSize, NSString, NSUserDefaults, ns_string,
+    MainThreadMarker, NSLocale, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString,
+    NSUserDefaults, ns_string,
 };
 use objc2_service_management::{SMAppService, SMAppServiceStatus};
 use std::cell::RefCell;
@@ -15,6 +16,53 @@ use winlane::config::{
 use winlane::i18n::{self, Language};
 use winlane::input_method::InputMethod;
 use winlane::{tr, trf};
+
+define_class!(
+    // SAFETY: Settings windows and event dispatch stay on AppKit's main thread.
+    #[unsafe(super = NSWindow)]
+    #[thread_kind = MainThreadOnly]
+    #[derive(Debug)]
+    struct PreferencesWindow;
+    unsafe impl NSObjectProtocol for PreferencesWindow {}
+    impl PreferencesWindow {
+        #[unsafe(method(sendEvent:))]
+        fn send_event(&self, event: &NSEvent) {
+            if event.r#type() == NSEventType::KeyDown
+                && i64::from(event.keyCode()) == winlane::shortcuts::ESCAPE
+                && !event.modifierFlags().intersects(
+                    NSEventModifierFlags::Command | NSEventModifierFlags::Control
+                        | NSEventModifierFlags::Option | NSEventModifierFlags::Shift,
+                )
+                && self.attachedSheet().is_none()
+            {
+                let composing = self.firstResponder()
+                    .and_then(|responder| responder.downcast::<NSTextView>().ok())
+                    .is_some_and(|editor| NSTextInputClient::hasMarkedText(&*editor));
+                if !composing {
+                    if !event.isARepeat() { self.performClose(None); }
+                    return;
+                }
+            }
+            // SAFETY: Other keys and input-method cancellation keep their native behavior.
+            unsafe { let _: () = msg_send![super(self), sendEvent: event]; }
+        }
+    }
+);
+
+pub(crate) fn preferences_window(frame: NSRect, mtm: MainThreadMarker) -> Retained<NSWindow> {
+    // SAFETY: The initialized main-thread window is retained by its settings owner across closes.
+    unsafe {
+        let window: Retained<PreferencesWindow> = msg_send![
+            PreferencesWindow::alloc(mtm),
+            initWithContentRect: frame,
+            styleMask: NSWindowStyleMask::Titled | NSWindowStyleMask::Closable,
+            backing: NSBackingStoreType::Buffered,
+            defer: false,
+        ];
+        window.setReleasedWhenClosed(false);
+        window.into_super()
+    }
+}
 
 pub fn load_aliases() -> Result<Aliases, String> {
     let defaults = NSUserDefaults::standardUserDefaults();
@@ -191,18 +239,7 @@ pub struct SettingsWindow {
 
 impl SettingsWindow {
     pub fn new(target: &AnyObject, mtm: MainThreadMarker) -> Self {
-        // SAFETY: The window is created on the main thread and retained across closes below.
-        let window = unsafe {
-            NSWindow::initWithContentRect_styleMask_backing_defer(
-                NSWindow::alloc(mtm),
-                rect(0.0, 0.0, 720.0, 620.0),
-                NSWindowStyleMask::Titled | NSWindowStyleMask::Closable,
-                NSBackingStoreType::Buffered,
-                false,
-            )
-        };
-        // SAFETY: SettingsWindow retains this reusable window after close.
-        unsafe { window.setReleasedWhenClosed(false) };
+        let window = preferences_window(rect(0.0, 0.0, 720.0, 620.0), mtm);
         window.setTitle(&NSString::from_str(tr!("Winlane 设置", "Winlane Settings")));
         let view = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 720.0, 620.0));
         window.setContentView(Some(&view));
@@ -591,14 +628,6 @@ impl SettingsWindow {
             rect(28.0, 20.0, 190.0, 30.0),
             mtm,
         ));
-        let autosave_hint = hint(
-            tr!("更改自动保存", "Changes save automatically"),
-            rect(380.0, 24.0, 312.0, 22.0),
-            mtm,
-        );
-        autosave_hint.setAlignment(NSTextAlignment::Right);
-        view.addSubview(&autosave_hint);
-
         Self {
             window,
             tabs,

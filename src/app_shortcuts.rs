@@ -13,7 +13,7 @@ use objc2_foundation::{MainThreadMarker, NSArray, NSBundle, NSError, NSString, N
 use winlane::config::{AppShortcut, ApplicationTarget, Shortcut};
 
 use crate::main_wake::WakeHandle;
-use crate::settings::{ShortcutControls, button, hint, label, rect};
+use crate::settings::{ShortcutControls, button, hint, label, preferences_window, rect};
 
 pub fn target_at_url(url: &NSURL) -> Result<ApplicationTarget, String> {
     let path = url
@@ -148,17 +148,7 @@ pub struct AppShortcutsWindow {
 
 impl AppShortcutsWindow {
     pub fn new(target: &AnyObject, mtm: MainThreadMarker) -> Self {
-        // SAFETY: This main-thread window remains owned when closed.
-        let window = unsafe {
-            NSWindow::initWithContentRect_styleMask_backing_defer(
-                NSWindow::alloc(mtm),
-                rect(0.0, 0.0, 700.0, 600.0),
-                NSWindowStyleMask::Titled | NSWindowStyleMask::Closable,
-                NSBackingStoreType::Buffered,
-                false,
-            )
-        };
-        unsafe { window.setReleasedWhenClosed(false) };
+        let window = preferences_window(rect(0.0, 0.0, 700.0, 600.0), mtm);
         window.setTitle(&NSString::from_str(tr!(
             "Winlane · 应用快捷键",
             "Winlane · App Shortcuts"
