@@ -2,19 +2,21 @@ use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
+use winlane::{tr, trf};
 
 use crate::main_wake::MainWake;
 use objc2::rc::{Retained, Weak};
 use objc2::runtime::{AnyObject, ProtocolObject, Sel};
-use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
+use objc2::{AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::*;
 use objc2_foundation::{
     MainThreadMarker, NSBundle, NSNotification, NSNumber, NSObject, NSObjectProtocol, NSPoint,
     NSRect, NSRunLoop, NSRunLoopCommonModes, NSSize, NSString, NSTimer, NSURL, ns_string,
 };
 use std::time::{Duration, Instant};
-use winlane::aliases::{AliasInput, AliasMatch, Aliases, AppIdentity, match_alias};
-use winlane::config::{Config, visible_matches};
+use winlane::aliases::{AliasInput, AliasMatch, Aliases, AppIdentity};
+use winlane::app_catalog::{InstalledApp, matching_apps};
+use winlane::config::{ApplicationTarget, Config, visible_matches};
 use winlane::displays::{Display, Rect, placements};
 use winlane::search::WindowInfo;
 use winlane::shortcuts::{
@@ -23,6 +25,8 @@ use winlane::shortcuts::{
 };
 
 use crate::accessibility;
+use crate::app_shortcuts::{self, AppShortcutsWindow};
+use crate::installed_apps;
 use crate::settings::{self, SettingsWindow};
 use crate::shortcut_tap::ShortcutTap;
 
@@ -57,9 +61,31 @@ struct RowUi {
     app: Retained<NSTextField>,
     alias: Retained<NSTextField>,
     icon: Retained<NSImageView>,
-    content: Option<(WindowInfo, Option<String>)>,
+    content: Option<RowContent>,
     selected: Option<bool>,
     attached: bool,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+enum RowContent {
+    Window(WindowInfo, Option<String>),
+    Application(ApplicationTarget),
+}
+
+enum SelectedResult {
+    Window(u64),
+    Application(String),
+}
+
+#[derive(Clone, Copy)]
+enum LaunchOrigin {
+    Shortcut,
+    Search,
+}
+
+struct PendingLaunch {
+    receiver: Receiver<Result<i32, String>>,
+    origin: LaunchOrigin,
 }
 
 impl RowUi {
@@ -85,10 +111,18 @@ impl RowUi {
         } else {
             NSColor::labelColor()
         };
-        self.title.setTextColor(Some(&text));
+        let launching = matches!(self.content, Some(RowContent::Application(_)));
+        let detail = if launching && !selected {
+            NSColor::secondaryLabelColor()
+        } else {
+            text.clone()
+        };
+        self.title.setTextColor(Some(&detail));
         self.app.setTextColor(Some(&text));
         let alias = if selected {
             text
+        } else if launching {
+            NSColor::controlAccentColor()
         } else {
             NSColor::secondaryLabelColor()
         };
@@ -112,8 +146,14 @@ struct AppState {
     alias_input: RefCell<AliasInput>,
     alias_error: RefCell<Option<String>>,
     aliases_writable: Cell<bool>,
-    settings: OnceCell<SettingsWindow>,
-    show_menu_item: OnceCell<Retained<NSMenuItem>>,
+    settings: RefCell<Option<Rc<SettingsWindow>>>,
+    app_shortcuts: RefCell<Option<Rc<AppShortcutsWindow>>>,
+    launch_receiver: RefCell<Option<PendingLaunch>>,
+    installed_apps: RefCell<Vec<InstalledApp>>,
+    catalog_receiver: RefCell<Option<Receiver<Vec<InstalledApp>>>>,
+    catalog_checked: Cell<Option<Instant>>,
+    application_icons: RefCell<HashMap<String, Retained<NSImage>>>,
+    show_menu_item: RefCell<Option<Retained<NSMenuItem>>>,
     status_item: OnceCell<Retained<NSStatusItem>>,
     timer: OnceCell<Retained<NSTimer>>,
     shortcut_tap: RefCell<Option<ShortcutTap>>,
@@ -128,6 +168,7 @@ struct AppState {
     hotkey_error: RefCell<Option<String>>,
     windows: RefCell<Vec<WindowInfo>>,
     matches: RefCell<Vec<usize>>,
+    launch_matches: RefCell<Vec<usize>>,
     selected: Cell<usize>,
     previous_pid: Cell<i32>,
     receiver: RefCell<Option<Receiver<Vec<WindowInfo>>>>,
@@ -213,14 +254,17 @@ define_class!(
     unsafe impl NSApplicationDelegate for Delegate {
         #[unsafe(method(applicationDidBecomeActive:))]
         fn became_active(&self, _: &NSNotification) {
-            if let Some(settings) = self.ivars().settings.get() { settings.update_login_status(); }
+            self.check_language();
+            if let Some(settings) = self.settings_window() { settings.update_login_status(); }
         }
         #[unsafe(method(applicationDidFinishLaunching:))]
         fn did_launch(&self, _: &NSNotification) {
+            settings::apply_language(winlane::i18n::Language::System);
             match settings::load() {
                 Ok(config) => { self.ivars().config.replace(config); }
                 Err(error) => { self.ivars().hotkey_error.replace(Some(error)); }
             }
+            settings::apply_language(self.ivars().config.borrow().language);
             match settings::load_aliases() {
                 Ok(aliases) => {
                     self.ivars().aliases.replace(aliases);
@@ -290,7 +334,7 @@ define_class!(
             if [sel!(minimizeChosen:), sel!(hideChosen:), sel!(copyTitle:), sel!(quickSelect:)].into_iter().any(|sel| action == Some(sel)) {
                 let visible = self.any_panel_visible();
                 visible && if action == Some(sel!(quickSelect:)) {
-                    (item.tag() as usize) < self.ivars().matches.borrow().len()
+                    (item.tag() as usize) < self.match_count()
                 } else { self.selected_window().is_some() }
             } else { true }
         }
@@ -298,16 +342,17 @@ define_class!(
     impl Delegate {
         #[unsafe(method(showSettings:))]
         fn settings_action(&self, _: Option<&AnyObject>) {
+            self.ivars().launch_receiver.replace(None);
             self.cancel_routing();
             self.end_session();
-            let settings = self.ivars().settings.get_or_init(|| SettingsWindow::new(self, self.mtm()));
+            let settings = self.ensure_settings_window();
             NSApplication::sharedApplication(self.mtm()).activate();
             settings.show(&self.ivars().config.borrow());
             self.report_shortcut_status();
         }
         #[unsafe(method(saveSettings:))]
         fn save_settings(&self, _: Option<&AnyObject>) {
-            if let Some(settings) = self.ivars().settings.get() {
+            if let Some(settings) = self.settings_window() {
                 match settings.candidate().and_then(|candidate| self.apply_config(candidate)) {
                     Ok(()) => self.report_shortcut_status(),
                     Err(error) => settings.report(&error, true),
@@ -316,14 +361,44 @@ define_class!(
         }
         #[unsafe(method(resetSettings:))]
         fn reset_settings(&self, _: Option<&AnyObject>) {
-            if let Some(settings) = self.ivars().settings.get() {
+            if let Some(settings) = self.settings_window() {
                 settings.fill(&Config::default());
-                settings.report("已填入默认值，点击保存后生效。登录启动状态保持不变。", false);
+                settings.report(tr!("已填入默认值，点击保存后生效。登录启动状态保持不变。", "Defaults filled in. Save to apply. Launch at login is unchanged."), false);
+            }
+        }
+        #[unsafe(method(showAppShortcuts:))]
+        fn app_shortcuts_action(&self, _: Option<&AnyObject>) {
+            self.show_app_shortcuts();
+        }
+        #[unsafe(method(addAppShortcut:))]
+        fn add_app_shortcut(&self, _: Option<&AnyObject>) {
+            if let Some(window) = self.app_shortcuts_window() { window.add(self, self.mtm()); }
+        }
+        #[unsafe(method(removeAppShortcut:))]
+        fn remove_app_shortcut(&self, sender: &NSButton) {
+            if let Some(window) = self.app_shortcuts_window() { window.remove(sender.tag() as usize); }
+        }
+        #[unsafe(method(chooseShortcutApp:))]
+        fn choose_shortcut_app(&self, sender: &NSButton) {
+            if let Some(window) = self.app_shortcuts_window() { window.choose(sender.tag() as usize, self.mtm()); }
+        }
+        #[unsafe(method(saveAppShortcuts:))]
+        fn save_app_shortcuts(&self, _: Option<&AnyObject>) {
+            if let Some(window) = self.app_shortcuts_window() {
+                let result = window.candidate().and_then(|shortcuts| {
+                    let mut config = self.ivars().config.borrow().clone();
+                    config.app_shortcuts = shortcuts;
+                    self.apply_config(config)
+                });
+                match result {
+                    Ok(()) => window.report(tr!("应用快捷键已保存并启用。", "App shortcuts saved and enabled."), false),
+                    Err(error) => window.report(&error, true),
+                }
             }
         }
         #[unsafe(method(toggleLogin:))]
         fn toggle_login(&self, _: Option<&AnyObject>) {
-            if let Some(settings) = self.ivars().settings.get() { settings.toggle_login(); }
+            if let Some(settings) = self.settings_window() { settings.toggle_login(); }
         }
         #[unsafe(method(manageLogin:))]
         fn manage_login(&self, _: Option<&AnyObject>) { settings::manage_login(); }
@@ -344,14 +419,14 @@ define_class!(
                 pasteboard.clearContents();
                 // SAFETY: AppKit exports this immutable pasteboard type on all supported systems.
                 if pasteboard.setString_forType(&NSString::from_str(&window.title), unsafe { NSPasteboardTypeString }) {
-                    self.report_switch_error("已复制窗口标题。");
-                } else { self.report_switch_error("无法写入剪贴板，请重试。"); }
+                    self.report_switch_error(tr!("已复制窗口标题。", "Window title copied."));
+                } else { self.report_switch_error(tr!("无法写入剪贴板，请重试。", "Could not copy to the clipboard. Try again.")); }
             }
         }
         #[unsafe(method(quickSelect:))]
         fn quick_select(&self, sender: &NSMenuItem) {
             if !self.any_panel_visible() { return; }
-            if (sender.tag() as usize) < self.ivars().matches.borrow().len() {
+            if (sender.tag() as usize) < self.match_count() {
                 self.ivars().selected.set(sender.tag() as usize);
                 self.render(); self.activate_selected();
             }
@@ -362,13 +437,17 @@ define_class!(
         fn switch_action(&self, _: Option<&AnyObject>) { self.open_switcher(); }
         #[unsafe(method(closeWindow:))]
         fn close_window(&self, _: Option<&AnyObject>) {
-            if let Some(settings) = self.ivars().settings.get() && settings.window.isKeyWindow() {
+            if let Some(settings) = self.settings_window() && settings.window.isKeyWindow() {
                 settings.window.close();
             } else if self.any_panel_key() { self.dismiss(); }
         }
         #[unsafe(method(refreshWindows:))]
         fn refresh_action(&self, _: Option<&AnyObject>) {
-            if self.ivars().demo.get() { self.filter(); } else { self.refresh(); }
+            if self.ivars().demo.get() { self.filter(); } else {
+                self.ivars().catalog_checked.set(None);
+                self.ensure_app_catalog();
+                self.refresh();
+            }
         }
         #[unsafe(method(pickWindow:))]
         fn pick(&self, sender: &NSButton) {
@@ -404,13 +483,14 @@ define_class!(
             let actions: Vec<_> = self.ivars().shortcut_rx.borrow().as_ref()
                 .map(|rx| rx.try_iter().collect()).unwrap_or_default();
             for action in actions { self.shortcut_action(action); }
+            self.poll_app_launch();
+            self.poll_app_catalog();
             let result = self.ivars().receiver.borrow().as_ref().map(|rx| rx.try_recv());
             if let Some(Ok(mut windows)) = result {
                 self.ivars().receiver.replace(None);
                 self.ivars().loading.set(false);
                 if !self.ivars().demo.get() {
                     if !accessibility::is_trusted() { windows.clear(); }
-                    self.update_aliases(&windows);
                     let snapshot_ready = self.ivars().switch_selection.borrow().as_ref()
                         .is_some_and(|selection| selection.selected().is_some());
                     if self.ivars().mode.get() == Some(PanelMode::Switch) && snapshot_ready {
@@ -419,8 +499,8 @@ define_class!(
                         self.render();
                         self.commit_switch_if_ready();
                     } else {
-                        let selected_id = self.selected_window().map(|window| window.id);
-                        self.ivars().windows.replace(windows);
+                        let selected_id = self.selected_result();
+                        self.install_windows(windows);
                         self.filter_preserving(selected_id);
                         self.prepare_switch_selection();
                         self.commit_switch_if_ready();
@@ -431,7 +511,7 @@ define_class!(
                 self.ivars().loading.set(false);
                 self.render();
                 if self.ivars().mode.get().is_some() { self.switch_to_search(); }
-                self.report_switch_error("读取窗口失败，请按 ⌘R 重试。");
+                self.report_switch_error(tr!("读取窗口失败，请按 ⌘R 重试。", "Could not read windows. Press ⌘R to retry."));
             }
         }
         #[unsafe(method(quitApp:))]
@@ -460,102 +540,7 @@ impl Delegate {
         let mtm = self.mtm();
         let app = NSApplication::sharedApplication(mtm);
         app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
-        let main_menu = NSMenu::new(mtm);
-        let application_item = NSMenuItem::new(mtm);
-        let application_menu = NSMenu::new(mtm);
-        // SAFETY: quitApp: is implemented by this retained delegate.
-        let quit_item = unsafe {
-            NSMenuItem::initWithTitle_action_keyEquivalent(
-                NSMenuItem::alloc(mtm),
-                ns_string!("退出 Winlane"),
-                Some(sel!(quitApp:)),
-                ns_string!("q"),
-            )
-        };
-        unsafe { quit_item.setTarget(Some(self)) };
-        application_menu.addItem(&quit_item);
-        let settings_item = self.menu_item("设置…", sel!(showSettings:), ",");
-        application_menu.insertItem_atIndex(&settings_item, 0);
-        application_menu
-            .insertItem_atIndex(&self.menu_item("打开窗口搜索", sel!(showSearch:), ""), 0);
-        application_item.setSubmenu(Some(&application_menu));
-        main_menu.addItem(&application_item);
-        let edit_menu = NSMenu::new(mtm);
-        let edit_item = NSMenuItem::new(mtm);
-        edit_item.setTitle(ns_string!("编辑"));
-        for (title, action, key) in [
-            ("剪切", sel!(cut:), "x"),
-            ("拷贝", sel!(copy:), "c"),
-            ("粘贴", sel!(paste:), "v"),
-            ("全选", sel!(selectAll:), "a"),
-        ] {
-            // SAFETY: Standard editing actions are resolved by AppKit's responder chain.
-            let item = unsafe {
-                NSMenuItem::initWithTitle_action_keyEquivalent(
-                    NSMenuItem::alloc(mtm),
-                    &NSString::from_str(title),
-                    Some(action),
-                    &NSString::from_str(key),
-                )
-            };
-            edit_menu.addItem(&item);
-        }
-        edit_item.setSubmenu(Some(&edit_menu));
-        main_menu.addItem(&edit_item);
-        let window_item = NSMenuItem::new(mtm);
-        window_item.setTitle(ns_string!("窗口"));
-        let window_menu = NSMenu::new(mtm);
-        window_menu.addItem(&self.menu_item("关闭窗口", sel!(closeWindow:), "w"));
-        window_menu.addItem(&NSMenuItem::separatorItem(mtm));
-        self.add_window_actions(&window_menu);
-        window_menu.addItem(&NSMenuItem::separatorItem(mtm));
-        window_menu.addItem(&self.menu_item("刷新窗口", sel!(refreshWindows:), "r"));
-        for index in 0..9 {
-            let item = self.menu_item(
-                &format!("切换到第 {} 个窗口", index + 1),
-                sel!(quickSelect:),
-                &(index + 1).to_string(),
-            );
-            item.setTag(index);
-            window_menu.addItem(&item);
-        }
-        window_item.setSubmenu(Some(&window_menu));
-        main_menu.addItem(&window_item);
-        app.setMainMenu(Some(&main_menu));
-
-        let status_item =
-            NSStatusBar::systemStatusBar().statusItemWithLength(NSVariableStatusItemLength);
-        if let Some(button) = status_item.button(mtm) {
-            button.setTitle(ns_string!("▤"));
-            button.setToolTip(Some(ns_string!("Winlane · 窗口搜索")));
-        }
-        let menu = NSMenu::new(mtm);
-        for (title, action, key) in [
-            ("打开窗口搜索", sel!(showSearch:), ""),
-            ("打开窗口切换", sel!(showSwitcher:), ""),
-            ("设置…", sel!(showSettings:), ","),
-            ("刷新窗口列表", sel!(refreshWindows:), ""),
-            ("辅助功能设置…", sel!(openPermissions:), ""),
-            ("退出 Winlane", sel!(quitApp:), "q"),
-        ] {
-            // SAFETY: These selectors belong to this retained delegate and accept one object argument.
-            let item = unsafe {
-                NSMenuItem::initWithTitle_action_keyEquivalent(
-                    NSMenuItem::alloc(mtm),
-                    &NSString::from_str(title),
-                    Some(action),
-                    &NSString::from_str(key),
-                )
-            };
-            unsafe { item.setTarget(Some(self)) };
-            menu.addItem(&item);
-            if action == sel!(showSearch:) {
-                self.ivars().show_menu_item.set(item).unwrap();
-            }
-        }
-        status_item.setMenu(Some(&menu));
-        self.ivars().status_item.set(status_item).unwrap();
-        self.update_shortcut_labels();
+        self.build_menus();
         // SAFETY: The application retains this delegate for the entire run loop; poll: has NSTimer signature.
         let timer = unsafe {
             NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
@@ -571,6 +556,220 @@ impl Delegate {
         // Keyboard and scan results wake the run loop independently of this timer.
         unsafe { NSRunLoop::mainRunLoop().addTimer_forMode(&timer, NSRunLoopCommonModes) };
         self.ivars().timer.set(timer).unwrap();
+    }
+
+    fn build_menus(&self) {
+        let mtm = self.mtm();
+        let app = NSApplication::sharedApplication(mtm);
+        let main_menu = NSMenu::new(mtm);
+        let application_item = NSMenuItem::new(mtm);
+        let application_menu = NSMenu::new(mtm);
+        // SAFETY: quitApp: is implemented by this retained delegate.
+        let quit_item = unsafe {
+            NSMenuItem::initWithTitle_action_keyEquivalent(
+                NSMenuItem::alloc(mtm),
+                &NSString::from_str(tr!("退出 Winlane", "Quit Winlane")),
+                Some(sel!(quitApp:)),
+                ns_string!("q"),
+            )
+        };
+        unsafe { quit_item.setTarget(Some(self)) };
+        application_menu.addItem(&quit_item);
+        let settings_item = self.menu_item(tr!("设置…", "Settings…"), sel!(showSettings:), ",");
+        application_menu.insertItem_atIndex(&settings_item, 0);
+        application_menu.insertItem_atIndex(
+            &self.menu_item(
+                tr!("打开窗口搜索", "Open Window Search"),
+                sel!(showSearch:),
+                "",
+            ),
+            0,
+        );
+        application_item.setSubmenu(Some(&application_menu));
+        main_menu.addItem(&application_item);
+        let edit_menu = NSMenu::new(mtm);
+        let edit_item = NSMenuItem::new(mtm);
+        edit_item.setTitle(&NSString::from_str(tr!("编辑", "Edit")));
+        for (title, action, key) in [
+            (tr!("剪切", "Cut"), sel!(cut:), "x"),
+            (tr!("拷贝", "Copy"), sel!(copy:), "c"),
+            (tr!("粘贴", "Paste"), sel!(paste:), "v"),
+            (tr!("全选", "Select All"), sel!(selectAll:), "a"),
+        ] {
+            // SAFETY: Standard editing actions are resolved by AppKit's responder chain.
+            let item = unsafe {
+                NSMenuItem::initWithTitle_action_keyEquivalent(
+                    NSMenuItem::alloc(mtm),
+                    &NSString::from_str(title),
+                    Some(action),
+                    &NSString::from_str(key),
+                )
+            };
+            edit_menu.addItem(&item);
+        }
+        edit_item.setSubmenu(Some(&edit_menu));
+        main_menu.addItem(&edit_item);
+        let window_item = NSMenuItem::new(mtm);
+        window_item.setTitle(&NSString::from_str(tr!("窗口", "Window")));
+        let window_menu = NSMenu::new(mtm);
+        window_menu.addItem(&self.menu_item(
+            tr!("关闭窗口", "Close Window"),
+            sel!(closeWindow:),
+            "w",
+        ));
+        window_menu.addItem(&NSMenuItem::separatorItem(mtm));
+        self.add_window_actions(&window_menu);
+        window_menu.addItem(&NSMenuItem::separatorItem(mtm));
+        window_menu.addItem(&self.menu_item(
+            tr!("刷新窗口", "Refresh Windows"),
+            sel!(refreshWindows:),
+            "r",
+        ));
+        for index in 0..9 {
+            let item = self.menu_item(
+                &trf!("切换到第 {} 个窗口", "Switch to Window {}", index + 1),
+                sel!(quickSelect:),
+                &(index + 1).to_string(),
+            );
+            item.setTag(index);
+            window_menu.addItem(&item);
+        }
+        window_item.setSubmenu(Some(&window_menu));
+        main_menu.addItem(&window_item);
+        app.setMainMenu(Some(&main_menu));
+
+        let status_item = self.ivars().status_item.get_or_init(|| {
+            NSStatusBar::systemStatusBar().statusItemWithLength(NSVariableStatusItemLength)
+        });
+        if let Some(button) = status_item.button(mtm) {
+            button.setTitle(ns_string!("▤"));
+            button.setToolTip(Some(&NSString::from_str(tr!(
+                "Winlane · 窗口搜索",
+                "Winlane · Window Search"
+            ))));
+        }
+        let menu = NSMenu::new(mtm);
+        for (title, action, key) in [
+            (
+                tr!("打开窗口搜索", "Open Window Search"),
+                sel!(showSearch:),
+                "",
+            ),
+            (
+                tr!("打开窗口切换", "Open Window Switcher"),
+                sel!(showSwitcher:),
+                "",
+            ),
+            (tr!("设置…", "Settings…"), sel!(showSettings:), ","),
+            (
+                tr!("刷新窗口列表", "Refresh Window List"),
+                sel!(refreshWindows:),
+                "",
+            ),
+            (
+                tr!("辅助功能设置…", "Accessibility Settings…"),
+                sel!(openPermissions:),
+                "",
+            ),
+            (tr!("退出 Winlane", "Quit Winlane"), sel!(quitApp:), "q"),
+        ] {
+            // SAFETY: These selectors belong to this retained delegate and accept one object argument.
+            let item = unsafe {
+                NSMenuItem::initWithTitle_action_keyEquivalent(
+                    NSMenuItem::alloc(mtm),
+                    &NSString::from_str(title),
+                    Some(action),
+                    &NSString::from_str(key),
+                )
+            };
+            unsafe { item.setTarget(Some(self)) };
+            menu.addItem(&item);
+            if action == sel!(showSearch:) {
+                self.ivars().show_menu_item.replace(Some(item));
+            }
+        }
+        status_item.setMenu(Some(&menu));
+        self.update_shortcut_labels();
+    }
+
+    fn settings_window(&self) -> Option<Rc<SettingsWindow>> {
+        self.ivars().settings.borrow().clone()
+    }
+
+    fn ensure_settings_window(&self) -> Rc<SettingsWindow> {
+        if let Some(window) = self.settings_window() {
+            return window;
+        }
+        let window = Rc::new(SettingsWindow::new(self, self.mtm()));
+        self.ivars().settings.replace(Some(window.clone()));
+        window
+    }
+
+    fn app_shortcuts_window(&self) -> Option<Rc<AppShortcutsWindow>> {
+        self.ivars().app_shortcuts.borrow().clone()
+    }
+
+    fn ensure_app_shortcuts_window(&self) -> Rc<AppShortcutsWindow> {
+        if let Some(window) = self.app_shortcuts_window() {
+            return window;
+        }
+        let window = Rc::new(AppShortcutsWindow::new(self, self.mtm()));
+        self.ivars().app_shortcuts.replace(Some(window.clone()));
+        window
+    }
+
+    fn check_language(&self) {
+        let changed = settings::apply_language(self.ivars().config.borrow().language);
+        if changed && self.ivars().status_item.get().is_some() {
+            self.rebuild_localized_ui();
+        }
+    }
+
+    fn rebuild_localized_ui(&self) {
+        let state = self.ivars();
+        self.build_menus();
+        let visible = self.any_panel_visible();
+        state.changing_displays.set(true);
+        for ui in state.panels.take() {
+            ui.panel.setDelegate(None);
+            ui.panel.orderOut(None);
+            ui.panel.close();
+        }
+        state.changing_displays.set(false);
+        self.sync_displays();
+        self.render();
+        if visible {
+            self.present_panels();
+        }
+        let old_settings = state.settings.take();
+        if let Some(old) = old_settings {
+            let showing = old.window.isVisible();
+            let frame = old.window.frame();
+            let tab = old.selected_tab();
+            let candidate = old
+                .candidate()
+                .unwrap_or_else(|_| state.config.borrow().clone());
+            old.window.close();
+            if showing {
+                let window = self.ensure_settings_window();
+                window.show(&candidate);
+                window.select_tab(tab);
+                window.window.setFrameOrigin(frame.origin);
+                self.report_shortcut_status();
+            }
+        }
+        let old_shortcuts = state.app_shortcuts.take();
+        if let Some(old) = old_shortcuts {
+            let showing = old.window.isVisible();
+            let frame = old.window.frame();
+            old.window.close();
+            if showing {
+                let window = self.ensure_app_shortcuts_window();
+                window.show(&[], self, self.mtm());
+                window.copy_draft_from(&old, self, self.mtm());
+                window.window.setFrameOrigin(frame.origin);
+            }
+        }
     }
 
     fn panels(&self) -> Vec<Rc<PanelUi>> {
@@ -725,14 +924,15 @@ impl Delegate {
             root.addSubview(&input);
         }
         let scope = self.button(
-            "仅当前应用",
+            tr!("仅当前应用", "Current app only"),
             sel!(changeScope:),
             rect(16.0, 490.0, 180.0, 22.0),
         );
         scope.setButtonType(NSButtonType::Switch);
-        scope.setToolTip(Some(ns_string!(
-            "只显示呼出面板前正在使用的应用；演示模式以 Safari 为例。"
-        )));
+        scope.setToolTip(Some(&NSString::from_str(tr!(
+            "只显示呼出面板前正在使用的应用；演示模式以 Safari 为例。",
+            "Only show the app used before opening this panel; Safari is used in the demo."
+        ))));
         root.addSubview(&scope);
         let actions = NSPopUpButton::initWithFrame_pullsDown(
             NSPopUpButton::alloc(mtm),
@@ -741,13 +941,14 @@ impl Delegate {
         );
         let actions_menu = NSMenu::new(mtm);
         let heading = NSMenuItem::new(mtm);
-        heading.setTitle(ns_string!("窗口操作"));
+        heading.setTitle(&NSString::from_str(tr!("窗口操作", "Window Actions")));
         actions_menu.addItem(&heading);
         self.add_window_actions(&actions_menu);
         actions.setMenu(Some(&actions_menu));
         actions.setFont(Some(&NSFont::systemFontOfSize(12.0)));
         root.addSubview(&actions);
-        let mode_label = label("", 13.0, rect(16.0, 524.0, WIDTH - 32.0, 22.0), mtm);
+        let mode_label = label("", 11.0, rect(16.0, LIST_BOTTOM, WIDTH - 32.0, 20.0), mtm);
+        mode_label.setTextColor(Some(&NSColor::secondaryLabelColor()));
         mode_label.setHidden(true);
         root.addSubview(&mode_label);
 
@@ -767,36 +968,36 @@ impl Delegate {
         root.addSubview(&scroll);
 
         let footer = label(
-            "正在准备窗口列表…",
+            tr!("正在准备窗口列表…", "Preparing windows…"),
             11.0,
-            rect(16.0, 9.0, WIDTH - 128.0, 18.0),
+            rect(16.0, 9.0, WIDTH - 148.0, 18.0),
             mtm,
         );
         footer.setTextColor(Some(&NSColor::secondaryLabelColor()));
         root.addSubview(&footer);
         let help = self.button(
-            "辅助功能设置…",
+            tr!("辅助功能设置…", "Accessibility Settings…"),
             sel!(openPermissions:),
-            rect(16.0, 34.0, 138.0, 25.0),
+            rect(16.0, 34.0, 180.0, 25.0),
         );
         root.addSubview(&help);
         let demo_button = self.button(
-            "查看演示",
+            tr!("查看演示", "View Demo"),
             sel!(toggleDemo:),
-            rect(164.0, 34.0, 100.0, 25.0),
+            rect(204.0, 34.0, 142.0, 25.0),
         );
         root.addSubview(&demo_button);
         let refresh = self.button(
-            "刷新 ↻",
+            tr!("刷新 ↻", "Refresh ↻"),
             sel!(refreshWindows:),
-            rect(WIDTH - 92.0, 34.0, 76.0, 25.0),
+            rect(WIDTH - 106.0, 34.0, 90.0, 25.0),
         );
         refresh.setHidden(accessibility::is_trusted());
         root.addSubview(&refresh);
         let settings_button = self.button(
-            "设置…  ⌘,",
+            tr!("设置…  ⌘,", "Settings…  ⌘,"),
             sel!(showSettings:),
-            rect(WIDTH - 106.0, 6.0, 90.0, 24.0),
+            rect(WIDTH - 126.0, 9.0, 110.0, 24.0),
         );
         root.addSubview(&settings_button);
 
@@ -840,6 +1041,7 @@ impl Delegate {
                     self.mtm(),
                     config.shortcut.binding()?,
                     config.switch_shortcut.binding()?,
+                    config.app_bindings()?,
                     self.ivars().wake.get().unwrap().handle(),
                 )
             })
@@ -872,7 +1074,11 @@ impl Delegate {
                 state.shortcut_tap.replace(None);
                 state.shortcut_rx.replace(None);
                 state.hotkey_error.replace(Some(
-                    "全局快捷键未启用，请在系统设置中重新允许 Winlane。".into(),
+                    tr!(
+                        "全局快捷键未启用，请在系统设置中重新允许 Winlane。",
+                        "Global shortcuts are disabled. Allow Winlane again in System Settings."
+                    )
+                    .into(),
                 ));
                 self.report_shortcut_status();
             }
@@ -885,22 +1091,27 @@ impl Delegate {
             .as_ref()
             .is_some_and(ShortcutTap::is_enabled)
         {
-            state
-                .hotkey_error
-                .replace(Some("快捷键监听已暂停，请重新保存快捷键设置。".into()));
+            state.hotkey_error.replace(Some(
+                tr!(
+                    "快捷键监听已暂停，请重新保存快捷键设置。",
+                    "Shortcut monitoring is paused. Save your shortcuts again."
+                )
+                .into(),
+            ));
             self.report_shortcut_status();
         }
     }
 
     fn report_shortcut_status(&self) {
-        if let Some(settings) = self.ivars().settings.get() {
+        if let Some(settings) = self.settings_window() {
             if let Some(error) = self.ivars().hotkey_error.borrow().as_deref() {
                 settings.report(error, true);
             } else {
                 let config = self.ivars().config.borrow();
                 settings.report(
-                    &format!(
+                    &trf!(
                         "搜索 {} · 切换 {} 已启用。",
+                        "Search {} · Switch {} enabled.",
                         config.shortcut.display(),
                         config.switch_shortcut.display()
                     ),
@@ -912,6 +1123,7 @@ impl Delegate {
 
     fn shortcut_action(&self, action: Action) {
         match action.kind {
+            ActionKind::LaunchApp(index) => self.launch_app_shortcut(index),
             ActionKind::Search => {
                 if self.ivars().mode.get().is_some() && self.ivars().session.get() == action.session
                 {
@@ -962,26 +1174,140 @@ impl Delegate {
             self.mtm(),
             candidate.shortcut.binding()?,
             candidate.switch_shortcut.binding()?,
+            candidate.app_bindings()?,
             self.ivars().wake.get().unwrap().handle(),
         )?;
         settings::save(&candidate)?;
         self.ivars().shortcut_tap.replace(Some(tap));
         self.ivars().shortcut_rx.replace(Some(receiver));
         settings::apply_appearance(&candidate, self.mtm());
+        if let Some(settings) = self.settings_window() {
+            settings.set_app_shortcuts(&candidate.app_shortcuts);
+        }
+        let language_changed = settings::apply_language(candidate.language);
         self.ivars().config.replace(candidate);
         self.ivars().hotkey_error.replace(None);
+        if language_changed {
+            self.rebuild_localized_ui();
+        }
         self.update_shortcut_labels();
         self.filter();
         Ok(())
+    }
+
+    fn show_app_shortcuts(&self) {
+        self.cancel_routing();
+        self.end_session();
+        self.ivars().launch_receiver.replace(None);
+        let window = self.ensure_app_shortcuts_window();
+        NSApplication::sharedApplication(self.mtm()).activate();
+        window.show(
+            &self.ivars().config.borrow().app_shortcuts,
+            self,
+            self.mtm(),
+        );
+    }
+
+    fn launch_app_shortcut(&self, index: usize) {
+        let Some(item) = self
+            .ivars()
+            .config
+            .borrow()
+            .app_shortcuts
+            .get(index)
+            .cloned()
+        else {
+            return;
+        };
+        self.launch_application(&item.application, LaunchOrigin::Shortcut);
+    }
+
+    fn launch_application(&self, application: &ApplicationTarget, origin: LaunchOrigin) {
+        self.end_session();
+        self.ivars().launch_receiver.replace(None);
+        if let Some(settings) = self.settings_window() {
+            settings.window.orderOut(None);
+        }
+        if let Some(settings) = self.app_shortcuts_window() {
+            settings.window.orderOut(None);
+        }
+        match app_shortcuts::launch(application, self.ivars().wake.get().unwrap().handle()) {
+            Ok(receiver) => {
+                self.ivars()
+                    .launch_receiver
+                    .replace(Some(PendingLaunch { receiver, origin }));
+            }
+            Err(error) => self.report_launch_error(&error, origin),
+        }
+    }
+
+    fn poll_app_launch(&self) {
+        let result = self
+            .ivars()
+            .launch_receiver
+            .borrow()
+            .as_ref()
+            .map(|pending| (pending.receiver.try_recv(), pending.origin));
+        let (result, origin) = match result {
+            Some((Ok(result), origin)) => (result, origin),
+            Some((Err(TryRecvError::Disconnected), origin)) => (
+                Err(tr!(
+                    "应用启动未完成，请重试。",
+                    "The app did not finish launching. Try again."
+                )
+                .into()),
+                origin,
+            ),
+            _ => return,
+        };
+        self.ivars().launch_receiver.replace(None);
+        match result {
+            Ok(pid) => {
+                if let Some(app) =
+                    NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
+                {
+                    app.unhide();
+                } else {
+                    self.report_launch_error(
+                        tr!(
+                            "应用启动后已退出，请检查应用状态。",
+                            "The app exited after launching. Check its status."
+                        ),
+                        origin,
+                    )
+                }
+            }
+            Err(error) => self.report_launch_error(&error, origin),
+        }
+    }
+
+    fn report_launch_error(&self, error: &str, origin: LaunchOrigin) {
+        match origin {
+            LaunchOrigin::Shortcut => {
+                self.show_app_shortcuts();
+                if let Some(window) = self.app_shortcuts_window() {
+                    window.report(error, true);
+                }
+            }
+            LaunchOrigin::Search => {
+                self.display_search(self.ivars().session.get());
+                self.present_panels();
+                self.report_switch_error(error);
+            }
+        }
     }
 
     fn update_shortcut_labels(&self) {
         let display = self.ivars().config.borrow().shortcut.display();
         self.ivars()
             .show_menu_item
-            .get()
+            .borrow()
+            .as_ref()
             .unwrap()
-            .setTitle(&NSString::from_str(&format!("打开窗口搜索    {display}")));
+            .setTitle(&NSString::from_str(&trf!(
+                "打开窗口搜索    {display}",
+                "Open Window Search    {display}"
+            )));
     }
 
     fn menu_item(&self, title: &str, action: Sel, key: &str) -> Retained<NSMenuItem> {
@@ -999,9 +1325,24 @@ impl Delegate {
     }
 
     fn add_window_actions(&self, menu: &NSMenu) {
-        menu.addItem(&self.menu_item("最小化 / 恢复所选窗口", sel!(minimizeChosen:), "m"));
-        menu.addItem(&self.menu_item("隐藏所选应用", sel!(hideChosen:), "h"));
-        let copy = self.menu_item("复制窗口标题", sel!(copyTitle:), "c");
+        menu.addItem(&self.menu_item(
+            tr!(
+                "最小化 / 恢复所选窗口",
+                "Minimize / Restore Selected Window"
+            ),
+            sel!(minimizeChosen:),
+            "m",
+        ));
+        menu.addItem(&self.menu_item(
+            tr!("隐藏所选应用", "Hide Selected App"),
+            sel!(hideChosen:),
+            "h",
+        ));
+        let copy = self.menu_item(
+            tr!("复制窗口标题", "Copy Window Title"),
+            sel!(copyTitle:),
+            "c",
+        );
         copy.setKeyEquivalentModifierMask(
             NSEventModifierFlags::Command | NSEventModifierFlags::Shift,
         );
@@ -1038,13 +1379,18 @@ impl Delegate {
     }
 
     fn show_mode(&self, mode: PanelMode, session: u64, direction: i8) {
-        if let Some(settings) = self.ivars().settings.get() {
+        self.ivars().launch_receiver.replace(None);
+        if let Some(settings) = self.app_shortcuts_window() {
             settings.window.orderOut(None);
         }
-        let preserve = self.selected_window().map(|window| window.id);
+        if let Some(settings) = self.settings_window() {
+            settings.window.orderOut(None);
+        }
+        let preserve = self.selected_result();
+        let preserve_window = self.selected_window().map(|window| window.id);
         let deferred = self.ivars().deferred_windows.borrow_mut().take();
         if let Some(windows) = deferred {
-            self.ivars().windows.replace(windows);
+            self.install_windows(windows);
         }
         let workspace = NSWorkspace::sharedWorkspace();
         if let Some(front) = workspace.frontmostApplication()
@@ -1061,12 +1407,15 @@ impl Delegate {
         self.ivars()
             .switch_selection
             .replace((mode == PanelMode::Switch).then(|| SwitchSelection::new(direction)));
-        self.ivars()
-            .switch_anchor
-            .set(if direction == 0 { preserve } else { None });
+        self.ivars().switch_anchor.set(if direction == 0 {
+            preserve_window
+        } else {
+            None
+        });
         if mode == PanelMode::Switch {
             self.ivars().current_app_only.set(false);
         }
+        self.ensure_app_catalog();
         self.filter_preserving(preserve);
         self.prepare_switch_selection();
         if !self.ivars().demo.get() {
@@ -1127,7 +1476,7 @@ impl Delegate {
         }
         let deferred = state.deferred_windows.borrow_mut().take();
         if let Some(windows) = deferred {
-            state.windows.replace(windows);
+            self.install_windows(windows);
             self.filter();
         }
     }
@@ -1160,15 +1509,16 @@ impl Delegate {
 
     fn display_search(&self, session: u64) {
         let state = self.ivars();
-        let selected_id = self.selected_window().map(|window| window.id);
+        let selected_id = self.selected_result();
         state.session.set(session);
         state.mode.set(Some(PanelMode::Search));
         state.alias_input.borrow_mut().clear();
         state.switch_selection.replace(None);
         let deferred = state.deferred_windows.borrow_mut().take();
         if let Some(windows) = deferred {
-            state.windows.replace(windows);
+            self.install_windows(windows);
         }
+        self.ensure_app_catalog();
         self.filter_preserving(selected_id);
         self.focus_search();
     }
@@ -1206,22 +1556,16 @@ impl Delegate {
     fn alias_match(&self) -> AliasMatch {
         let state = self.ivars();
         let windows = state.windows.borrow();
-        let identities = state.identities.borrow();
-        let ordered_apps: Vec<_> = state
+        let ordered_windows: Vec<_> = state
             .matches
             .borrow()
             .iter()
-            .map(|&index| {
-                identities
-                    .get(&windows[index].pid)
-                    .map_or("", |app| app.id.as_str())
-            })
+            .map(|&index| windows[index].id)
             .collect();
-        match_alias(
-            &state.aliases.borrow(),
-            state.alias_input.borrow().text(),
-            &ordered_apps,
-        )
+        state
+            .aliases
+            .borrow()
+            .match_windows(state.alias_input.borrow().text(), &ordered_windows)
     }
 
     fn select_alias(&self) {
@@ -1336,14 +1680,62 @@ impl Delegate {
         self.render();
     }
 
+    fn install_windows(&self, windows: Vec<WindowInfo>) {
+        self.update_aliases(&windows);
+        self.ivars().windows.replace(windows);
+    }
+
     fn update_aliases(&self, windows: &[WindowInfo]) {
-        let apps: Vec<_> = windows
-            .iter()
-            .filter_map(|window| self.ivars().identities.borrow().get(&window.pid).cloned())
-            .collect();
         let mut aliases = self.ivars().aliases.borrow_mut();
-        if aliases.ensure(&apps) && self.ivars().aliases_writable.get() {
+        if aliases.ensure_windows(windows, &self.ivars().identities.borrow())
+            && self.ivars().aliases_writable.get()
+        {
             settings::save_aliases(&aliases);
+        }
+    }
+
+    fn ensure_app_catalog(&self) {
+        let state = self.ivars();
+        if state.demo.get()
+            || state.mode.get() != Some(PanelMode::Search)
+            || state.catalog_receiver.borrow().is_some()
+            || state
+                .catalog_checked
+                .get()
+                .is_some_and(|at| at.elapsed() < Duration::from_secs(60))
+        {
+            return;
+        }
+        let (tx, rx) = mpsc::channel();
+        state.catalog_receiver.replace(Some(rx));
+        let wake = state.wake.get().unwrap().handle();
+        std::thread::spawn(move || {
+            let _ = tx.send(installed_apps::discover());
+            wake.signal();
+        });
+    }
+
+    fn poll_app_catalog(&self) {
+        let state = self.ivars();
+        let result = state
+            .catalog_receiver
+            .borrow()
+            .as_ref()
+            .map(|rx| rx.try_recv());
+        match result {
+            Some(Ok(apps)) => {
+                let selected = self.selected_result();
+                state.catalog_receiver.replace(None);
+                state.catalog_checked.set(Some(Instant::now()));
+                state.installed_apps.replace(apps);
+                if state.mode.get() == Some(PanelMode::Search) {
+                    self.filter_preserving(selected);
+                }
+            }
+            Some(Err(TryRecvError::Disconnected)) => {
+                state.catalog_receiver.replace(None);
+            }
+            _ => {}
         }
     }
 
@@ -1351,7 +1743,7 @@ impl Delegate {
         self.filter_preserving(None);
     }
 
-    fn filter_preserving(&self, selected_id: Option<u64>) {
+    fn filter_preserving(&self, selected_id: Option<SelectedResult>) {
         let query = self.ivars().query.borrow().clone();
         let preferred = self
             .ivars()
@@ -1370,7 +1762,7 @@ impl Delegate {
             None
         };
         let aliases = self.ivars().aliases.borrow();
-        let is_alias = aliases.resolve(&query).is_some();
+        let is_alias = aliases.is_alias(&query);
         let matched = visible_matches(
             &windows,
             if is_alias { "" } else { &query },
@@ -1381,19 +1773,62 @@ impl Delegate {
             self.ivars().previous_pid.get(),
         );
         let matched = aliases
-            .filter_order(
-                &query,
-                &matched,
-                &windows,
-                &self.ivars().identities.borrow(),
-            )
+            .filter_order(&query, &matched, &windows)
             .unwrap_or(matched);
+        let apps = self.ivars().installed_apps.borrow();
+        let launch_matches = if self.ivars().mode.get() == Some(PanelMode::Search)
+            && !self.ivars().demo.get()
+            && scope_pid.is_none()
+            && aliases.resolve_window(&query).is_none()
+        {
+            let identities = self.ivars().identities.borrow();
+            let occupied: HashSet<_> = windows
+                .iter()
+                .filter_map(|window| identities.get(&window.pid))
+                .map(|app| app.id.clone())
+                .collect();
+            matching_apps(
+                &apps,
+                &query,
+                &occupied,
+                &self.ivars().config.borrow().excluded_apps,
+                aliases.resolve(&query),
+            )
+        } else {
+            Vec::new()
+        };
         drop(aliases);
-        let selected = selected_id
-            .and_then(|id| matched.iter().position(|&index| windows[index].id == id))
-            .unwrap_or(0);
+        let selected = match selected_id {
+            Some(SelectedResult::Window(id)) => {
+                matched.iter().position(|&index| windows[index].id == id)
+            }
+            Some(SelectedResult::Application(id)) => launch_matches
+                .iter()
+                .position(|&index| apps[index].target.bundle_id == id)
+                .map(|index| matched.len() + index)
+                .or_else(|| {
+                    let identities = self.ivars().identities.borrow();
+                    matched.iter().position(|&index| {
+                        identities
+                            .get(&windows[index].pid)
+                            .is_some_and(|app| app.id == id)
+                    })
+                }),
+            None => None,
+        }
+        .unwrap_or(0);
+        let visible_paths: HashSet<_> = launch_matches
+            .iter()
+            .map(|&index| apps[index].target.path.as_str())
+            .collect();
+        self.ivars()
+            .application_icons
+            .borrow_mut()
+            .retain(|path, _| visible_paths.contains(path.as_str()));
+        drop(apps);
         drop(windows);
         self.ivars().matches.replace(matched);
+        self.ivars().launch_matches.replace(launch_matches);
         self.ivars().selected.set(selected);
         self.render();
     }
@@ -1410,7 +1845,7 @@ impl Delegate {
             self.render();
             return;
         }
-        let count = self.ivars().matches.borrow().len();
+        let count = self.match_count();
         if count == 0 {
             return;
         }
@@ -1446,13 +1881,15 @@ impl Delegate {
         let list = &ui.list;
         let windows = state.windows.borrow();
         let matched = state.matches.borrow();
+        let launch_matches = state.launch_matches.borrow();
+        let apps = state.installed_apps.borrow();
+        let count = matched.len() + launch_matches.len();
         let trusted = accessibility::is_trusted();
         let demo = state.demo.get();
         let switching = state.mode.get() == Some(PanelMode::Switch);
         let alias_input = state.alias_input.borrow();
         let alias_query = alias_input.text();
         let aliases = state.aliases.borrow();
-        let identities = state.identities.borrow();
         let alias_match = self.alias_match();
         let unmatched_alias =
             switching && !alias_query.is_empty() && alias_match.position().is_none();
@@ -1463,8 +1900,9 @@ impl Delegate {
         let config = state.config.borrow();
         ui.mode_label
             .setStringValue(&NSString::from_str(&if alias_query.is_empty() {
-                format!(
+                trf!(
                     "切换模式 · {} 选择 · 松开 {} 或 ↵ 确认",
+                    "Switch · {} to select · Release {} or ↵ to confirm",
                     config.switch_shortcut.display(),
                     config.switch_shortcut.release_label()
                 )
@@ -1473,12 +1911,21 @@ impl Delegate {
                     "Alias  {alias_query}  ·  {}",
                     if unmatched_alias {
                         if alias_match == AliasMatch::Ambiguous {
-                            "多个应用匹配 · 继续输入第二个字母"
+                            tr!(
+                                "多个应用匹配 · 继续输入第二个字母",
+                                "Multiple matches · Type a second letter"
+                            )
                         } else {
-                            "没有匹配窗口 · Backspace 修改"
+                            tr!(
+                                "没有匹配窗口 · Backspace 修改",
+                                "No matching window · Backspace to edit"
+                            )
                         }
                     } else {
-                        "松开修饰键确认 · Backspace 修改"
+                        tr!(
+                            "松开修饰键确认 · Backspace 修改",
+                            "Release modifier to confirm · Backspace to edit"
+                        )
                     }
                 )
             }));
@@ -1492,48 +1939,77 @@ impl Delegate {
         ui.help.setHidden(trusted || demo);
         ui.refresh_button.setHidden(trusted || demo);
         ui.demo_button.setHidden(trusted && !demo);
-        ui.demo_button.setTitle(if demo {
-            ns_string!("返回真实窗口")
+        ui.demo_button.setTitle(&NSString::from_str(if demo {
+            tr!("返回真实窗口", "Show Real Windows")
         } else {
-            ns_string!("查看演示")
-        });
+            tr!("查看演示", "View Demo")
+        }));
         let list_bottom = if !trusted || demo { 64.0 } else { LIST_BOTTOM };
-        let list_top = if switching { 516.0 } else { LIST_TOP };
+        let mode_frame = rect(16.0, list_bottom, WIDTH - 32.0, 20.0);
+        if ui.mode_label.frame() != mode_frame {
+            ui.mode_label.setFrame(mode_frame);
+        }
+        let list_bottom = list_bottom + if switching { ROW_HEIGHT } else { 0.0 };
+        let list_top = if switching { 548.0 } else { LIST_TOP };
         let list_height = list_top - list_bottom;
         let scroll_frame = rect(10.0, list_bottom, LIST_WIDTH, list_height);
         if ui.scroll.frame() != scroll_frame {
             ui.scroll.setFrame(scroll_frame);
         }
-        let list_size = NSSize::new(
-            LIST_WIDTH,
-            (matched.len() as f64 * ROW_HEIGHT).max(list_height),
-        );
+        let list_size = NSSize::new(LIST_WIDTH, (count as f64 * ROW_HEIGHT).max(list_height));
         if list.frame().size != list_size {
             list.setFrameSize(list_size);
         }
         let mut rows = ui.rows.borrow_mut();
-        for row in rows.iter_mut().skip(matched.len()) {
+        for row in rows.iter_mut().skip(count) {
             if row.attached {
                 row.button.removeFromSuperview();
                 row.attached = false;
             }
         }
-        rows.truncate(matched.len().max(windows.len().min(128)));
+        rows.truncate(count.max(windows.len().min(128)));
         for label in ui.empty_labels.borrow_mut().drain(..) {
             label.removeFromSuperview();
         }
-        if matched.is_empty() {
+        if count == 0 {
             let (title, detail) = if state.loading.get() {
-                ("正在读取窗口…", "窗口枚举在后台进行，搜索界面仍可输入。")
+                (
+                    tr!("正在读取窗口…", "Reading windows…"),
+                    tr!(
+                        "窗口枚举在后台进行，搜索界面仍可输入。",
+                        "Loading windows in the background. You can keep typing."
+                    ),
+                )
+            } else if !switching
+                && !state.query.borrow().trim().is_empty()
+                && state.catalog_receiver.borrow().is_some()
+            {
+                (
+                    tr!("正在查找应用…", "Finding apps…"),
+                    tr!("可以继续输入关键词。", "You can keep typing."),
+                )
             } else if !trusted && !demo {
                 (
-                    "先允许 Winlane 控制窗口",
-                    "在系统设置 → 隐私与安全性的应用控制权限中启用 Winlane。\nmacOS 27：Device Control and Data Access；旧版：辅助功能。\n用于读取与切换窗口。授权后重新呼出搜索面板即可。",
+                    tr!(
+                        "先允许 Winlane 控制窗口",
+                        "Allow Winlane to control windows"
+                    ),
+                    tr!(
+                        "在系统设置 → 隐私与安全性的应用控制权限中启用 Winlane。\nmacOS 27：Device Control and Data Access；旧版：辅助功能。\n用于读取与切换窗口。授权后重新呼出搜索面板即可。",
+                        "Enable Winlane in System Settings → Privacy & Security.\nmacOS 27: Device Control and Data Access; earlier: Accessibility.\nThis allows reading and switching windows. Reopen the panel after granting access."
+                    ),
                 )
             } else {
                 (
-                    "没有匹配的窗口",
-                    "试试其他关键词，或检查当前应用筛选和排除设置。",
+                    if !switching && !state.query.borrow().trim().is_empty() {
+                        tr!("没有匹配的窗口或应用", "No matching windows or apps")
+                    } else {
+                        tr!("没有匹配的窗口", "No matching windows")
+                    },
+                    tr!(
+                        "试试其他关键词，或检查当前应用筛选和排除设置。",
+                        "Try other keywords, or check the current-app filter and excluded apps."
+                    ),
                 )
             };
             let heading = label(title, 21.0, rect(40.0, 90.0, 540.0, 38.0), self.mtm());
@@ -1544,47 +2020,62 @@ impl Delegate {
             list.addSubview(&detail);
             ui.empty_labels.replace(vec![heading, detail]);
         }
-        for (position, &index) in matched.iter().enumerate() {
-            let item = &windows[index];
+        for position in 0..count {
+            let content = if let Some(&index) = matched.get(position) {
+                let item = &windows[index];
+                RowContent::Window(item.clone(), aliases.for_window(item.id).map(str::to_owned))
+            } else {
+                RowContent::Application(
+                    apps[launch_matches[position - matched.len()]]
+                        .target
+                        .clone(),
+                )
+            };
             let selected = position == state.selected.get() && !unmatched_alias;
             if rows.len() <= position {
                 rows.push(self.create_row(position));
             }
             let row = &mut rows[position];
-            let alias = identities
-                .get(&item.pid)
-                .and_then(|app| aliases.get(&app.id));
-            if row
-                .content
-                .as_ref()
-                .is_none_or(|(previous, previous_alias)| {
-                    previous != item || previous_alias.as_deref() != alias
-                })
-            {
-                let title = if item.title.trim().is_empty() {
-                    &item.app
-                } else {
-                    &item.title
+            if row.content.as_ref() != Some(&content) {
+                let tooltip = match &content {
+                    RowContent::Window(item, alias) => {
+                        let title = if item.title.trim().is_empty() {
+                            &item.app
+                        } else {
+                            &item.title
+                        };
+                        let tooltip = format!(
+                            "{} — {}{}",
+                            item.app,
+                            title,
+                            alias
+                                .as_deref()
+                                .map_or(String::new(), |alias| format!(" · alias {alias}"))
+                        );
+                        let title = if item.minimized {
+                            trf!("{title} · 已最小化", "{title} · Minimized")
+                        } else {
+                            title.clone()
+                        };
+                        set_label(&row.title, &title);
+                        set_label(&row.app, &item.app);
+                        set_label(&row.alias, alias.as_deref().unwrap_or(""));
+                        row.icon.setImage(self.icon(item.pid).as_deref());
+                        tooltip
+                    }
+                    RowContent::Application(app) => {
+                        set_label(&row.title, tr!("启动应用", "Launch app"));
+                        set_label(&row.app, &app.name);
+                        set_label(&row.alias, "↗");
+                        row.icon.setImage(Some(&self.application_icon(app)));
+                        trf!("启动 {} — {}", "Launch {} — {}", app.name, app.path)
+                    }
                 };
-                let tooltip = format!(
-                    "{} — {}{}",
-                    item.app,
-                    title,
-                    alias.map_or(String::new(), |alias| format!(" · alias {alias}"))
-                );
                 row.button.setToolTip(Some(&NSString::from_str(&tooltip)));
                 row.button
                     .setAccessibilityLabel(Some(&NSString::from_str(&tooltip)));
-                let title = if item.minimized {
-                    format!("{title} · 已最小化")
-                } else {
-                    title.clone()
-                };
-                set_label(&row.title, &title);
-                set_label(&row.app, &item.app);
-                set_label(&row.alias, alias.unwrap_or(""));
-                row.icon.setImage(self.icon(item.pid).as_deref());
-                row.content = Some((item.clone(), alias.map(str::to_owned)));
+                row.content = Some(content);
+                row.selected = None;
             }
             row.select(selected);
             if !row.attached {
@@ -1597,8 +2088,9 @@ impl Delegate {
         }
 
         let status = if demo {
-            format!(
+            trf!(
                 "演示模式 · {} 个示例 · ↑↓ 选择  ↵ 预览选择  Esc 关闭",
+                "Demo · {} examples · ↑↓ select · ↵ preview · Esc close",
                 matched.len()
             )
         } else if let Some(error) = state.hotkey_error.borrow().as_ref() {
@@ -1606,17 +2098,30 @@ impl Delegate {
         } else if let Some(error) = state.alias_error.borrow().as_ref() {
             error.clone()
         } else if !trusted {
-            "需要辅助功能权限；也可以先查看演示。".into()
+            tr!(
+                "需要辅助功能权限；也可以先查看演示。",
+                "Accessibility access required. You can also try the demo."
+            )
+            .into()
         } else if state.loading.get() {
-            "正在刷新窗口…".into()
+            tr!("正在刷新窗口…", "Refreshing windows…").into()
         } else if switching {
-            format!(
+            trf!(
                 "{} 项 · 字母定位 · ↑↓ 选择 · Space 搜索 · Esc 取消",
+                "{} items · Type alias · ↑↓ select · Space search · Esc cancel",
                 matched.len()
             )
+        } else if !launch_matches.is_empty() {
+            trf!(
+                "{} 个窗口 · {} 个应用 · ↵ 切换 / 启动 · Esc 取消",
+                "{} windows · {} apps · ↵ switch / launch · Esc cancel",
+                matched.len(),
+                launch_matches.len()
+            )
         } else {
-            format!(
+            trf!(
                 "{} 项 · 输入 alias 或标题 · ↵ 切换 · Space 切换模式",
+                "{} items · Type alias or title · ↵ switch · Space changes mode",
                 matched.len()
             )
         };
@@ -1685,7 +2190,7 @@ impl Delegate {
                     .or_else(|| {
                         NSImage::imageWithSystemSymbolName_accessibilityDescription(
                             ns_string!("macwindow"),
-                            Some(ns_string!("窗口")),
+                            Some(&NSString::from_str(tr!("窗口", "Window"))),
                         )
                     })
             })
@@ -1698,26 +2203,58 @@ impl Delegate {
         app.activateFromApplication_options(&current, NSApplicationActivationOptions::empty())
     }
 
+    fn application_icon(&self, app: &ApplicationTarget) -> Retained<NSImage> {
+        self.ivars()
+            .application_icons
+            .borrow_mut()
+            .entry(app.path.clone())
+            .or_insert_with(|| {
+                let source =
+                    NSWorkspace::sharedWorkspace().iconForFile(&NSString::from_str(&app.path));
+                let image = NSImage::initWithSize(NSImage::alloc(), NSSize::new(20.0, 20.0));
+                #[allow(deprecated)]
+                {
+                    image.lockFocus();
+                    source.drawInRect(rect(0.0, 0.0, 20.0, 20.0));
+                    image.unlockFocus();
+                }
+                image
+            })
+            .clone()
+    }
+
     fn activate_selected(&self) {
         if let Some(tap) = self.ivars().shortcut_tap.borrow().as_ref() {
             tap.finish(self.ivars().session.get());
         }
         self.ivars().switch_selection.replace(None);
+        if let Some(application) = self.selected_application() {
+            self.launch_application(&application, LaunchOrigin::Search);
+            return;
+        }
         let Some(window) = self.selected_window() else {
-            self.selection_failed("没有匹配的窗口，请重新搜索。");
+            self.selection_failed(tr!(
+                "没有匹配的窗口，请重新搜索。",
+                "No matching window. Search again."
+            ));
             return;
         };
         if self.ivars().demo.get() {
-            self.selection_failed(&format!(
+            self.selection_failed(&trf!(
                 "演示选择：{} · {}（未切换真实窗口）",
-                window.app, window.title
+                "Demo selection: {} · {} (real windows unchanged)",
+                window.app,
+                window.title
             ));
             return;
         }
         let Some(target_app) =
             NSRunningApplication::runningApplicationWithProcessIdentifier(window.pid)
         else {
-            self.selection_failed("应用已退出，请按 ⌘R 更新窗口列表。");
+            self.selection_failed(tr!(
+                "应用已退出，请按 ⌘R 更新窗口列表。",
+                "The app has quit. Press ⌘R to refresh windows."
+            ));
             return;
         };
         target_app.unhide();
@@ -1726,7 +2263,10 @@ impl Delegate {
             return;
         }
         if !self.activate_app(&target_app) {
-            self.selection_failed("系统未接受切换请求，请重试或检查辅助功能权限。");
+            self.selection_failed(tr!(
+                "系统未接受切换请求，请重试或检查辅助功能权限。",
+                "macOS did not accept the switch. Try again or check Accessibility access."
+            ));
             return;
         }
         let mut recent = self.ivars().recency.borrow_mut();
@@ -1789,13 +2329,16 @@ impl Delegate {
         {
             item.minimized = minimized;
         }
-        self.filter_preserving(Some(window.id));
+        self.filter_preserving(Some(SelectedResult::Window(window.id)));
         self.report_switch_error(if self.ivars().demo.get() {
-            "演示：已更新示例窗口的最小化状态，未操作真实窗口。"
+            tr!(
+                "演示：已更新示例窗口的最小化状态，未操作真实窗口。",
+                "Demo: minimized state updated; real windows unchanged."
+            )
         } else if minimized {
-            "已最小化窗口。"
+            tr!("已最小化窗口。", "Window minimized.")
         } else {
-            "已恢复窗口。"
+            tr!("已恢复窗口。", "Window restored.")
         });
     }
 
@@ -1807,14 +2350,22 @@ impl Delegate {
             return;
         };
         if self.ivars().demo.get() {
-            self.report_switch_error(&format!("演示：隐藏 {}（未操作真实应用）。", window.app));
+            self.report_switch_error(&trf!(
+                "演示：隐藏 {}（未操作真实应用）。",
+                "Demo: hide {} (real apps unchanged).",
+                window.app
+            ));
             return;
         }
         match NSRunningApplication::runningApplicationWithProcessIdentifier(window.pid) {
-            Some(app) if app.hide() => {
-                self.report_switch_error("已隐藏应用。选择它的窗口后按回车可重新打开。")
-            }
-            _ => self.report_switch_error("无法隐藏应用，它可能已经退出。"),
+            Some(app) if app.hide() => self.report_switch_error(tr!(
+                "已隐藏应用。选择它的窗口后按回车可重新打开。",
+                "App hidden. Select its window and press Enter to show it again."
+            )),
+            _ => self.report_switch_error(tr!(
+                "无法隐藏应用，它可能已经退出。",
+                "Could not hide the app. It may have quit."
+            )),
         }
     }
 
@@ -1825,6 +2376,34 @@ impl Delegate {
             .borrow()
             .get(state.selected.get())
             .and_then(|&index| state.windows.borrow().get(index).cloned())
+    }
+
+    fn selected_application(&self) -> Option<ApplicationTarget> {
+        let state = self.ivars();
+        let index = state
+            .selected
+            .get()
+            .checked_sub(state.matches.borrow().len())?;
+        state.launch_matches.borrow().get(index).and_then(|&index| {
+            state
+                .installed_apps
+                .borrow()
+                .get(index)
+                .map(|app| app.target.clone())
+        })
+    }
+
+    fn selected_result(&self) -> Option<SelectedResult> {
+        self.selected_window()
+            .map(|window| SelectedResult::Window(window.id))
+            .or_else(|| {
+                self.selected_application()
+                    .map(|app| SelectedResult::Application(app.bundle_id))
+            })
+    }
+
+    fn match_count(&self) -> usize {
+        self.ivars().matches.borrow().len() + self.ivars().launch_matches.borrow().len()
     }
 }
 
@@ -1882,10 +2461,13 @@ fn demo_windows() -> Vec<WindowInfo> {
         ("Safari", "Rust documentation — ownership and borrowing"),
         ("Visual Studio Code", "main.rs — Winlane"),
         ("Terminal", "cargo test — winlane"),
-        ("Obsidian", "项目笔记 · 窗口切换器"),
+        (
+            "Obsidian",
+            tr!("项目笔记 · 窗口切换器", "Project notes · Window switcher"),
+        ),
         ("Safari", "AppKit — Apple Developer"),
         ("Finder", "Downloads"),
-        ("Notes", "本周计划"),
+        ("Notes", tr!("本周计划", "This week's plan")),
     ]
     .into_iter()
     .enumerate()

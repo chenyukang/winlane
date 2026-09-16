@@ -1,7 +1,5 @@
 use std::collections::{BTreeSet, HashMap};
-use winlane::aliases::{
-    AliasInput, AliasMatch, Aliases, AppIdentity, match_alias, matching_alias_position,
-};
+use winlane::aliases::{AliasInput, AliasMatch, Aliases, AppIdentity};
 use winlane::config::{Config, Shortcut, visible_matches};
 use winlane::search::WindowInfo;
 use winlane::shortcuts::*;
@@ -49,40 +47,35 @@ fn automatic_aliases_are_lowercase_unique_and_deterministic() {
     assert_eq!(aliases.resolve(" W "), Some(wechat().id.as_str()));
 }
 
+fn window(id: u64, pid: i32) -> WindowInfo {
+    WindowInfo {
+        id,
+        pid,
+        app: "App".into(),
+        title: "Project".into(),
+        minimized: false,
+    }
+}
+
 #[test]
-fn switch_prefix_matches_current_windows_when_the_exact_app_is_absent() {
-    let aliases = Aliases::from_json(r#"{"zed":"z","zulip":"zu","zoom":"zo"}"#).unwrap();
-    assert_eq!(
-        matching_alias_position(&aliases, "z", &["code", "zulip"]),
-        Some(1)
-    );
-    assert_eq!(
-        matching_alias_position(&aliases, "z", &["zulip", "zulip"]),
-        Some(0)
-    );
-    assert_eq!(
-        matching_alias_position(&aliases, "z", &["zulip", "zed"]),
-        Some(1)
-    );
-    assert_eq!(
-        matching_alias_position(&aliases, "z", &["zoom", "zulip"]),
-        None
-    );
-    assert_eq!(
-        matching_alias_position(&aliases, "zu", &["zoom", "zulip"]),
-        Some(1)
-    );
-    assert_eq!(matching_alias_position(&aliases, "z", &["code"]), None);
-    assert_eq!(matching_alias_position(&aliases, "", &["zulip"]), None);
-    assert_eq!(
-        matching_alias_position(&aliases, " Z ", &["zulip"]),
-        Some(0)
-    );
-    assert_eq!(
-        match_alias(&aliases, "z", &["zoom", "zulip", "zulip"]),
-        AliasMatch::Ambiguous
-    );
-    assert_eq!(match_alias(&aliases, "z", &["code"]), AliasMatch::Missing);
+fn switch_prefix_matches_unique_windows_and_requires_disambiguation() {
+    let mut aliases = Aliases::from_json(r#"{"zed":"z","zulip":"zu","zoom":"zo"}"#).unwrap();
+    let identities = HashMap::from([
+        (1, app("zed", "Zed")),
+        (2, app("zulip", "Zulip")),
+        (3, app("zoom", "Zoom")),
+    ]);
+    aliases.ensure_windows(&[window(1, 1), window(2, 2), window(3, 3)], &identities);
+    assert_eq!(aliases.match_windows("z", &[99, 2]), AliasMatch::Matched(1));
+    assert_eq!(aliases.match_windows("z", &[2, 1]), AliasMatch::Matched(1));
+    assert_eq!(aliases.match_windows("z", &[3, 2]), AliasMatch::Ambiguous);
+    assert_eq!(aliases.match_windows("zu", &[3, 2]), AliasMatch::Matched(1));
+    assert_eq!(aliases.match_windows("z", &[99]), AliasMatch::Missing);
+    assert_eq!(aliases.match_windows("", &[2]), AliasMatch::Missing);
+    assert_eq!(aliases.match_windows(" Z ", &[2]), AliasMatch::Matched(0));
+    aliases.ensure_windows(&[window(2, 2), window(4, 2)], &identities);
+    assert_ne!(aliases.for_window(2), aliases.for_window(4));
+    assert_eq!(aliases.match_windows("z", &[2, 4]), AliasMatch::Ambiguous);
 }
 
 #[test]
@@ -128,13 +121,96 @@ fn malformed_duplicate_and_overlong_saved_aliases_are_rejected() {
         r#"{"app":""}"#,
         r#"{"":"a"}"#,
         r#"{"app":"a","other":"a"}"#,
+        r#"{"apps":{"code":"co"},"windows":{"1":{"app":"code","alias":"co"},"2":{"app":"code","alias":"co"}}}"#,
+        r#"{"apps":{"code":"co","chat":"c"},"windows":{"1":{"app":"code","alias":"c"}}}"#,
+        r#"{"apps":{"code":"co"},"windows":{"1":{"app":"other","alias":"o"}}}"#,
     ] {
         assert!(Aliases::from_json(json).is_err(), "{json}");
     }
 }
 
 #[test]
-fn alias_search_uses_identity_preserves_multiple_windows_and_obeys_filters() {
+fn each_window_keeps_its_alias_across_order_title_changes_and_winlane_restart() {
+    let identities = HashMap::from([(42, app("code", "Code")), (43, app("chat", "ChatGPT"))]);
+    let mut windows = vec![
+        window(11, 42),
+        window(12, 42),
+        window(13, 42),
+        window(14, 43),
+    ];
+    let mut aliases = Aliases::from_json(r#"{"code":"co","chat":"c"}"#).unwrap();
+    assert!(aliases.ensure_windows(&windows, &identities));
+    assert_eq!(aliases.for_window(11), Some("co"));
+    let assigned: BTreeSet<_> = windows
+        .iter()
+        .map(|window| aliases.for_window(window.id).unwrap())
+        .collect();
+    assert_eq!(assigned.len(), windows.len());
+    let saved = aliases.to_json();
+    assert!(!saved.contains("Project"));
+    let mut restarted = Aliases::from_json(&saved).unwrap();
+    windows.reverse();
+    windows[0].title = "Completely different title".into();
+    assert!(!restarted.ensure_windows(&windows, &identities));
+    assert_eq!(aliases, restarted);
+    let order = vec![3, 1, 0, 2];
+    for (position, &index) in order.iter().enumerate() {
+        let id = windows[index].id;
+        let alias = aliases.for_window(id).unwrap();
+        assert_eq!(
+            aliases.filter_order(alias, &order, &windows),
+            Some(vec![index])
+        );
+        let ordered: Vec<_> = order.iter().map(|&index| windows[index].id).collect();
+        assert_eq!(
+            aliases.match_windows(alias, &ordered),
+            AliasMatch::Matched(position)
+        );
+    }
+}
+
+#[test]
+fn newly_seen_apps_do_not_steal_window_aliases_and_closed_windows_release_theirs() {
+    let mut identities = HashMap::from([(42, app("code", "Code"))]);
+    let mut windows = vec![window(11, 42), window(12, 42), window(13, 42)];
+    let mut aliases = Aliases::from_json(r#"{"code":"co","chat":"c"}"#).unwrap();
+    aliases.ensure_windows(&windows, &identities);
+    let extra = aliases.for_window(12).unwrap().to_owned();
+    identities.insert(50, app("new-app", &extra.to_uppercase()));
+    windows.push(window(50, 50));
+    aliases.ensure_windows(&windows, &identities);
+    assert_eq!(aliases.for_window(12), Some(extra.as_str()));
+    assert_ne!(aliases.for_window(50), Some(extra.as_str()));
+    let survivors = [
+        (11, aliases.for_window(11).unwrap().to_owned()),
+        (13, aliases.for_window(13).unwrap().to_owned()),
+    ];
+    windows.retain(|window| window.id != 12);
+    assert!(aliases.ensure_windows(&windows, &identities));
+    assert_eq!(aliases.resolve_window(&extra), None);
+    for (id, alias) in survivors {
+        assert_eq!(aliases.for_window(id), Some(alias.as_str()));
+    }
+    windows.push(window(15, 42));
+    aliases.ensure_windows(&windows, &identities);
+    assert_eq!(aliases.for_window(15), Some(extra.as_str()));
+    assert_eq!(aliases, Aliases::from_json(&aliases.to_json()).unwrap());
+}
+
+#[test]
+fn identical_titles_and_multiple_processes_still_get_distinct_window_aliases() {
+    let identities = HashMap::from([(41, app("code", "Code")), (42, app("code", "Code"))]);
+    let windows = vec![window(1, 41), window(2, 42)];
+    let mut aliases = Aliases::default();
+    aliases.ensure_windows(&windows, &identities);
+    assert_ne!(aliases.for_window(1), aliases.for_window(2));
+    let mut reversed = Aliases::default();
+    reversed.ensure_windows(&windows.into_iter().rev().collect::<Vec<_>>(), &identities);
+    assert_eq!(aliases, reversed);
+}
+
+#[test]
+fn alias_search_selects_one_window_and_obeys_filters() {
     let windows = vec![
         WindowInfo {
             id: 1,
@@ -160,44 +236,26 @@ fn alias_search_uses_identity_preserves_multiple_windows_and_obeys_filters() {
     ];
     let identities = HashMap::from([(10, wechat()), (20, app("warp", "Warp"))]);
     let mut aliases = Aliases::default();
-    aliases.ensure(&identities.values().cloned().collect::<Vec<_>>());
+    aliases.ensure_windows(&windows, &identities);
     let config = Config::default();
     let order = visible_matches(&windows, "", None, &config, None, &[2], 0);
-    assert_eq!(
-        aliases.filter_order("w", &order, &windows, &identities),
-        Some(vec![1, 0])
-    );
-    assert_eq!(
-        aliases.filter_order("wa", &order, &windows, &identities),
-        Some(vec![2])
-    );
-    assert_eq!(
-        aliases.filter_order("project", &order, &windows, &identities),
-        None
-    );
+    assert_eq!(aliases.filter_order("w", &order, &windows), Some(vec![0]));
+    assert_eq!(aliases.filter_order("wa", &order, &windows), Some(vec![2]));
+    assert_eq!(aliases.filter_order("project", &order, &windows), None);
     let config = Config {
         include_minimized: false,
         ..config
     };
     let order = visible_matches(&windows, "", None, &config, None, &[], 0);
-    assert_eq!(
-        aliases.filter_order("w", &order, &windows, &identities),
-        Some(vec![0])
-    );
+    assert_eq!(aliases.filter_order("w", &order, &windows), Some(vec![0]));
     let order = visible_matches(&windows, "", None, &config, Some(20), &[], 0);
-    assert_eq!(
-        aliases.filter_order("w", &order, &windows, &identities),
-        Some(vec![])
-    );
+    assert_eq!(aliases.filter_order("w", &order, &windows), Some(vec![]));
     let config = Config {
         excluded_apps: vec!["微信".into()],
         ..config
     };
     let order = visible_matches(&windows, "", None, &config, None, &[], 0);
-    assert_eq!(
-        aliases.filter_order("w", &order, &windows, &identities),
-        Some(vec![])
-    );
+    assert_eq!(aliases.filter_order("w", &order, &windows), Some(vec![]));
 }
 
 #[test]
@@ -270,15 +328,19 @@ fn pending_alias_overrides_initial_cycle_after_discovery_and_only_commits_once()
     input.push('a');
     selection.release();
     assert_eq!(selection.take_commit(), None);
-    aliases.ensure(&[wechat(), app("warp", "Warp")]);
-    let apps = ["code", "warp", "com.tencent.xinWeChat"];
-    selection.install(apps.len(), Some(0));
-    let index = matching_alias_position(&aliases, input.text(), &apps).unwrap();
+    let identities = HashMap::from([(1, wechat()), (2, app("warp", "Warp"))]);
+    aliases.ensure_windows(&[window(1, 1), window(2, 2)], &identities);
+    let windows = [99, 2, 1];
+    selection.install(windows.len(), Some(0));
+    let index = aliases
+        .match_windows(input.text(), &windows)
+        .position()
+        .unwrap();
     selection.select(index);
     assert_eq!(selection.take_commit(), Some(1));
     assert_eq!(selection.take_commit(), None);
-    assert_eq!(matching_alias_position(&aliases, "zz", &apps), None);
-    assert_eq!(matching_alias_position(&aliases, "w", &["warp"]), Some(0));
+    assert_eq!(aliases.match_windows("zz", &windows), AliasMatch::Missing);
+    assert_eq!(aliases.match_windows("w", &[2]), AliasMatch::Matched(0));
 }
 
 #[test]

@@ -11,33 +11,17 @@ const MAX_FIELD_CHARS: usize = 512;
 const MAX_QUERY_CHARS: usize = 128;
 
 pub fn rank(windows: &[WindowInfo], query: &str, preferred: Option<u64>) -> Vec<usize> {
-    let mut tokens = Vec::new();
-    let mut query_chars = 0;
-    for token in query.split_whitespace() {
-        let token: Vec<char> = token
-            .chars()
-            .flat_map(char::to_lowercase)
-            .take(MAX_QUERY_CHARS + 1)
-            .collect();
-        query_chars += token.len();
-        if query_chars > MAX_QUERY_CHARS {
-            return Vec::new();
-        }
-        tokens.push(token);
-    }
-    if tokens.is_empty() {
+    let Some(query) = Query::new(query) else {
+        return Vec::new();
+    };
+    if query.is_empty() {
         return (0..windows.len()).collect();
     }
     let mut matches: Vec<(usize, i32)> = windows
         .iter()
         .enumerate()
         .filter_map(|(index, window)| {
-            let app = Field::new(&window.app);
-            let title = Field::new(&window.title);
-            let mut score = 0;
-            for token in &tokens {
-                score += app.score(token).max(title.score(token))?;
-            }
+            let mut score = query.score([window.app.as_str(), window.title.as_str()])?;
             if preferred == Some(window.id) {
                 score += 300;
             }
@@ -46,6 +30,41 @@ pub fn rank(windows: &[WindowInfo], query: &str, preferred: Option<u64>) -> Vec<
         .collect();
     matches.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     matches.into_iter().map(|(index, _)| index).collect()
+}
+
+pub(crate) struct Query {
+    tokens: Vec<Vec<char>>,
+}
+
+impl Query {
+    pub(crate) fn new(query: &str) -> Option<Self> {
+        let mut tokens = Vec::new();
+        let mut query_chars = 0;
+        for token in query.split_whitespace() {
+            let token: Vec<char> = token
+                .chars()
+                .flat_map(char::to_lowercase)
+                .take(MAX_QUERY_CHARS + 1)
+                .collect();
+            query_chars += token.len();
+            if query_chars > MAX_QUERY_CHARS {
+                return None;
+            }
+            tokens.push(token);
+        }
+        Some(Self { tokens })
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.tokens.is_empty()
+    }
+
+    pub(crate) fn score<'a>(&self, fields: impl IntoIterator<Item = &'a str>) -> Option<i32> {
+        let fields: Vec<_> = fields.into_iter().map(Field::new).collect();
+        self.tokens.iter().try_fold(0, |score, token| {
+            Some(score + fields.iter().filter_map(|field| field.score(token)).max()?)
+        })
+    }
 }
 
 struct Field {

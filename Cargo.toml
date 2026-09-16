@@ -1,11 +1,12 @@
 [package]
 name = "winlane"
-version = "0.5.7"
+version = "0.8.0"
 edition = "2024"
 description = "A native macOS window search and switcher"
 license = "MIT"
 
 [dependencies]
+block2 = "0.6.2"
 objc2 = "0.6.4"
 objc2-foundation = "0.3.2"
 objc2-app-kit = "0.3.2"

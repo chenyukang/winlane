@@ -5,6 +5,10 @@ mod accessibility;
 #[cfg(target_os = "macos")]
 mod app;
 #[cfg(target_os = "macos")]
+mod app_shortcuts;
+#[cfg(target_os = "macos")]
+mod installed_apps;
+#[cfg(target_os = "macos")]
 mod main_wake;
 #[cfg(target_os = "macos")]
 mod settings;

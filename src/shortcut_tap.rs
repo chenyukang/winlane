@@ -8,6 +8,7 @@ use std::ffi::c_void;
 use std::ptr;
 use std::sync::mpsc::{self, Receiver, Sender};
 use winlane::shortcuts::{Action, Binding, FLAGS_CHANGED, KEY_DOWN, KEY_UP, ShortcutRouter};
+use winlane::tr;
 
 type EventRef = *mut c_void;
 type TapCallback = unsafe extern "C" fn(*mut c_void, u32, EventRef, *mut c_void) -> EventRef;
@@ -49,14 +50,21 @@ impl ShortcutTap {
         mtm: MainThreadMarker,
         search: Binding,
         switch: Binding,
+        app_shortcuts: Vec<Binding>,
         wake: WakeHandle,
     ) -> Result<(Self, Receiver<Action>), String> {
         if !crate::accessibility::is_trusted() {
-            return Err("启用全局快捷键需要先在系统设置中允许 Winlane 控制应用。".into());
+            return Err(tr!(
+                "启用全局快捷键需要先在系统设置中允许 Winlane 控制应用。",
+                "Allow Winlane to control apps in System Settings to enable global shortcuts."
+            )
+            .into());
         }
         let (actions, receiver) = mpsc::channel();
         let mut state = Box::new(TapState {
-            keys: RefCell::new(ShortcutRouter::new(search, switch)),
+            keys: RefCell::new(
+                ShortcutRouter::new(search, switch).with_app_shortcuts(app_shortcuts),
+            ),
             actions,
             wake,
             port: Cell::new(ptr::null_mut()),
@@ -74,7 +82,7 @@ impl ShortcutTap {
             )
         };
         if raw.is_null() {
-            return Err("未能启用全局快捷键。请检查 Winlane 的系统授权，再保存设置重试。".into());
+            return Err(tr!("未能启用全局快捷键。请检查 Winlane 的系统授权，再保存设置重试。", "Could not enable global shortcuts. Check Winlane's permissions, then save settings again.").into());
         }
         // SAFETY: Create returned a non-null, retained Mach port owned here.
         let port = unsafe { CFMachPort::wrap_under_create_rule(raw) };
@@ -84,7 +92,11 @@ impl ShortcutTap {
             Err(()) => {
                 // SAFETY: Remove the callback before its boxed context is freed.
                 unsafe { CFMachPortInvalidate(raw) };
-                return Err("无法启动快捷键监听，请重新打开 Winlane。".into());
+                return Err(tr!(
+                    "无法启动快捷键监听，请重新打开 Winlane。",
+                    "Could not start shortcut monitoring. Reopen Winlane."
+                )
+                .into());
             }
         };
         // SAFETY: The system mode constant is valid for this run loop's lifetime.
@@ -96,7 +108,11 @@ impl ShortcutTap {
             _main_thread: mtm,
         };
         if !tap.is_enabled() {
-            return Err("快捷键监听未启用，请检查系统授权。".into());
+            return Err(tr!(
+                "快捷键监听未启用，请检查系统授权。",
+                "Shortcut monitoring is disabled. Check system permissions."
+            )
+            .into());
         }
         Ok((tap, receiver))
     }

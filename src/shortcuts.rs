@@ -103,6 +103,7 @@ impl Binding {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActionKind {
+    LaunchApp(usize),
     Search,
     Switch { direction: i8, fresh: bool },
     Alias(char),
@@ -120,6 +121,7 @@ pub struct Action {
 pub struct ShortcutRouter {
     search: Binding,
     switch: Binding,
+    app_shortcuts: Vec<Binding>,
     session: u64,
     mode: Option<PanelMode>,
     release_modifier: Option<u64>,
@@ -131,11 +133,17 @@ impl ShortcutRouter {
         Self {
             search,
             switch,
+            app_shortcuts: Vec::new(),
             session: 0,
             mode: None,
             release_modifier: None,
             consumed: Default::default(),
         }
+    }
+
+    pub fn with_app_shortcuts(mut self, bindings: Vec<Binding>) -> Self {
+        self.app_shortcuts = bindings;
+        self
     }
 
     fn action(&self, kind: ActionKind) -> Action {
@@ -221,12 +229,17 @@ impl ShortcutRouter {
         if self.consumed.contains(&key) {
             return (true, None);
         }
+        let app_shortcut = self
+            .app_shortcuts
+            .iter()
+            .position(|binding| binding.matches(key, flags, false));
         let alias_key = self.mode == Some(PanelMode::Switch)
             && (flags & MODIFIERS & !SHIFT == 0
                 || flags & MODIFIERS & !SHIFT == self.switch.modifiers & !SHIFT)
             && (letter_for_key(key).is_some() || key == 51);
         if repeat {
-            let consume = self.search.matches(key, flags, false)
+            let consume = app_shortcut.is_some()
+                || self.search.matches(key, flags, false)
                 || self.switch.matches(key, flags, true)
                 || (self.mode == Some(PanelMode::Switch)
                     && matches!(key, SPACE | ESCAPE | 36 | 76 | TAB | 125 | 126))
@@ -236,7 +249,11 @@ impl ShortcutRouter {
             }
             return (consume, None);
         }
-        let action = if alias_key && !self.switch.matches(key, flags, true) {
+        let action = if let Some(index) = app_shortcut {
+            self.finish(self.session);
+            self.session = self.session.wrapping_add(1);
+            self.action(ActionKind::LaunchApp(index))
+        } else if alias_key && !self.switch.matches(key, flags, true) {
             self.action(letter_for_key(key).map_or(ActionKind::AliasBackspace, ActionKind::Alias))
         } else if self.search.matches(key, flags, false) {
             if self.mode == Some(PanelMode::Search) {

@@ -79,6 +79,8 @@ cat > "$bundle/Contents/Info.plist" <<PLIST
     <key>CFBundleIdentifier</key><string>app.windowlane.desktop</string>
     <key>CFBundleExecutable</key><string>winlane</string>
     <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleDevelopmentRegion</key><string>en</string>
+    <key>CFBundleLocalizations</key><array><string>en</string><string>zh-Hans</string></array>
     <key>CFBundleShortVersionString</key><string>$version</string>
     <key>CFBundleVersion</key><string>$version</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>

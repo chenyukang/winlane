@@ -1,4 +1,6 @@
+use crate::i18n::Language;
 use crate::search::{WindowInfo, rank};
+use crate::{tr, trf};
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 use serde::{Deserialize, Serialize};
 
@@ -6,6 +8,16 @@ pub const KEYS: &[&str] = &[
     "Space",
     "Tab",
     "Backquote",
+    "Digit1",
+    "Digit2",
+    "Digit3",
+    "Digit4",
+    "Digit5",
+    "Digit6",
+    "Digit7",
+    "Digit8",
+    "Digit9",
+    "Digit0",
     "KeyA",
     "KeyB",
     "KeyC",
@@ -80,9 +92,30 @@ impl Shortcut {
     }
 
     pub fn binding(&self) -> Result<crate::shortcuts::Binding, String> {
-        use crate::shortcuts::{Binding, COMMAND, CONTROL, OPTION, SHIFT};
         self.hotkey()?;
+        self.app_binding()
+    }
+
+    pub fn app_binding(&self) -> Result<crate::shortcuts::Binding, String> {
+        use crate::shortcuts::{Binding, COMMAND, CONTROL, OPTION, SHIFT};
+        if !self.command && !self.control && !self.option {
+            return Err(tr!(
+                "应用快捷键需要包含 Command、Control 或 Option。",
+                "App shortcuts must include Command, Control, or Option."
+            )
+            .into());
+        }
         let key = match self.key.as_str() {
+            "Digit1" => 18,
+            "Digit2" => 19,
+            "Digit3" => 20,
+            "Digit4" => 21,
+            "Digit5" => 23,
+            "Digit6" => 22,
+            "Digit7" => 26,
+            "Digit8" => 28,
+            "Digit9" => 25,
+            "Digit0" => 29,
             "KeyA" => 0,
             "KeyS" => 1,
             "KeyD" => 2,
@@ -124,7 +157,7 @@ impl Shortcut {
             "F10" => 109,
             "F11" => 103,
             "F12" => 111,
-            _ => return Err("无法识别快捷键。".into()),
+            _ => return Err(tr!("无法识别快捷键。", "The shortcut key is not recognized.").into()),
         };
         let mut modifiers = 0;
         for (enabled, flag) in [
@@ -158,12 +191,18 @@ impl Shortcut {
         let command_window_key =
             self.command && !self.shift && matches!(self.key.as_str(), "Tab" | "Backquote");
         if !self.control && !self.option && !command_window_key {
-            return Err(
-                "请选择 Command + Tab、Command + `，或包含 Control / Option 的组合。".into(),
-            );
+            return Err(tr!(
+                "请选择 Command + Tab、Command + `，或包含 Control / Option 的组合。",
+                "Choose Command + Tab, Command + `, or a shortcut with Control / Option."
+            )
+            .into());
         }
         if !KEYS.contains(&self.key.as_str()) {
-            return Err("不支持这个按键，请重新选择。".into());
+            return Err(tr!(
+                "不支持这个按键，请重新选择。",
+                "This key is not supported. Choose another key."
+            )
+            .into());
         }
         let mut modifiers = Modifiers::empty();
         for (enabled, flag) in [
@@ -176,7 +215,10 @@ impl Shortcut {
                 modifiers |= flag;
             }
         }
-        let code = self.key.parse::<Code>().map_err(|_| "无法识别快捷键。")?;
+        let code = self
+            .key
+            .parse::<Code>()
+            .map_err(|_| tr!("无法识别快捷键。", "The shortcut key is not recognized."))?;
         Ok(HotKey::new(Some(modifiers), code))
     }
 
@@ -196,7 +238,9 @@ pub fn key_label(key: &str) -> &str {
     if key == "Backquote" {
         "`"
     } else {
-        key.strip_prefix("Key").unwrap_or(key)
+        key.strip_prefix("Key")
+            .or_else(|| key.strip_prefix("Digit"))
+            .unwrap_or(key)
     }
 }
 
@@ -216,12 +260,47 @@ pub enum Appearance {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApplicationTarget {
+    pub bundle_id: String,
+    pub path: String,
+    pub name: String,
+}
+
+impl ApplicationTarget {
+    pub fn validate(&self) -> Result<(), String> {
+        let path = std::path::Path::new(&self.path);
+        if self.bundle_id.trim().is_empty()
+            || self.name.trim().is_empty()
+            || self.bundle_id.contains('\0')
+            || self.path.contains('\0')
+            || !path.is_absolute()
+            || path.extension().is_none_or(|extension| extension != "app")
+        {
+            return Err(tr!(
+                "请选择一个有效的 .app 应用。",
+                "Choose a valid .app application."
+            )
+            .into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppShortcut {
+    pub shortcut: Shortcut,
+    pub application: ApplicationTarget,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub shortcut: Shortcut,
     pub switch_shortcut: Shortcut,
+    pub app_shortcuts: Vec<AppShortcut>,
     pub sort: SortOrder,
     pub appearance: Appearance,
+    pub language: Language,
     pub include_minimized: bool,
     pub excluded_apps: Vec<String>,
 }
@@ -231,8 +310,10 @@ impl Default for Config {
         Self {
             shortcut: Shortcut::default(),
             switch_shortcut: Shortcut::switch_default(),
+            app_shortcuts: Vec::new(),
             sort: SortOrder::Recent,
             appearance: Appearance::System,
+            language: Language::System,
             include_minimized: true,
             excluded_apps: Vec::new(),
         }
@@ -244,10 +325,45 @@ impl Config {
         let search = self.shortcut.binding()?;
         let switch = self.switch_shortcut.binding()?;
         if self.switch_shortcut.key == "Space" {
-            return Err("Space 用于切换模式，请为切换快捷键选择其他按键。".into());
+            return Err(tr!(
+                "Space 用于切换模式，请为切换快捷键选择其他按键。",
+                "Space changes modes. Choose another key for the switch shortcut."
+            )
+            .into());
         }
         if search.conflicts_with_switch(switch) {
-            return Err("搜索和切换快捷键不能相同，也不能占用切换模式的 Shift 反向组合。".into());
+            return Err(tr!(
+                "搜索和切换快捷键不能相同，也不能占用切换模式的 Shift 反向组合。",
+                "Search and switch shortcuts must differ, including Shift for reverse switching."
+            )
+            .into());
+        }
+        if self.app_shortcuts.len() > 32 {
+            return Err(tr!(
+                "最多设置 32 个应用快捷键。",
+                "You can configure up to 32 app shortcuts."
+            )
+            .into());
+        }
+        let mut assigned = Vec::new();
+        for (index, item) in self.app_shortcuts.iter().enumerate() {
+            item.application.validate()?;
+            let binding = item.shortcut.app_binding()?;
+            if binding == search || binding.conflicts_with_switch(switch) {
+                return Err(trf!(
+                    "第 {} 个应用快捷键与搜索或切换快捷键冲突。",
+                    "App shortcut {} conflicts with the search or switch shortcut.",
+                    index + 1
+                ));
+            }
+            if assigned.contains(&binding) {
+                return Err(trf!(
+                    "第 {} 个应用快捷键重复，请选择不同的组合。",
+                    "App shortcut {} is duplicated. Choose a different combination.",
+                    index + 1
+                ));
+            }
+            assigned.push(binding);
         }
         if self.excluded_apps.len() > 100
             || self
@@ -255,17 +371,36 @@ impl Config {
                 .iter()
                 .any(|app| app.chars().count() > 100)
         {
-            return Err("最多排除 100 个应用，每个应用名不超过 100 个字符。".into());
+            return Err(tr!(
+                "最多排除 100 个应用，每个应用名不超过 100 个字符。",
+                "Exclude up to 100 apps, with at most 100 characters per name."
+            )
+            .into());
         }
         Ok(())
     }
 
+    pub fn app_bindings(&self) -> Result<Vec<crate::shortcuts::Binding>, String> {
+        self.app_shortcuts
+            .iter()
+            .map(|item| item.shortcut.app_binding())
+            .collect()
+    }
+
     pub fn from_json(json: &str) -> Result<Self, String> {
-        let value: serde_json::Value =
-            serde_json::from_str(json).map_err(|_| "保存的设置无法读取，请在设置中重新保存。")?;
+        let value: serde_json::Value = serde_json::from_str(json).map_err(|_| {
+            tr!(
+                "保存的设置无法读取，请在设置中重新保存。",
+                "Saved settings could not be read. Save them again in Settings."
+            )
+        })?;
         let legacy = value.get("switch_shortcut").is_none();
-        let mut config: Self = serde_json::from_value(value)
-            .map_err(|_| "保存的设置无法读取，请在设置中重新保存。")?;
+        let mut config: Self = serde_json::from_value(value).map_err(|_| {
+            tr!(
+                "保存的设置无法读取，请在设置中重新保存。",
+                "Saved settings could not be read. Save them again in Settings."
+            )
+        })?;
         if legacy
             && config
                 .shortcut
@@ -285,7 +420,8 @@ impl Config {
 
     pub fn to_json(&self) -> Result<String, String> {
         self.validate()?;
-        serde_json::to_string(self).map_err(|_| "无法保存设置。".into())
+        serde_json::to_string(self)
+            .map_err(|_| tr!("无法保存设置。", "Settings could not be saved.").into())
     }
 }
 

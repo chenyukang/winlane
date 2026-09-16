@@ -5,11 +5,80 @@
 mod main_wake;
 
 #[cfg(target_os = "macos")]
-#[path = "../src/accessibility.rs"]
-mod accessibility;
+mod accessibility {
+    include!("../src/accessibility.rs");
+
+    pub fn inspect_published_window_changes(pid: i32) {
+        let mut inventory = Inventory::read();
+        let application = Element::application(pid).unwrap();
+        let windows = all_windows(&application, pid, &inventory);
+        let expected: HashSet<_> = windows.iter().filter_map(Element::server_id).collect();
+        assert!(
+            expected.len() >= 3,
+            "requires three independent live windows"
+        );
+        remote_scans().lock().unwrap().remove(&pid);
+
+        // Substitute successive published snapshots without changing the user's
+        // active window or Space. Remote lookups still use the live AX objects.
+        for round in 0..12 {
+            let published = &windows[round % windows.len()];
+            let found = complete_windows(vec![Element(published.0.clone())], pid, &inventory);
+            let found: HashSet<_> = found.iter().filter_map(Element::server_id).collect();
+            println!(
+                "published transition={} current={:?} windows={} ids={found:?}",
+                round + 1,
+                published.server_id(),
+                found.len()
+            );
+            assert_eq!(
+                found, expected,
+                "a change of published window lost another window"
+            );
+        }
+
+        let found = complete_windows(Vec::new(), pid, &inventory);
+        let found: HashSet<_> = found.iter().filter_map(Element::server_id).collect();
+        assert_eq!(
+            found, expected,
+            "an empty published list must recover live windows"
+        );
+
+        let closed = windows.last().unwrap().server_id().unwrap();
+        inventory.normal.get_mut(&pid).unwrap().remove(&closed);
+        let found = complete_windows(vec![Element(windows[0].0.clone())], pid, &inventory);
+        let found: HashSet<_> = found.iter().filter_map(Element::server_id).collect();
+        assert!(
+            !found.contains(&closed),
+            "closed windows must leave the cache"
+        );
+        assert_eq!(found.len(), expected.len() - 1);
+        inventory.normal.get_mut(&pid).unwrap().insert(closed);
+        let found = complete_windows(vec![Element(windows[0].0.clone())], pid, &inventory);
+        let found: HashSet<_> = found.iter().filter_map(Element::server_id).collect();
+        assert_eq!(
+            found, expected,
+            "a new inventory entry must restart discovery"
+        );
+        println!("Empty published list, closed window removal, and inventory addition passed.");
+        remote_scans().lock().unwrap().remove(&pid);
+    }
+}
 #[cfg(target_os = "macos")]
-#[path = "../src/settings.rs"]
-mod settings;
+mod app_shortcuts {
+    include!("../src/app_shortcuts.rs");
+    include!("support/app_shortcuts.rs");
+}
+#[cfg(target_os = "macos")]
+mod installed_apps {
+    include!("../src/installed_apps.rs");
+    include!("support/installed_apps.rs");
+}
+#[cfg(target_os = "macos")]
+mod settings {
+    include!("../src/settings.rs");
+    include!("support/localization.rs");
+}
 #[cfg(target_os = "macos")]
 #[path = "../src/shortcut_tap.rs"]
 mod shortcut_tap;
@@ -21,6 +90,7 @@ mod window_server;
 #[cfg(target_os = "macos")]
 mod app {
     include!("../src/app.rs");
+    include!("support/launch_search.rs");
 
     pub fn inspect_window_discovery(bundle: &str) {
         assert!(
@@ -42,6 +112,12 @@ mod app {
             })
             .collect();
         assert!(!apps.is_empty(), "requested application is not running");
+        if std::env::var_os("WINLANE_SCAN_TRANSITIONS").is_some() {
+            for (pid, _) in &apps {
+                accessibility::inspect_published_window_changes(*pid);
+            }
+            return;
+        }
         for round in 0..12 {
             let start = Instant::now();
             let windows = accessibility::list_windows(&apps);
@@ -173,7 +249,12 @@ mod app {
         app.setActivationPolicy(NSApplicationActivationPolicy::Prohibited);
         verify_main_wake(mtm);
         verify_switch_alias_prefix(mtm);
+        verify_distinct_window_aliases(mtm);
         let delegate = Delegate::new(mtm);
+        crate::settings::verify_localized_settings(&delegate, mtm);
+        crate::app_shortcuts::verify_hidden_settings(&delegate, mtm);
+        crate::installed_apps::verify_catalog();
+        verify_launch_search(mtm);
         delegate.ivars().demo.set(true);
         delegate.ivars().windows.replace(demo_windows());
         delegate.ivars().mode.set(Some(PanelMode::Search));
@@ -322,6 +403,123 @@ mod app {
         );
     }
 
+    fn verify_distinct_window_aliases(mtm: MainThreadMarker) {
+        let delegate = Delegate::new(mtm);
+        let state = delegate.ivars();
+        state.demo.set(true);
+        state
+            .aliases
+            .replace(Aliases::from_json(r#"{"code":"co"}"#).unwrap());
+        state.identities.borrow_mut().insert(
+            -42,
+            AppIdentity {
+                id: "code".into(),
+                english_name: "Code".into(),
+            },
+        );
+        let windows: Vec<_> = (1..=3)
+            .map(|id| WindowInfo {
+                id,
+                pid: -42,
+                app: "Code".into(),
+                title: format!("Project {id}"),
+                minimized: false,
+            })
+            .collect();
+        delegate.update_aliases(&windows);
+        state.windows.replace(windows);
+        state.mode.set(Some(PanelMode::Search));
+        delegate.sync_displays();
+        delegate.filter();
+        let expected: Vec<_> = delegate.panels()[0]
+            .rows
+            .borrow()
+            .iter()
+            .map(|row| {
+                let RowContent::Window(window, _) = row.content.as_ref().unwrap() else {
+                    panic!("expected a window")
+                };
+                (window.id, row.alias.stringValue().to_string())
+            })
+            .collect();
+        assert_eq!(expected.len(), 3);
+        assert!(expected.iter().all(|(_, alias)| !alias.is_empty()));
+        assert_eq!(
+            expected
+                .iter()
+                .map(|(_, alias)| alias)
+                .collect::<HashSet<_>>()
+                .len(),
+            3,
+            "each independent Code window needs a distinct alias"
+        );
+        for (id, alias) in &expected {
+            state.mode.set(Some(PanelMode::Search));
+            state.query.replace(alias.clone());
+            delegate.filter();
+            assert_eq!(state.matches.borrow().len(), 1);
+            assert_eq!(delegate.selected_window().unwrap().id, *id);
+            state.query.borrow_mut().clear();
+            state.mode.set(Some(PanelMode::Switch));
+            state
+                .switch_selection
+                .replace(Some(SwitchSelection::new(0)));
+            state.alias_input.borrow_mut().clear();
+            delegate.filter();
+            delegate.prepare_switch_selection();
+            for ch in alias.chars() {
+                delegate.shortcut_action(Action {
+                    session: state.session.get(),
+                    kind: ActionKind::Alias(ch),
+                });
+            }
+            assert_eq!(delegate.selected_window().unwrap().id, *id);
+            for ui in delegate.panels() {
+                let row = &ui.rows.borrow()[state.selected.get()];
+                assert_eq!(row.alias.stringValue().to_string(), *alias);
+                assert!(row.button.isAccessibilitySelected());
+            }
+            delegate.shortcut_action(Action {
+                session: state.session.get(),
+                kind: ActionKind::Accept,
+            });
+            assert!(delegate.panels().iter().all(|ui| {
+                ui.footer
+                    .stringValue()
+                    .to_string()
+                    .contains(&format!("Project {id}（"))
+            }));
+        }
+
+        state.mode.set(Some(PanelMode::Switch));
+        state
+            .switch_selection
+            .replace(Some(SwitchSelection::new(0)));
+        state.alias_input.borrow_mut().clear();
+        delegate.filter();
+        delegate.prepare_switch_selection();
+        let before = state.aliases.borrow().clone();
+        let mut pending = state.windows.borrow().clone();
+        pending.retain(|window| window.id != 1);
+        pending.push(WindowInfo {
+            id: 4,
+            pid: -42,
+            app: "Code".into(),
+            title: "New project".into(),
+            minimized: false,
+        });
+        state.deferred_windows.replace(Some(pending));
+        delegate.render();
+        assert_eq!(*state.aliases.borrow(), before);
+        delegate.display_search(state.session.get());
+        let after = state.aliases.borrow();
+        assert_eq!(after.for_window(1), None);
+        assert!(after.for_window(4).is_some());
+        for id in [2, 3] {
+            assert_eq!(after.for_window(id), before.for_window(id));
+        }
+    }
+
     fn verify_switch_alias_prefix(mtm: MainThreadMarker) {
         let delegate = Delegate::new(mtm);
         let state = delegate.ivars();
@@ -353,6 +551,7 @@ mod app {
                 english_name: "Zulip".into(),
             },
         );
+        delegate.update_aliases(&state.windows.borrow());
         state.mode.set(Some(PanelMode::Switch));
         state
             .switch_selection
@@ -399,6 +598,7 @@ mod app {
                 english_name: "Zoom".into(),
             },
         );
+        delegate.update_aliases(&state.windows.borrow());
         state.mode.set(Some(PanelMode::Switch));
         state
             .switch_selection
@@ -505,22 +705,14 @@ mod app {
                 window
             })
             .collect();
-        let apps: Vec<_> = windows
-            .iter()
-            .map(|window| {
-                let app = AppIdentity {
-                    id: format!("example.{}", window.app),
-                    english_name: window.app.clone(),
-                };
-                state
-                    .identities
-                    .borrow_mut()
-                    .insert(window.pid, app.clone());
-                app
-            })
-            .collect();
-        state.aliases.borrow_mut().ensure(&apps);
-        state.windows.replace(windows);
+        for window in &windows {
+            let app = AppIdentity {
+                id: format!("example.{}", window.app),
+                english_name: window.app.clone(),
+            };
+            state.identities.borrow_mut().insert(window.pid, app);
+        }
+        delegate.install_windows(windows);
         state.selected.set(1);
         let ui = delegate.panels()[0].clone();
         // SAFETY: AppKit supplies immutable appearance-name constants.
@@ -563,7 +755,26 @@ mod app {
 fn main() {
     #[cfg(target_os = "macos")]
     objc2::rc::autoreleasepool(|_| {
-        if let Ok(bundle) = std::env::var("WINLANE_SCAN_BUNDLE") {
+        winlane::i18n::set_locale(winlane::i18n::Locale::Chinese);
+        if std::env::var_os("WINLANE_LAUNCH_SMOKE").is_some() {
+            app_shortcuts::verify_background_launch();
+        } else if std::env::var_os("WINLANE_APP_SCAN").is_some() {
+            let start = std::time::Instant::now();
+            let apps = installed_apps::discover();
+            assert!(!apps.is_empty());
+            assert_eq!(
+                apps.iter()
+                    .map(|app| &app.target.bundle_id)
+                    .collect::<std::collections::HashSet<_>>()
+                    .len(),
+                apps.len()
+            );
+            println!(
+                "Installed application scan: {} apps in {:?}; no applications launched.",
+                apps.len(),
+                start.elapsed()
+            );
+        } else if let Ok(bundle) = std::env::var("WINLANE_SCAN_BUNDLE") {
             app::inspect_window_discovery(&bundle);
         } else if std::env::var_os("WINLANE_BENCHMARK").is_some() {
             app::benchmark_hidden_panels();
