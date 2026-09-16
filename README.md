@@ -41,11 +41,11 @@ Once authorized, Winlane starts quietly in the menu bar. Its menu provides acces
 
 ### Switch without stopping to search
 
-Hold **Command**, press **Tab** to open the switcher, then keep pressing Tab to move through the list. Release Command to switch to the selected window. Add Shift to move backward, or press Esc to cancel.
+Hold **Command**, press **Tab** to open the switcher, then press Tab again or keep it held to move through the list. Release Command to switch to the selected window. Add Shift to move backward, or press Esc to cancel.
 
 A quick press and release switches back without showing the panel. Hold the shortcut for 100 ms to see the list; adjust this delay in **Settings → Window List** (0 shows it immediately). Search always opens immediately.
 
-Each row represents an independent window. Separate editor projects appear separately; browser tabs and background helpers do not become extra entries. On multiple displays, the same picker appears on every screen, with a shared selection.
+Each row represents an independent window. Separate editor projects appear separately; VS Code entries show the project name first, as `project: file`. Browser tabs and background helpers do not become extra entries. On multiple displays, the same picker appears on every screen, with a shared selection.
 
 The letters beside each window are its **alias**. Type those letters while holding Command, then release Command to jump directly to that window. Aliases are assigned automatically from English app names, stay unique across windows, and are remembered when Winlane restarts. Additional window aliases may change when the target app closes and creates new windows.
 
@@ -58,6 +58,8 @@ Custom aliases take priority over automatic ones and are reserved even when thei
 ### Search when you know what you want
 
 Press **Control + I** to open search. Type an app name, a window title, an alias, or a few keywords. Use the arrow keys to select a result and Enter to open it. Change the shortcut in **Settings → Shortcuts**; updates keep your saved bindings.
+
+With Recent sorting, full app names come first, then partial app names, then title or fuzzy matches. Each group keeps its window recency. An exact window alias puts that window first, followed by other windows from the same app. Other text matches remain available, even when a saved alias has no open window.
 
 An empty search shows existing windows. Once you type, matching installed apps also appear with a **↗ Launch app** label, so you can open an app that is not running yet. Apps that already have windows are not repeated as launch results.
 
@@ -76,7 +78,7 @@ Open Settings from the menu bar or press **Command + ,** while using Winlane. Pr
 | Settings tab | What you can change |
 | --- | --- |
 | **Shortcuts** | Separate shortcuts for search and switching, plus fixed app shortcuts. |
-| **Appearance & Language** | System, light, or dark appearance; system language, Chinese, or English. |
+| **Appearance & Language** | System, light, or dark appearance; background opacity; language; a toggle for footer hints, refresh status, and the Settings button. |
 | **Input** | Keep the current input source, start searches in English or Chinese, or remember the last input source used in Winlane. |
 | **Window List** | Sorting, minimized windows, and apps to exclude. Recent sorting follows window focus, including mouse, Dock, and shortcut switches. |
 | **Aliases** | Fixed letters for apps or project windows matched by title. |
