@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTC_WRAPPER: ''
+  MACOSX_DEPLOYMENT_TARGET: '14.0'
+
+jobs:
+  workflow-lint:
+    name: Workflows and scripts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: ShellCheck
+        run: shellcheck scripts/*.sh
+      - name: Actionlint
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl --fail --location --retry 3 --silent --show-error \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            -o actionlint.tar.gz
+          echo '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  actionlint.tar.gz' | sha256sum --check
+          tar -xzf actionlint.tar.gz actionlint
+          ./actionlint "$GITHUB_WORKSPACE"/.github/workflows/*.yml
+
+  check:
+    name: Check (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: 1.95.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: ${{ matrix.arch }}
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --locked
+      - name: Check shell syntax
+        run: for script in scripts/*.sh; do bash -n "$script"; done
+      - name: Build and verify release packages
+        run: |
+          ./scripts/build-app.sh --adhoc --output-dir dist/ci
+          ./scripts/package-app.sh dist/ci/Winlane.app dist/packages
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Winlane-ci-${{ matrix.arch }}
+          path: dist/packages/*
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0

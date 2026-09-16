@@ -40,9 +40,11 @@ Both commands produce `dist/Winlane.app`. The script builds with locked dependen
 
 Quit the installed app before replacing it at `~/Applications/Winlane.app`, then open that copy. Avoid running the installed and build-directory copies together. Directly running `cargo run` skips app-bundle signing and may result in a different permission identity.
 
-The product is named Winlane, but its bundle identifier remains `app.windowlane.desktop` and the default certificate remains `Windowlane Development` to preserve existing authorization and preferences. The build targets the Rust toolchain's host architecture; it does not produce a universal binary.
+The product is named Winlane, but its bundle identifier remains `app.windowlane.desktop` and the default certificate remains `Windowlane Development` to preserve existing authorization and preferences. By default, the build targets the Rust toolchain's host architecture. Use `--target aarch64-apple-darwin` or `--target x86_64-apple-darwin` to build another architecture after installing that Rust target. `--output-dir DIR` selects a separate bundle directory; it does not change the installation path.
 
 For a disposable build only, `./scripts/build-app.sh --adhoc` skips the certificate requirement. Do not use it to replace a daily development installation whose permissions you want to retain.
+
+See [Releasing Winlane](releasing.md) for DMG/ZIP packaging, CI artifacts, and Developer ID signing. None of these scripts install or launch the app.
 
 ## Run checks
 

@@ -2,23 +2,33 @@
 set -euo pipefail
 
 usage() {
-    printf 'Usage: %s [--debug] [--adhoc]\n' "${0##*/}"
+    printf 'Usage: %s [--debug] [--adhoc | --distribution] [--target TRIPLE] [--output-dir DIR]\n' "${0##*/}"
     printf 'Build dist/Winlane.app using the Windowlane Development signing identity.\n'
     printf 'Override with WINLANE_SIGNING_IDENTITY (exact certificate name or SHA-1).\n'
     printf 'Use --adhoc only for disposable builds; permissions may reset after rebuilding.\n'
+    printf 'Use --distribution with a Developer ID Application identity for notarization.\n'
     printf 'The app is not installed or launched. See docs/development.md for one-time certificate setup.\n'
 }
 
 profile=release
 build_args=(--locked --release)
 adhoc=false
-for arg in "$@"; do
-    case "$arg" in
+distribution=false
+target=$(rustc -vV | sed -n 's/^host: //p')
+output_dir=
+while [[ $# -gt 0 ]]; do
+    case "$1" in
         --debug) profile=debug; build_args=(--locked) ;;
         --adhoc) adhoc=true ;;
+        --distribution) distribution=true ;;
+        --target|--output-dir)
+            [[ $# -ge 2 && -n "$2" ]] || { usage >&2; exit 2; }
+            if [[ "$1" == --target ]]; then target=$2; else output_dir=$2; fi
+            shift ;;
         --help|-h) usage; exit 0 ;;
         *) usage >&2; exit 2 ;;
     esac
+    shift
 done
 if [[ $(uname -s) != Darwin ]]; then
     printf 'Winlane.app must be built on macOS.\n' >&2
@@ -26,10 +36,23 @@ if [[ $(uname -s) != Darwin ]]; then
 fi
 
 project_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+output_dir=${output_dir:-$project_dir/dist}
+case "$target" in
+    aarch64-apple-darwin|x86_64-apple-darwin) ;;
+    *) printf 'Unsupported Rust target: %s\n' "$target" >&2; exit 2 ;;
+esac
+if [[ "$distribution" == true && ( "$adhoc" == true || "$profile" == debug ) ]]; then
+    printf '%s\n' '--distribution requires a release build and a Developer ID identity.' >&2
+    exit 2
+fi
 signing_identity=-
 if [[ "$adhoc" == false ]]; then
     requested_identity=${WINLANE_SIGNING_IDENTITY:-${WINDOWLANE_SIGNING_IDENTITY:-Windowlane Development}}
-    identities=$(/usr/bin/security find-identity -p codesigning)
+    if [[ -n ${WINLANE_SIGNING_KEYCHAIN:-} ]]; then
+        identities=$(/usr/bin/security find-identity -p codesigning "$WINLANE_SIGNING_KEYCHAIN")
+    else
+        identities=$(/usr/bin/security find-identity -p codesigning)
+    fi
     signing_identity=$(printf '%s\n' "$identities" |
         sed -nE 's/^[[:space:]]*[0-9]+\) ([[:xdigit:]]{40}) "([^"]*)".*$/\1|\2/p' |
         awk -F '|' -v wanted="$requested_identity" \
@@ -42,31 +65,31 @@ if [[ "$adhoc" == false ]]; then
         printf 'Refusing to silently fall back to ad hoc signing.\n' >&2
         exit 1
     fi
+    if [[ "$distribution" == true ]] && ! printf '%s\n' "$identities" |
+        grep -Eq "$signing_identity \"Developer ID Application: "; then
+        printf 'Distribution requires a Developer ID Application certificate.\n' >&2
+        exit 1
+    fi
 else
     printf 'Warning: ad hoc signing may require granting permissions again after code changes.\n' >&2
 fi
-host_target=$(rustc -vV | sed -n 's/^host: //p')
-case "$host_target" in
-    aarch64-apple-darwin|x86_64-apple-darwin) ;;
-    *) printf 'Unsupported Rust host target: %s\n' "$host_target" >&2; exit 1 ;;
-esac
 version=$(sed -n 's/^version = "\([^"]*\)".*/\1/p' "$project_dir/Cargo.toml" | head -n 1)
 if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     printf 'Cargo.toml must contain a numeric major.minor.patch package version.\n' >&2
     exit 1
 fi
 
-printf 'Building Winlane %s (%s, %s)…\n' "$version" "$host_target" "$profile"
-RUSTC_WRAPPER= MACOSX_DEPLOYMENT_TARGET=14.0 CARGO_TARGET_DIR="$project_dir/target" \
+printf 'Building Winlane %s (%s, %s)…\n' "$version" "$target" "$profile"
+RUSTC_WRAPPER='' MACOSX_DEPLOYMENT_TARGET=14.0 CARGO_TARGET_DIR="$project_dir/target" \
     cargo build --manifest-path "$project_dir/Cargo.toml" \
-    --target "$host_target" "${build_args[@]}"
+    --target "$target" "${build_args[@]}"
 
-mkdir -p "$project_dir/dist"
-staging_dir=$(mktemp -d "$project_dir/dist/.winlane.XXXXXX")
+mkdir -p "$output_dir"
+staging_dir=$(mktemp -d "$output_dir/.winlane.XXXXXX")
 trap 'rm -rf -- "$staging_dir"' EXIT
 bundle="$staging_dir/Winlane.app"
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
-cp "$project_dir/target/$host_target/$profile/winlane" "$bundle/Contents/MacOS/winlane"
+cp "$project_dir/target/$target/$profile/winlane" "$bundle/Contents/MacOS/winlane"
 chmod 755 "$bundle/Contents/MacOS/winlane"
 
 cat > "$bundle/Contents/Info.plist" <<PLIST
@@ -96,13 +119,20 @@ if [[ -f "$project_dir/resources/AppIcon.icns" ]]; then
 fi
 /usr/bin/plutil -lint "$bundle/Contents/Info.plist"
 printf 'Signing identity: %s\n' "$signing_identity"
-/usr/bin/codesign --force --sign "$signing_identity" --timestamp=none --identifier app.windowlane.desktop "$bundle"
+sign_args=(--timestamp=none)
+if [[ "$distribution" == true ]]; then
+    sign_args=(--timestamp --options runtime)
+fi
+if [[ -n ${WINLANE_SIGNING_KEYCHAIN:-} ]]; then
+    sign_args+=(--keychain "$WINLANE_SIGNING_KEYCHAIN")
+fi
+/usr/bin/codesign --force --sign "$signing_identity" "${sign_args[@]}" --identifier app.windowlane.desktop "$bundle"
 /usr/bin/codesign --verify --strict "$bundle"
 /usr/bin/codesign --display --requirements - "$bundle"
 
-destination="$project_dir/dist/Winlane.app"
+destination="$output_dir/Winlane.app"
 if [[ -e "$destination" || -L "$destination" ]]; then
     rm -rf -- "$destination"
 fi
 mv -- "$bundle" "$destination"
-printf 'Built: %s\nArchitecture: %s\nThe app has not been launched.\n' "$destination" "$host_target"
+printf 'Built: %s\nArchitecture: %s\nThe app has not been launched.\n' "$destination" "$target"

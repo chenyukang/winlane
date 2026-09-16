@@ -10,8 +10,8 @@ use objc2::runtime::{AnyObject, ProtocolObject, Sel};
 use objc2::{AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::*;
 use objc2_foundation::{
-    MainThreadMarker, NSBundle, NSNotification, NSNumber, NSObject, NSObjectProtocol, NSPoint,
-    NSRect, NSRunLoop, NSRunLoopCommonModes, NSSize, NSString, NSTimer, NSURL, ns_string,
+    MainThreadMarker, NSBundle, NSData, NSNotification, NSNumber, NSObject, NSObjectProtocol,
+    NSPoint, NSRect, NSRunLoop, NSRunLoopCommonModes, NSSize, NSString, NSTimer, NSURL, ns_string,
 };
 use std::time::{Duration, Instant};
 use winlane::aliases::{AliasInput, AliasMatch, Aliases, AppIdentity};
@@ -642,7 +642,15 @@ impl Delegate {
             NSStatusBar::systemStatusBar().statusItemWithLength(NSVariableStatusItemLength)
         });
         if let Some(button) = status_item.button(mtm) {
-            button.setTitle(ns_string!("▤"));
+            let data = NSData::with_bytes(include_bytes!("../resources/MenuBarIconTemplate.pdf"));
+            let icon = NSImage::initWithData(NSImage::alloc(), &data)
+                .expect("the embedded menu-bar icon must be a valid PDF");
+            icon.setSize(NSSize::new(18.0, 18.0));
+            icon.setTemplate(true);
+            button.setTitle(ns_string!(""));
+            button.setImage(Some(&icon));
+            button.setImagePosition(NSCellImagePosition::ImageOnly);
+            button.setAccessibilityLabel(Some(ns_string!("Winlane")));
             button.setToolTip(Some(&NSString::from_str(tr!(
                 "Winlane · 窗口搜索",
                 "Winlane · Window Search"

@@ -1,0 +1,175 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: checks
+    runs-on: macos-15
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    env:
+      RUSTC_WRAPPER: ''
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: 1.95.0
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - name: Validate release tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(sed -n 's/^version = "\([^"]*\)".*/\1/p' Cargo.toml | head -n 1)
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ && "$TAG" == "v$version" ]] || {
+            echo 'The tag must match the Cargo.toml version (vMAJOR.MINOR.PATCH).' >&2
+            exit 1
+          }
+          git merge-base --is-ancestor HEAD origin/master
+          cargo metadata --locked --no-deps --format-version 1 > "$RUNNER_TEMP/metadata.json"
+      - name: Check signing configuration
+        id: signing
+        env:
+          CERT_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          SIGN_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+          NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.MACOS_NOTARY_ISSUER }}
+          REQUIRE_NOTARIZATION: ${{ vars.WINLANE_REQUIRE_NOTARIZATION }}
+        run: |
+          python3 - <<'PY'
+          import os
+          keys = ('CERT_P12', 'CERT_PASSWORD', 'SIGN_IDENTITY', 'NOTARY_KEY', 'NOTARY_KEY_ID', 'NOTARY_ISSUER')
+          present = [bool(os.environ.get(key)) for key in keys]
+          if any(present) and not all(present):
+              raise SystemExit('Incomplete signing configuration; missing: ' + ', '.join(key for key in keys if not os.environ.get(key)))
+          if os.environ.get('REQUIRE_NOTARIZATION', '').lower() == 'true' and not all(present):
+              raise SystemExit('This repository requires notarization; configure all six MACOS_* secrets.')
+          mode = 'notarized' if all(present) else 'ad-hoc'
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'mode={mode}\n')
+          print(f'Release signing: {mode}')
+          PY
+      - name: Import distribution credentials
+        if: steps.signing.outputs.mode == 'notarized'
+        env:
+          CERT_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+          NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.MACOS_NOTARY_ISSUER }}
+        run: |
+          umask 077
+          signing_dir="$RUNNER_TEMP/winlane-signing"
+          mkdir "$signing_dir"
+          export SIGNING_DIR="$signing_dir"
+          python3 - <<'PY'
+          import base64, os, pathlib
+          directory = pathlib.Path(os.environ['SIGNING_DIR'])
+          for variable, filename in [('CERT_P12', 'certificate.p12'), ('NOTARY_KEY', 'notary.p8')]:
+              (directory / filename).write_bytes(base64.b64decode(os.environ[variable], validate=True))
+          PY
+          keychain="$signing_dir/release.keychain-db"
+          password=$(openssl rand -hex 32)
+          echo "::add-mask::$password"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$signing_dir/certificate.p12" -k "$keychain" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" >/dev/null
+          xcrun notarytool store-credentials winlane-release --key "$signing_dir/notary.p8" \
+            --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" --keychain "$keychain"
+          rm "$signing_dir/certificate.p12" "$signing_dir/notary.p8"
+          echo "WINLANE_SIGNING_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          echo 'WINLANE_NOTARY_PROFILE=winlane-release' >> "$GITHUB_ENV"
+      - name: Build and package both architectures
+        env:
+          SIGNING_MODE: ${{ steps.signing.outputs.mode }}
+          WINLANE_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+        run: |
+          signing_flag=--adhoc
+          if [[ "$SIGNING_MODE" == notarized ]]; then signing_flag=--distribution; fi
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            ./scripts/build-app.sh "$signing_flag" --target "$target" --output-dir "dist/$target"
+            ./scripts/package-app.sh "dist/$target/Winlane.app" dist/release
+          done
+      - name: Write checksums and build information
+        env:
+          TAG: ${{ github.ref_name }}
+          SIGNING_MODE: ${{ steps.signing.outputs.mode }}
+        run: |
+          python3 - <<'PY'
+          import datetime, hashlib, json, os, pathlib, subprocess
+          output = pathlib.Path('dist/release')
+          assets = sorted([*output.glob('*.zip'), *output.glob('*.dmg')])
+          if len(assets) != 4:
+              raise SystemExit('Expected one ZIP and one DMG for each architecture.')
+          hashes = {asset.name: hashlib.sha256(asset.read_bytes()).hexdigest() for asset in assets}
+          info = {
+              'version': os.environ['TAG'][1:],
+              'tag': os.environ['TAG'],
+              'commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
+              'built_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              'rustc': subprocess.check_output(['rustc', '--version'], text=True).strip(),
+              'minimum_macos': '14.0',
+              'signing': os.environ['SIGNING_MODE'],
+              'artifacts': hashes,
+              'workflow_run': f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
+          }
+          (output / 'build-info.json').write_text(json.dumps(info, indent=2) + '\n')
+          hashes['build-info.json'] = hashlib.sha256((output / 'build-info.json').read_bytes()).hexdigest()
+          (output / 'SHA256SUMS').write_text(''.join(f'{digest}  {name}\n' for name, digest in sorted(hashes.items())))
+          PY
+          (cd dist/release && shasum -a 256 -c SHA256SUMS)
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          SIGNING_MODE: ${{ steps.signing.outputs.mode }}
+        run: |
+          notes="$RUNNER_TEMP/release-notes.md"
+          cat > "$notes" <<'NOTES'
+          Requires macOS 14 or later. Choose **arm64** for Apple Silicon or **x86_64** for Intel.
+
+          Open the DMG and drag Winlane to Applications, or extract the ZIP and move Winlane.app to Applications. Quit the old copy before replacing it; keep the same installation location when updating.
+
+          Enable Winlane in System Settings → Privacy & Security → Accessibility (Device Control and Data Access on macOS 27).
+
+          `SHA256SUMS` contains download checksums. `build-info.json` records the source commit, compiler, and signing status.
+          NOTES
+          if [[ "$SIGNING_MODE" == notarized ]]; then
+            printf '\nThese packages are signed with Developer ID and notarized by Apple.\n' >> "$notes"
+          else
+            cat >> "$notes" <<'NOTES'
+
+          **These packages use ad hoc signing and are not notarized by Apple.** macOS may block the first launch. After verifying the download, use System Settings → Privacy & Security → Open Anyway. Updates may require granting Accessibility permission again. For a stable local development identity, build from source using the development guide.
+          NOTES
+          fi
+          gh release create "$TAG" dist/release/* --verify-tag --draft \
+            --title "Winlane ${TAG#v}" --notes-file "$notes" --generate-notes
+          gh release edit "$TAG" --draft=false --latest
+      - name: Remove distribution credentials
+        if: always()
+        run: |
+          keychain="$RUNNER_TEMP/winlane-signing/release.keychain-db"
+          if [[ -f "$keychain" ]]; then security delete-keychain "$keychain"; fi
+          rm -rf -- "$RUNNER_TEMP/winlane-signing"

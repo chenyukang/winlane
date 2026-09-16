@@ -4,9 +4,22 @@ A native macOS window switcher, built with Rust and AppKit.
 
 Hold a shortcut to move between windows, or type to find the one you need. Winlane runs in the menu bar and stays out of the way until you call it up.
 
+![Winlane in switch mode, showing window aliases and keyboard navigation](docs/images/window-switcher.png)
+
 ## Get started
 
-You need **macOS 14 or later**, a Rust toolchain, and Xcode Command Line Tools. Installation currently uses a local build.
+You need **macOS 14 or later**. Tagged builds are distributed through [GitHub Releases](https://github.com/chenyukang/winlane/releases) as a DMG or ZIP:
+
+- **arm64** for Apple Silicon Macs.
+- **x86_64** for Intel Macs.
+
+Open the DMG and drag Winlane to Applications, or extract the ZIP and move `Winlane.app` there. Quit an existing copy before replacing it, and keep the same installation location for updates. Each release includes SHA-256 checksums and its signing status. Until the first release is published, use the source build below.
+
+If a release is marked **ad hoc / not notarized**, macOS may block the first launch. After verifying the download, use **System Settings → Privacy & Security → Open Anyway**. These builds may need Accessibility permission again after an update. Developer ID signed and notarized releases avoid the ad hoc identity changes.
+
+### Build from source
+
+Install a Rust toolchain and Xcode Command Line Tools.
 
 First, [set up a code-signing identity](docs/development.md#development-signing). Keeping the same identity lets development builds retain their Accessibility permission.
 
@@ -17,6 +30,8 @@ cd winlane
 ```
 
 The script builds a release version at `dist/Winlane.app`. Quit any running copy, copy the app to `~/Applications/Winlane.app`, and open it. Use this same installation location for subsequent builds.
+
+### Allow window access
 
 Open **System Settings → Privacy & Security → Accessibility**, add the installed Winlane app, and enable access. On macOS 27, this pane is called **Device Control and Data Access**. Open Winlane's panel again after granting permission.
 
@@ -75,4 +90,4 @@ RUSTC_WRAPPER= cargo clippy --locked --all-targets -- -D warnings
 cargo fmt --all -- --check
 ```
 
-See the [development guide](docs/development.md) for signing, debug builds, native diagnostics, and platform limitations. The current build targets the host architecture and is not notarized.
+CI runs formatting, Clippy, tests, and packaging checks on Apple Silicon and Intel macOS runners. See the [development guide](docs/development.md) for local signing and diagnostics, and the [release guide](docs/releasing.md) for binary distribution and Apple notarization.
