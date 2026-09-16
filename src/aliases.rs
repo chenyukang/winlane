@@ -14,6 +14,8 @@ pub struct AppIdentity {
 pub struct Aliases {
     apps: BTreeMap<String, String>,
     windows: BTreeMap<u64, WindowAlias>,
+    #[serde(skip)]
+    reserved: BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,6 +30,7 @@ impl Default for Aliases {
         Self {
             apps: BTreeMap::from([("com.tencent.xinWeChat".into(), "w".into())]),
             windows: BTreeMap::new(),
+            reserved: BTreeSet::new(),
         }
     }
 }
@@ -39,6 +42,7 @@ impl Aliases {
                 serde_json::from_str(json).map(|apps| Self {
                     apps,
                     windows: BTreeMap::new(),
+                    reserved: BTreeSet::new(),
                 })
             })
             .map_err(|_| {
@@ -105,7 +109,9 @@ impl Aliases {
     }
 
     pub fn is_alias(&self, query: &str) -> bool {
-        self.resolve_window(query).is_some() || self.resolve(query).is_some()
+        self.reserved.contains(&query.trim().to_ascii_lowercase())
+            || self.resolve_window(query).is_some()
+            || self.resolve(query).is_some()
     }
 
     pub fn filter_order(
@@ -122,12 +128,25 @@ impl Aliases {
             order
                 .iter()
                 .copied()
-                .filter(|&index| Some(windows[index].id) == target)
+                .filter(|&index| {
+                    if let Some(target) = target {
+                        windows[index].id == target
+                    } else {
+                        self.reserved.contains(&query.trim().to_ascii_lowercase())
+                            && self.windows.get(&windows[index].id).is_some_and(|window| {
+                                Some(window.app.as_str()) == self.resolve(query)
+                            })
+                    }
+                })
                 .collect(),
         )
     }
 
     pub fn ensure(&mut self, apps: &[AppIdentity]) -> bool {
+        self.ensure_reserved(apps, &BTreeSet::new())
+    }
+
+    fn ensure_reserved(&mut self, apps: &[AppIdentity], reserved: &BTreeSet<String>) -> bool {
         let mut apps: Vec<_> = apps.iter().filter(|app| !app.id.is_empty()).collect();
         apps.sort_by_key(|app| (app.english_name.to_ascii_lowercase(), &app.id));
         let mut used: BTreeSet<_> = self
@@ -135,6 +154,7 @@ impl Aliases {
             .values()
             .cloned()
             .chain(self.windows.values().map(|window| window.alias.clone()))
+            .chain(reserved.iter().cloned())
             .collect();
         let mut changed = false;
         for app in apps {
@@ -158,6 +178,15 @@ impl Aliases {
         windows: &[crate::search::WindowInfo],
         identities: &HashMap<i32, AppIdentity>,
     ) -> bool {
+        self.ensure_windows_reserved(windows, identities, &BTreeSet::new())
+    }
+
+    fn ensure_windows_reserved(
+        &mut self,
+        windows: &[crate::search::WindowInfo],
+        identities: &HashMap<i32, AppIdentity>,
+        reserved: &BTreeSet<String>,
+    ) -> bool {
         let mut ordered: Vec<_> = windows
             .iter()
             .filter_map(|window| {
@@ -177,12 +206,13 @@ impl Aliases {
             .retain(|id, saved| live.get(id).is_some_and(|app| **app == saved.app));
         let mut changed = self.windows.len() != before;
         let apps: Vec<_> = ordered.iter().map(|(_, app)| (*app).clone()).collect();
-        changed |= self.ensure(&apps);
+        changed |= self.ensure_reserved(&apps, reserved);
         let mut used: BTreeSet<_> = self
             .apps
             .values()
             .cloned()
             .chain(self.windows.values().map(|window| window.alias.clone()))
+            .chain(reserved.iter().cloned())
             .collect();
         for (window, app) in ordered {
             if self.windows.contains_key(&window.id) {
@@ -213,6 +243,58 @@ impl Aliases {
         changed
     }
 
+    pub fn with_rules(
+        &self,
+        windows: &[crate::search::WindowInfo],
+        identities: &HashMap<i32, AppIdentity>,
+        rules: &[crate::config::AliasRule],
+    ) -> Self {
+        if rules.is_empty() {
+            return self.clone();
+        }
+        let mut result = self.clone();
+        let reserved: BTreeSet<_> = rules.iter().map(|rule| rule.alias.clone()).collect();
+        result.apps.retain(|_, alias| !reserved.contains(alias));
+        result
+            .windows
+            .retain(|_, window| !reserved.contains(&window.alias));
+        for rule in rules.iter().filter(|rule| rule.title_contains.is_empty()) {
+            result
+                .apps
+                .insert(rule.application.bundle_id.clone(), rule.alias.clone());
+        }
+        // More specific project rules claim their windows before app-wide rules.
+        let mut rules: Vec<_> = rules.iter().collect();
+        rules.sort_by_key(|rule| (std::cmp::Reverse(rule.title_contains.len()), &rule.alias));
+        let mut claimed = BTreeSet::new();
+        for rule in rules {
+            let needle = rule.title_contains.to_lowercase();
+            let selected = windows
+                .iter()
+                .filter(|window| {
+                    !claimed.contains(&window.id)
+                        && identities
+                            .get(&window.pid)
+                            .is_some_and(|app| app.id == rule.application.bundle_id)
+                        && window.title.to_lowercase().contains(&needle)
+                })
+                .min_by_key(|window| window.id);
+            if let Some(window) = selected {
+                claimed.insert(window.id);
+                result.windows.insert(
+                    window.id,
+                    WindowAlias {
+                        app: rule.application.bundle_id.clone(),
+                        alias: rule.alias.clone(),
+                    },
+                );
+            }
+        }
+        result.ensure_windows_reserved(windows, identities, &reserved);
+        result.reserved = reserved;
+        result
+    }
+
     pub fn match_windows(&self, query: &str, ordered_windows: &[u64]) -> AliasMatch {
         let query = query.trim().to_ascii_lowercase();
         if query.is_empty() {
@@ -222,6 +304,17 @@ impl Aliases {
             && let Some(position) = ordered_windows.iter().position(|window| *window == id)
         {
             return AliasMatch::Matched(position);
+        }
+        if self.reserved.contains(&query)
+            && let Some(app) = self.resolve(&query)
+            && let Some(position) = ordered_windows
+                .iter()
+                .position(|id| self.windows.get(id).is_some_and(|window| window.app == app))
+        {
+            return AliasMatch::Matched(position);
+        }
+        if self.reserved.contains(&query) {
+            return AliasMatch::Missing;
         }
         let mut candidate = None;
         for (position, &id) in ordered_windows.iter().enumerate() {

@@ -72,6 +72,11 @@ mod accessibility {
     }
 }
 #[cfg(target_os = "macos")]
+mod alias_rules {
+    include!("../src/alias_rules.rs");
+    include!("support/alias_rules.rs");
+}
+#[cfg(target_os = "macos")]
 mod app_shortcuts {
     include!("../src/app_shortcuts.rs");
     include!("support/app_shortcuts.rs");
@@ -279,6 +284,7 @@ mod app {
         verify_shortcut_recency(mtm);
         verify_external_focus_history(mtm);
         verify_switch_delay(mtm);
+        verify_project_rule_search(mtm);
         verify_adaptive_panels(mtm);
         delegate.ivars().demo.set(true);
         delegate.ivars().windows.replace(demo_windows());
@@ -535,6 +541,12 @@ mod app {
         shortcuts.fill(&seed.app_shortcuts, &delegate, mtm);
         crate::app_shortcuts::verify_autosave_target(&shortcuts, &delegate, mtm, saved);
         assert!(!settings.window.isVisible() && !shortcuts.window.isVisible());
+        let rules = delegate.ensure_alias_rules_window();
+        crate::alias_rules::verify_rules_editor(&rules, &delegate, mtm, saved);
+        assert_eq!(
+            settings.candidate().unwrap().alias_rules,
+            saved().alias_rules
+        );
         store.removePersistentDomainForName(&domain);
         winlane::i18n::set_locale(previous_locale);
         println!(
@@ -629,7 +641,7 @@ mod app {
         let state = delegate.ivars();
         state.demo.set(true);
         state
-            .aliases
+            .automatic_aliases
             .replace(Aliases::from_json(r#"{"code":"co"}"#).unwrap());
         state.identities.borrow_mut().insert(
             -42,
@@ -747,7 +759,7 @@ mod app {
         state.demo.set(true);
         state.session.set(7);
         state
-            .aliases
+            .automatic_aliases
             .replace(Aliases::from_json(r#"{"zed":"z","zulip":"zu","zoom":"zo"}"#).unwrap());
         state.windows.replace(vec![
             WindowInfo {

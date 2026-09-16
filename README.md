@@ -49,6 +49,12 @@ Each row represents an independent window. Separate editor projects appear separ
 
 The letters beside each window are its **alias**. Type those letters while holding Command, then release Command to jump directly to that window. Aliases are assigned automatically from English app names, stay unique across windows, and are remembered when Winlane restarts. Additional window aliases may change when the target app closes and creates new windows.
 
+### Keep aliases for your apps and projects
+
+Open **Settings → Aliases → Alias Rules**. Choose an app and assign one or two lowercase letters. Leave the title field empty for an app alias, or enter a case-insensitive title keyword such as `ckb` to target that project window. Rules save automatically; duplicate aliases are rejected.
+
+Custom aliases take priority over automatic ones and are reserved even when their target is closed. Project rules follow matching window titles after the app or Winlane restarts. More specific title rules win; if several windows match one rule, one receives the fixed alias and the others keep distinct automatic aliases. Removing a rule restores automatic assignment. App aliases can also find unlaunched apps in search; project rules only match existing windows.
+
 ### Search when you know what you want
 
 Press **Control + Option + Space** to open search. Type an app name, a window title, an alias, or a few keywords. Use the arrow keys to select a result and Enter to open it.
@@ -73,6 +79,7 @@ Open Settings from the menu bar or press **Command + ,** while using Winlane.
 | **Appearance & Language** | System, light, or dark appearance; system language, Chinese, or English. |
 | **Input** | Keep the current input source, start searches in English or Chinese, or remember the last input source used in Winlane. |
 | **Window List** | Sorting, minimized windows, and apps to exclude. Recent sorting follows window focus, including mouse, Dock, and shortcut switches. |
+| **Aliases** | Fixed letters for apps or project windows matched by title. |
 | **Startup** | Launch at login and access to macOS login-item settings. |
 
 Settings save automatically. Menus, switches, and sliders apply immediately; text fields save when you press Return or finish editing. Invalid values and conflicting shortcuts leave the last valid configuration in effect and show an error. Restore Defaults also applies immediately.

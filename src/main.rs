@@ -3,6 +3,8 @@
 #[cfg(target_os = "macos")]
 mod accessibility;
 #[cfg(target_os = "macos")]
+mod alias_rules;
+#[cfg(target_os = "macos")]
 mod app;
 #[cfg(target_os = "macos")]
 mod app_shortcuts;

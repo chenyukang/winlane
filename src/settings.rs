@@ -9,7 +9,8 @@ use objc2_service_management::{SMAppService, SMAppServiceStatus};
 use std::cell::RefCell;
 use winlane::aliases::Aliases;
 use winlane::config::{
-    AppShortcut, Appearance, Config, KEYS, Shortcut, SortOrder, key_label, parse_excluded,
+    AliasRule, AppShortcut, Appearance, Config, KEYS, Shortcut, SortOrder, key_label,
+    parse_excluded,
 };
 use winlane::i18n::{self, Language};
 use winlane::input_method::InputMethod;
@@ -185,6 +186,7 @@ pub struct SettingsWindow {
     login_status: Retained<NSTextField>,
     message: Retained<NSTextField>,
     app_shortcuts: RefCell<Vec<AppShortcut>>,
+    alias_rules: RefCell<Vec<AliasRule>>,
 }
 
 impl SettingsWindow {
@@ -226,6 +228,24 @@ impl SettingsWindow {
         let input_tab = settings_tab(&tabs, tr!("输入", "Input"), mtm);
         let windows = settings_tab(&tabs, tr!("窗口列表", "Window List"), mtm);
         let startup = settings_tab(&tabs, tr!("启动", "Startup"), mtm);
+        let aliases = settings_tab(&tabs, tr!("Alias 规则", "Aliases"), mtm);
+        aliases.addSubview(&label(
+            tr!(
+                "固定应用与项目的字母",
+                "Keep familiar aliases for apps and projects"
+            ),
+            16.0,
+            rect(30.0, 303.0, 600.0, 30.0),
+            mtm,
+        ));
+        aliases.addSubview(&hint(tr!("例如 w → WeChat，ck → Code 的 ckb 项目。\n规则优先于自动分配，重启后保留；标题关键词不区分大小写。", "For example, w → WeChat, ck → the ckb project in Code.\nRules override automatic aliases and survive restarts. Title matching ignores case."), rect(30.0, 218.0, 600.0, 70.0), mtm));
+        aliases.addSubview(&button(
+            tr!("配置 Alias 规则…", "Alias Rules…"),
+            target,
+            sel!(showAliasRules:),
+            rect(30.0, 166.0, 240.0, 32.0),
+            mtm,
+        ));
 
         let search_shortcut = ShortcutControls::new(
             &shortcuts,
@@ -598,6 +618,7 @@ impl SettingsWindow {
             login_status,
             message,
             app_shortcuts: RefCell::default(),
+            alias_rules: RefCell::default(),
         }
     }
 
@@ -613,6 +634,7 @@ impl SettingsWindow {
         self.switch_delay
             .setStringValue(&NSString::from_str(&config.switch_delay_ms.to_string()));
         self.set_app_shortcuts(&config.app_shortcuts);
+        self.set_alias_rules(&config.alias_rules);
         self.search_shortcut.fill(&config.shortcut);
         self.switch_shortcut.fill(&config.switch_shortcut);
         self.sort.selectItemAtIndex(match config.sort {
@@ -645,6 +667,7 @@ impl SettingsWindow {
             shortcut: self.search_shortcut.read()?,
             switch_shortcut: self.switch_shortcut.read()?,
             app_shortcuts: self.app_shortcuts.borrow().clone(),
+            alias_rules: self.alias_rules.borrow().clone(),
             sort: match self.sort.indexOfSelectedItem() {
                 1 => SortOrder::Application,
                 2 => SortOrder::Title,
@@ -726,9 +749,13 @@ impl SettingsWindow {
     }
 
     pub fn select_tab(&self, index: isize) {
-        if (0..5).contains(&index) {
+        if (0..self.tabs.numberOfTabViewItems()).contains(&index) {
             self.tabs.selectTabViewItemAtIndex(index);
         }
+    }
+
+    pub fn set_alias_rules(&self, rules: &[AliasRule]) {
+        self.alias_rules.replace(rules.to_vec());
     }
 
     pub fn set_app_shortcuts(&self, shortcuts: &[AppShortcut]) {

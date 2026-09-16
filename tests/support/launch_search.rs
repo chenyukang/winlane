@@ -1,3 +1,87 @@
+fn verify_project_rule_search(mtm: MainThreadMarker) {
+    let delegate = Delegate::new(mtm);
+    let state = delegate.ivars();
+    state.catalog_checked.set(Some(Instant::now()));
+    state.mode.set(Some(PanelMode::Search));
+    state.identities.borrow_mut().insert(
+        -10,
+        AppIdentity {
+            id: "com.example.code".into(),
+            english_name: "Code".into(),
+        },
+    );
+    state.config.borrow_mut().alias_rules = vec![winlane::config::AliasRule {
+        alias: "ck".into(),
+        title_contains: "ckb".into(),
+        application: ApplicationTarget {
+            bundle_id: "com.example.code".into(),
+            name: "Code".into(),
+            path: "/Applications/Code.app".into(),
+        },
+    }];
+    state.installed_apps.replace(vec![InstalledApp {
+        names: vec!["Ck Other".into()],
+        target: ApplicationTarget {
+            bundle_id: "com.example.other".into(),
+            name: "Ck Other".into(),
+            path: "/Applications/Ck Other.app".into(),
+        },
+    }]);
+    let windows = vec![
+        WindowInfo {
+            id: 1,
+            pid: -10,
+            app: "Code".into(),
+            title: "main.rs — ckb".into(),
+            minimized: false,
+        },
+        WindowInfo {
+            id: 2,
+            pid: -10,
+            app: "Code".into(),
+            title: "lib.rs — rust".into(),
+            minimized: false,
+        },
+    ];
+    delegate.install_windows(windows.clone());
+    state.query.replace("ck".into());
+    delegate.filter();
+    assert_eq!(delegate.match_count(), 1);
+    assert_eq!(delegate.selected_window().unwrap().id, 1);
+    state.mode.set(Some(PanelMode::Switch));
+    state.query.replace(String::new());
+    state
+        .switch_selection
+        .replace(Some(SwitchSelection::new(0)));
+    delegate.filter();
+    delegate.prepare_switch_selection();
+    for ch in ['c', 'k'] {
+        delegate.shortcut_action(Action {
+            session: 0,
+            kind: ActionKind::Alias(ch),
+        });
+    }
+    assert_eq!(delegate.selected_window().unwrap().id, 1);
+    delegate.install_windows(vec![windows[1].clone()]);
+    state.mode.set(Some(PanelMode::Search));
+    state.query.replace("ck".into());
+    delegate.filter();
+    assert_eq!(
+        delegate.match_count(),
+        0,
+        "closed project rules must not fall through to unrelated launch results"
+    );
+    let mut reopened = windows;
+    reopened[0].id = 10;
+    reopened[0].title = "README.md — CKB".into();
+    delegate.install_windows(reopened);
+    delegate.filter();
+    assert_eq!(delegate.selected_window().unwrap().id, 10);
+    state.config.borrow_mut().alias_rules.clear();
+    delegate.update_aliases(&state.windows.borrow());
+    assert_eq!(*state.aliases.borrow(), *state.automatic_aliases.borrow());
+}
+
 fn verify_switch_delay(mtm: MainThreadMarker) {
     let delegate = Delegate::new(mtm);
     let state = delegate.ivars();

@@ -293,11 +293,20 @@ pub struct AppShortcut {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AliasRule {
+    pub alias: String,
+    pub application: ApplicationTarget,
+    #[serde(default)]
+    pub title_contains: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub shortcut: Shortcut,
     pub switch_shortcut: Shortcut,
     pub app_shortcuts: Vec<AppShortcut>,
+    pub alias_rules: Vec<AliasRule>,
     pub sort: SortOrder,
     pub appearance: Appearance,
     pub background_opacity: u8,
@@ -314,6 +323,7 @@ impl Default for Config {
             shortcut: Shortcut::default(),
             switch_shortcut: Shortcut::switch_default(),
             app_shortcuts: Vec::new(),
+            alias_rules: Vec::new(),
             sort: SortOrder::Recent,
             appearance: Appearance::System,
             background_opacity: 100,
@@ -328,6 +338,53 @@ impl Default for Config {
 
 impl Config {
     pub fn validate(&self) -> Result<(), String> {
+        if self.alias_rules.len() > 64 {
+            return Err(tr!(
+                "最多设置 64 条 alias 规则。",
+                "You can configure up to 64 alias rules."
+            )
+            .into());
+        }
+        let mut aliases = std::collections::HashSet::new();
+        let mut targets = std::collections::HashSet::new();
+        for rule in &self.alias_rules {
+            rule.application.validate()?;
+            if !(1..=2).contains(&rule.alias.len())
+                || !rule.alias.bytes().all(|ch| ch.is_ascii_lowercase())
+            {
+                return Err(tr!(
+                    "Alias 必须是 1–2 个小写英文字母。",
+                    "An alias must contain 1–2 lowercase English letters."
+                )
+                .into());
+            }
+            if !aliases.insert(&rule.alias) {
+                return Err(trf!(
+                    "Alias {} 重复。",
+                    "Alias {} is duplicated.",
+                    rule.alias
+                ));
+            }
+            if rule.title_contains.chars().count() > 200
+                || rule.title_contains.trim() != rule.title_contains
+            {
+                return Err(tr!(
+                    "标题关键词不能超过 200 个字符，且不能以空格开头或结尾。",
+                    "Title keywords must be at most 200 characters, without surrounding spaces."
+                )
+                .into());
+            }
+            if !targets.insert((
+                &rule.application.bundle_id,
+                rule.title_contains.to_lowercase(),
+            )) {
+                return Err(tr!(
+                    "同一应用和标题关键词只能设置一条规则。",
+                    "Only one rule is allowed for the same app and title keywords."
+                )
+                .into());
+            }
+        }
         if self.background_opacity > 100 {
             return Err(tr!(
                 "背景不透明度必须在 0–100% 之间。",

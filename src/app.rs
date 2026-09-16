@@ -144,6 +144,7 @@ struct AppState {
     config: RefCell<Config>,
     config_store: OnceCell<Retained<NSUserDefaults>>,
     aliases: RefCell<Aliases>,
+    automatic_aliases: RefCell<Aliases>,
     identities: RefCell<HashMap<i32, AppIdentity>>,
     icons: RefCell<HashMap<i32, Option<Retained<NSImage>>>>,
     alias_input: RefCell<AliasInput>,
@@ -151,6 +152,7 @@ struct AppState {
     aliases_writable: Cell<bool>,
     settings: RefCell<Option<Rc<SettingsWindow>>>,
     app_shortcuts: RefCell<Option<Rc<AppShortcutsWindow>>>,
+    alias_rules: RefCell<Option<Rc<crate::alias_rules::AliasRulesWindow>>>,
     launch_receiver: RefCell<Option<PendingLaunch>>,
     installed_apps: RefCell<Vec<InstalledApp>>,
     catalog_receiver: RefCell<Option<Receiver<Vec<InstalledApp>>>>,
@@ -374,7 +376,8 @@ define_class!(
             settings::apply_language(self.ivars().config.borrow().language);
             match settings::load_aliases() {
                 Ok(aliases) => {
-                    self.ivars().aliases.replace(aliases);
+                    self.ivars().aliases.replace(aliases.with_rules(&[], &HashMap::new(), &self.ivars().config.borrow().alias_rules));
+                    self.ivars().automatic_aliases.replace(aliases);
                     self.ivars().aliases_writable.set(true);
                 }
                 Err(error) => { self.ivars().alias_error.replace(Some(error)); }
@@ -507,6 +510,9 @@ define_class!(
                         if let Some(window) = self.app_shortcuts_window() {
                             window.fill(&self.ivars().config.borrow().app_shortcuts, self, self.mtm());
                         }
+                        if let Some(window) = self.ivars().alias_rules.borrow().clone() {
+                            window.fill(&self.ivars().config.borrow().alias_rules, self, self.mtm());
+                        }
                     }
                     Err(error) => settings.report(&trf!("未保存：{}", "Not saved: {}", error), true),
                 }
@@ -528,6 +534,29 @@ define_class!(
                 }
             }
         }
+        #[unsafe(method(showAliasRules:))]
+        fn show_alias_rules(&self, _: Option<&AnyObject>) {
+            self.cancel_routing(); self.end_session();
+            let window = self.ensure_alias_rules_window();
+            window.fill(&self.ivars().config.borrow().alias_rules, self, self.mtm());
+            NSApplication::sharedApplication(self.mtm()).activate();
+            window.window.center(); window.window.makeKeyAndOrderFront(None);
+        }
+        #[unsafe(method(addAliasRule:))]
+        fn add_alias_rule(&self, _: Option<&AnyObject>) {
+            self.ensure_alias_rules_window().add(self, self.mtm());
+        }
+        #[unsafe(method(removeAliasRule:))]
+        fn remove_alias_rule(&self, sender: &NSButton) {
+            self.ensure_alias_rules_window().remove(sender.tag() as usize);
+            self.autosave_alias_rules();
+        }
+        #[unsafe(method(chooseAliasApp:))]
+        fn choose_alias_app(&self, sender: &NSButton) {
+            self.ensure_alias_rules_window().choose(sender.tag() as usize, self.mtm());
+        }
+        #[unsafe(method(aliasRulesChanged:))]
+        fn alias_rules_changed(&self, _: Option<&AnyObject>) { self.autosave_alias_rules(); }
         #[unsafe(method(showAppShortcuts:))]
         fn app_shortcuts_action(&self, _: Option<&AnyObject>) {
             self.show_app_shortcuts();
@@ -590,7 +619,10 @@ define_class!(
         fn switch_action(&self, _: Option<&AnyObject>) { self.open_switcher(); }
         #[unsafe(method(closeWindow:))]
         fn close_window(&self, _: Option<&AnyObject>) {
-            if let Some(settings) = self.settings_window() && settings.window.isKeyWindow() {
+            let alias_rules = self.ivars().alias_rules.borrow().clone();
+            if let Some(window) = alias_rules && window.window.isKeyWindow() {
+                window.window.makeFirstResponder(None); window.window.close();
+            } else if let Some(settings) = self.settings_window() && settings.window.isKeyWindow() {
                 settings.window.makeFirstResponder(None);
                 settings.window.close();
             } else if self.any_panel_key() { self.dismiss(); }
@@ -668,6 +700,8 @@ define_class!(
         }
         #[unsafe(method(quitApp:))]
         fn quit(&self, _: Option<&AnyObject>) {
+            let alias_rules = self.ivars().alias_rules.borrow().clone();
+            if let Some(window) = alias_rules { window.window.makeFirstResponder(None); }
             if let Some(settings) = self.settings_window() {
                 settings.window.makeFirstResponder(None);
             }
@@ -899,6 +933,39 @@ impl Delegate {
         window
     }
 
+    fn ensure_alias_rules_window(&self) -> Rc<crate::alias_rules::AliasRulesWindow> {
+        if let Some(window) = self.ivars().alias_rules.borrow().clone() {
+            return window;
+        }
+        let window = Rc::new(crate::alias_rules::AliasRulesWindow::new(self, self.mtm()));
+        window
+            .window
+            .setDelegate(Some(ProtocolObject::from_ref(self)));
+        self.ivars().alias_rules.replace(Some(window.clone()));
+        window
+    }
+
+    fn autosave_alias_rules(&self) {
+        let Some(window) = self.ivars().alias_rules.borrow().clone() else {
+            return;
+        };
+        let result = window.candidate().and_then(|rules| {
+            let mut config = self.ivars().config.borrow().clone();
+            config.alias_rules = rules;
+            self.apply_config(config)
+        });
+        match result {
+            Ok(()) => window.report(
+                tr!(
+                    "完整规则已自动保存；未填完的行暂不启用。",
+                    "Complete rules saved automatically; unfinished rows stay inactive."
+                ),
+                false,
+            ),
+            Err(error) => window.report(&trf!("未保存：{}", "Not saved: {}", error), true),
+        }
+    }
+
     fn app_shortcuts_window(&self) -> Option<Rc<AppShortcutsWindow>> {
         self.ivars().app_shortcuts.borrow().clone()
     }
@@ -950,6 +1017,18 @@ impl Delegate {
                 window.select_tab(tab);
                 window.window.setFrameOrigin(frame.origin);
                 self.report_shortcut_status();
+            }
+        }
+        let old_alias_rules = state.alias_rules.take();
+        if let Some(old) = old_alias_rules {
+            let showing = old.window.isVisible();
+            let frame = old.window.frame();
+            old.window.close();
+            if showing {
+                let window = self.ensure_alias_rules_window();
+                window.copy_draft_from(&old, self, self.mtm());
+                window.window.setFrameOrigin(frame.origin);
+                window.window.makeKeyAndOrderFront(None);
             }
         }
         let old_shortcuts = state.app_shortcuts.take();
@@ -1447,10 +1526,12 @@ impl Delegate {
         }
         if let Some(settings) = self.settings_window() {
             settings.set_app_shortcuts(&candidate.app_shortcuts);
+            settings.set_alias_rules(&candidate.alias_rules);
         }
         let language_changed =
             candidate.language != previous.language && settings::apply_language(candidate.language);
         self.ivars().config.replace(candidate);
+        self.update_aliases(&self.ivars().windows.borrow());
         if language_changed {
             self.rebuild_localized_ui();
         }
@@ -1492,6 +1573,9 @@ impl Delegate {
         self.remember_frontmost_window();
         self.end_session();
         self.ivars().launch_receiver.replace(None);
+        if let Some(window) = self.ivars().alias_rules.borrow().clone() {
+            window.window.orderOut(None);
+        }
         if let Some(settings) = self.settings_window() {
             settings.window.orderOut(None);
         }
@@ -1654,6 +1738,9 @@ impl Delegate {
             self.prepare_search_input();
         }
         self.ivars().launch_receiver.replace(None);
+        if let Some(window) = self.ivars().alias_rules.borrow().clone() {
+            window.window.orderOut(None);
+        }
         if let Some(settings) = self.app_shortcuts_window() {
             settings.window.orderOut(None);
         }
@@ -2086,12 +2173,18 @@ impl Delegate {
     }
 
     fn update_aliases(&self, windows: &[WindowInfo]) {
-        let mut aliases = self.ivars().aliases.borrow_mut();
+        let mut aliases = self.ivars().automatic_aliases.borrow_mut();
         if aliases.ensure_windows(windows, &self.ivars().identities.borrow())
             && self.ivars().aliases_writable.get()
         {
             settings::save_aliases(&aliases);
         }
+        let effective = aliases.with_rules(
+            windows,
+            &self.ivars().identities.borrow(),
+            &self.ivars().config.borrow().alias_rules,
+        );
+        self.ivars().aliases.replace(effective);
     }
 
     fn ensure_app_catalog(&self) {
@@ -2183,6 +2276,7 @@ impl Delegate {
             && !self.ivars().demo.get()
             && scope_pid.is_none()
             && aliases.resolve_window(&query).is_none()
+            && (!aliases.is_alias(&query) || aliases.resolve(&query).is_some())
         {
             let identities = self.ivars().identities.borrow();
             let occupied: HashSet<_> = windows

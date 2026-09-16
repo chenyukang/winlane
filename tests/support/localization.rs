@@ -10,12 +10,20 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
                 "Input",
                 "Window List",
                 "Startup",
+                "Aliases",
             ],
         ),
         (
             Locale::Chinese,
             "Winlane 设置",
-            ["快捷键", "外观与语言", "输入", "窗口列表", "启动"],
+            [
+                "快捷键",
+                "外观与语言",
+                "输入",
+                "窗口列表",
+                "启动",
+                "Alias 规则",
+            ],
         ),
     ] {
         i18n::set_locale(locale);
@@ -178,7 +186,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
         crate::app_shortcuts::verify_hidden_settings(target, mtm);
     }
     println!(
-        "English and Chinese settings: five tabs, input and language choices, layout bounds, configuration round trips passed."
+        "English and Chinese settings: six tabs, input and language choices, layout bounds, configuration round trips passed."
     );
 }
 
