@@ -24,6 +24,7 @@ type AxRef = CFTypeRef;
 
 const AX_SUCCESS: AxError = 0;
 const AX_ATTRIBUTE_UNSUPPORTED: AxError = -25205;
+const AX_ACTION_UNSUPPORTED: AxError = -25206;
 const AX_NOT_IMPLEMENTED: AxError = -25208;
 const AX_NO_VALUE: AxError = -25212;
 
@@ -549,7 +550,12 @@ pub fn raise_window(pid: i32, id: u64) -> Result<(), String> {
     // SAFETY: The retained AX window and CFString live through the synchronous
     // action request. No ownership is transferred.
     let status = unsafe { AXUIElementPerformAction(window.raw(), action.as_concrete_TypeRef()) };
-    if status == AX_SUCCESS {
+    // System Settings can reject AXRaise even for a live standard window.
+    // The caller still activates the app after setting the target window's focus.
+    if matches!(
+        status,
+        AX_SUCCESS | AX_ATTRIBUTE_UNSUPPORTED | AX_ACTION_UNSUPPORTED | AX_NOT_IMPLEMENTED
+    ) {
         Ok(())
     } else {
         Err(trf!(
