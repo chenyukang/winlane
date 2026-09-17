@@ -95,3 +95,46 @@ fn oversized_query_does_not_match_a_truncated_prefix() {
     let long = "x".repeat(200);
     assert!(rank(&[window(1, &long, "")], &long, None).is_empty());
 }
+
+#[test]
+fn spelling_errors_match_application_names_and_project_words() {
+    let chrome = [window(1, "Google Chrome", "Documentation")];
+    for query in ["chorme", "chroe", "chroome", "chrxme", " CHORME "] {
+        assert_eq!(rank(&chrome, query, None), [0], "query {query}");
+    }
+    for title in [
+        "channel_signer.rs (Working Tree) — fiber",
+        "project/fiber/src/channel_signer.rs",
+        "MyFiberWorkspace",
+        "École — workspace",
+    ] {
+        let query = if title.starts_with('É') {
+            "écloe"
+        } else {
+            "fibre"
+        };
+        let windows = [window(1, "Code", title)];
+        assert_eq!(rank(&windows, query, None), [0], "title {title}");
+        assert_eq!(rank(&windows, &format!("code {query}"), None), [0]);
+        assert!(rank(&windows, &format!("{query} missing"), None).is_empty());
+    }
+}
+
+#[test]
+fn typo_tolerance_is_bounded_and_does_not_expand_short_queries() {
+    let chrome = [window(1, "Chrome", "")];
+    assert!(rank(&chrome, "chxxme", None).is_empty());
+    let obsidian = [window(1, "Obsidian", "")];
+    assert_eq!(rank(&obsidian, "obsidxxn", None), [0]);
+    assert!(rank(&obsidian, "obxxdxxn", None).is_empty());
+    for (query, target) in [("z", "a"), ("co", "go"), ("fir", "far")] {
+        assert!(rank(&[window(1, target, "")], query, None).is_empty());
+    }
+    assert_eq!(rank(&[window(1, "Code", "fiber")], "fi", None), [0]);
+}
+
+#[test]
+fn fewer_edits_outrank_more_edits_even_with_a_saved_preference() {
+    let windows = [window(1, "Obsidian", ""), window(2, "Obsidixn", "")];
+    assert_eq!(rank(&windows, "obsidxxn", Some(1)), [1, 0]);
+}

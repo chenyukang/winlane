@@ -373,6 +373,70 @@ fn verify_catalog_refresh(mtm: MainThreadMarker) {
     );
 }
 
+fn verify_typo_search(mtm: MainThreadMarker) {
+    let delegate = Delegate::new(mtm);
+    let state = delegate.ivars();
+    state.catalog_checked.set(Some(Instant::now()));
+    state.mode.set(Some(PanelMode::Search));
+    state.windows.replace(vec![
+        WindowInfo {
+            id: 1,
+            pid: -10,
+            app: "Google Chrome".into(),
+            title: "Documentation".into(),
+            minimized: false,
+        },
+        WindowInfo {
+            id: 2,
+            pid: -20,
+            app: "Code".into(),
+            title: "channel_signer.rs — fiber".into(),
+            minimized: false,
+        },
+    ]);
+    state.installed_apps.replace(vec![InstalledApp {
+        names: vec!["Obsidian".into()],
+        target: ApplicationTarget {
+            bundle_id: "com.example.notes".into(),
+            name: "Obsidian".into(),
+            path: "/Applications/Example Notes.app".into(),
+        },
+    }]);
+    delegate.sync_displays();
+    let input = delegate.panels()[0].input.clone();
+    for (query, expected) in [
+        ("chorme", SelectedResult::Window(1)),
+        ("code fibre", SelectedResult::Window(2)),
+        ("obsidxxn", SelectedResult::Application("com.example.notes".into())),
+    ] {
+        input.setStringValue(&NSString::from_str(query));
+        let notification = unsafe {
+            NSNotification::notificationWithName_object(
+                ns_string!("NSControlTextDidChangeNotification"),
+                Some(&input),
+            )
+        };
+        unsafe {
+            let _: () = msg_send![&*delegate, controlTextDidChange: &*notification];
+        }
+        match expected {
+            SelectedResult::Window(id) => {
+                assert_eq!(delegate.selected_window().map(|window| window.id), Some(id));
+            }
+            SelectedResult::Application(id) => {
+                assert_eq!(delegate.selected_application().map(|app| app.bundle_id), Some(id));
+            }
+        }
+        for ui in delegate.panels() {
+            assert_eq!(ui.input.stringValue().to_string(), query);
+            assert!(ui.rows.borrow()[0].button.isAccessibilitySelected());
+            assert!(!ui.panel.isVisible());
+        }
+        assert!(state.catalog_receiver.borrow().is_none());
+    }
+    println!("Typo search passed on all panels: app name, project word, and installed-app launch result.");
+}
+
 fn verify_launch_search(mtm: MainThreadMarker) {
     let delegate = Delegate::new(mtm);
     let state = delegate.ivars();

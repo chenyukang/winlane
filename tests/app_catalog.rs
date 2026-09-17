@@ -113,3 +113,39 @@ fn aliases_prioritize_launch_targets_without_hiding_text_matches() {
         [0]
     );
 }
+
+#[test]
+fn misspelled_app_names_are_launchable_without_bypassing_exclusions() {
+    let apps = [
+        app("example.chrome", "Google Chrome", &[]),
+        app("example.obsidian", "笔记", &["Obsidian"]),
+    ];
+    assert_eq!(
+        matching_apps(&apps, "chorme", &HashSet::new(), &[], None),
+        [0]
+    );
+    assert_eq!(
+        matching_apps(&apps, "obsidxxn", &HashSet::new(), &[], None),
+        [1]
+    );
+    assert!(
+        matching_apps(
+            &apps,
+            "chorme",
+            &HashSet::from(["example.chrome".into()]),
+            &[],
+            None
+        )
+        .is_empty()
+    );
+    assert!(
+        matching_apps(
+            &apps,
+            "chorme",
+            &HashSet::new(),
+            &["Google Chrome".into()],
+            None
+        )
+        .is_empty()
+    );
+}

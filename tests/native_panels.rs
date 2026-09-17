@@ -283,6 +283,7 @@ mod app {
         crate::installed_apps::verify_catalog();
         verify_catalog_refresh(mtm);
         verify_launch_search(mtm);
+        verify_typo_search(mtm);
         verify_shortcut_recency(mtm);
         verify_external_focus_history(mtm);
         verify_switch_delay(mtm);

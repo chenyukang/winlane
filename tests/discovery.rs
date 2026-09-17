@@ -198,10 +198,17 @@ fn code_project_windows_keep_separate_identities_through_search_and_scope() {
     let mut ids: Vec<_> = matches.into_iter().map(|index| items[index].id).collect();
     ids.sort();
     assert_eq!(ids, vec![11, 12, 13]);
-    for (query, id) in [("compiler", 11), ("node", 12), ("winlane", 13)] {
+    for (query, expected) in [
+        ("compiler", &[11][..]),
+        ("node", &[12, 11, 13][..]),
+        ("winlane", &[13][..]),
+    ] {
         let matches = visible_matches(&items, query, None, &config, None, &[], 0);
-        assert_eq!(matches.len(), 1);
-        assert_eq!(items[matches[0]].id, id);
+        let ids: Vec<_> = matches.into_iter().map(|index| items[index].id).collect();
+        assert_eq!(
+            ids, expected,
+            "exact projects precede app-name typo matches"
+        );
     }
 }
 

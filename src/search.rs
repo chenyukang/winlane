@@ -59,19 +59,31 @@ impl Query {
         self.tokens.is_empty()
     }
 
-    pub(crate) fn app_name_priority(&self, name: &str) -> u8 {
-        if self.matches_exactly(name) {
-            return 0;
+    pub(crate) fn window_match(&self, window: &WindowInfo) -> Option<(u8, i32)> {
+        if self.matches_exactly(&window.app) {
+            return Some((0, 0));
         }
-        let field = Field::new(name);
-        if self.tokens.iter().all(|token| {
-            field.chars.windows(token.len()).any(|part| part == token)
-                || field.initials.starts_with(token)
-        }) {
-            1
-        } else {
-            2
+        let app = Field::new(&window.app);
+        if self
+            .tokens
+            .iter()
+            .all(|token| app.contains(token) || app.initials.starts_with(token))
+        {
+            return Some((1, 0));
         }
+        let title = Field::new(&window.title);
+        if self
+            .tokens
+            .iter()
+            .all(|token| app.contains(token) || title.contains(token))
+        {
+            return Some((2, 0));
+        }
+        let score = self.tokens.iter().try_fold(0, |score, token| {
+            let app_score = app.score(token).map(|score| score + 250);
+            Some(score + app_score.max(title.score(token))?)
+        })?;
+        Some((3, score))
     }
 
     fn matches_exactly(&self, text: &str) -> bool {
@@ -100,6 +112,10 @@ struct Field {
 }
 
 impl Field {
+    fn contains(&self, token: &[char]) -> bool {
+        self.chars.windows(token.len()).any(|part| part == token)
+    }
+
     fn new(text: &str) -> Self {
         let mut field = Self {
             chars: Vec::new(),
@@ -141,6 +157,10 @@ impl Field {
         if self.initials.starts_with(token) {
             best = best.max(Some(9_500));
         }
+        if best.is_some() {
+            return best;
+        }
+        best = self.typo_score(token);
         let mut next = 0;
         let mut first = 0;
         for (index, ch) in self.chars.iter().enumerate() {
@@ -156,5 +176,41 @@ impl Field {
             }
         }
         best
+    }
+
+    fn typo_score(&self, token: &[char]) -> Option<i32> {
+        let max_edits = match token.len() {
+            0..=3 => return None,
+            4..=7 => 1,
+            _ => 2,
+        };
+        if !token.iter().all(|ch| ch.is_alphanumeric()) {
+            return None;
+        }
+        let mut query = None;
+        self.word_starts
+            .iter()
+            .enumerate()
+            .filter(|(_, start)| **start)
+            .filter_map(|(start, _)| {
+                let end = (start + 1..self.chars.len())
+                    .find(|&index| self.word_starts[index] || !self.chars[index].is_alphanumeric())
+                    .unwrap_or(self.chars.len());
+                let word = &self.chars[start..end];
+                if word.len().abs_diff(token.len()) > max_edits {
+                    return None;
+                }
+                // Compare words, not entire titles, so a long file title does not
+                // penalize the project name at its end. Lengths are bounded above.
+                let query = query.get_or_insert_with(|| token.iter().collect::<String>());
+                let word_text: String = word.iter().collect();
+                let distance = strsim::damerau_levenshtein(query, &word_text);
+                if distance > max_edits {
+                    return None;
+                }
+                let similarity = 1_000 - 1_000 * distance / token.len().max(word.len());
+                Some(6_000 - 1_000 * distance as i32 + similarity as i32 / 2)
+            })
+            .max()
     }
 }

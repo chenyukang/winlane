@@ -573,13 +573,15 @@ pub fn visible_matches(
             return Vec::new();
         };
         if !query.is_empty() {
-            order.retain(|&i| {
-                let window = &windows[i];
-                query
-                    .score([window.app.as_str(), window.title.as_str()])
-                    .is_some()
-            });
-            order.sort_by_cached_key(|&i| query.app_name_priority(&windows[i].app));
+            let mut matches: Vec<_> = order
+                .into_iter()
+                .filter_map(|i| {
+                    let (priority, quality) = query.window_match(&windows[i])?;
+                    Some((i, priority, std::cmp::Reverse(quality)))
+                })
+                .collect();
+            matches.sort_by_key(|&(_, priority, quality)| (priority, quality));
+            return matches.into_iter().map(|(i, _, _)| i).collect();
         }
         return order;
     }

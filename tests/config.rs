@@ -280,6 +280,107 @@ fn recent_search_preserves_window_history_instead_of_match_scores() {
 }
 
 #[test]
+fn recent_search_prioritizes_direct_title_matches_over_scattered_characters() {
+    let items: Vec<_> = [
+        (1, "Google Chrome", "[WIP]: LSP support · Pull Request #42"),
+        (2, "Code", "unused.rs (Working Tree) — rust"),
+        (3, "Zulip", "Zulip - rust-lang"),
+        (4, "Editor", "Reusing tests"),
+    ]
+    .into_iter()
+    .map(|(id, app, title)| WindowInfo {
+        id,
+        pid: id as i32,
+        app: app.into(),
+        title: title.into(),
+        minimized: false,
+    })
+    .collect();
+    for query in ["rust", " RUST "] {
+        for preferred in [None, Some(1)] {
+            assert_eq!(
+                visible_matches(
+                    &items,
+                    query,
+                    preferred,
+                    &Config::default(),
+                    None,
+                    &[1, 2, 3, 4],
+                    1,
+                ),
+                vec![1, 2, 3, 0],
+                "recent fuzzy matches must follow titles containing the search text"
+            );
+            assert_eq!(
+                visible_matches(
+                    &items,
+                    query,
+                    preferred,
+                    &Config::default(),
+                    None,
+                    &[4, 3, 1, 2],
+                    4,
+                ),
+                vec![2, 1, 3, 0],
+                "direct matches retain recency; tighter fuzzy matches precede scattered ones"
+            );
+        }
+    }
+    assert_eq!(
+        visible_matches(&items, "", None, &Config::default(), None, &[1, 2, 3, 4], 1,),
+        vec![0, 1, 2, 3],
+    );
+}
+
+#[test]
+fn fuzzy_quality_precedes_recency_but_not_direct_matches() {
+    let items: Vec<_> = [
+        (1, "Google Chrome", "First window"),
+        (2, "Google Chrome", "Second window"),
+        (3, "Editor", "cxhxorxmxe"),
+        (4, "Editor", "Chrome notes"),
+        (5, "Chorme", "Exact app name"),
+        (6, "Editor", "Chorme notes"),
+    ]
+    .into_iter()
+    .map(|(id, app, title)| WindowInfo {
+        id,
+        pid: id as i32,
+        app: app.into(),
+        title: title.into(),
+        minimized: false,
+    })
+    .collect();
+    for preferred in [None, Some(3)] {
+        assert_eq!(
+            visible_matches(
+                &items,
+                "chorme",
+                preferred,
+                &Config::default(),
+                None,
+                &[3, 4, 2, 1, 6, 5],
+                3,
+            ),
+            [4, 5, 1, 0, 3, 2],
+            "direct hits lead; app typos precede title typos and scattered letters; equal-quality windows retain recency"
+        );
+    }
+    assert!(
+        visible_matches(
+            &items,
+            "chorme missing",
+            None,
+            &Config::default(),
+            None,
+            &[],
+            0,
+        )
+        .is_empty()
+    );
+}
+
+#[test]
 fn app_name_matches_precede_recent_title_matches_without_reordering_each_group() {
     let items: Vec<_> = [
         (

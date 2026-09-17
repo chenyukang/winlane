@@ -59,7 +59,9 @@ Custom aliases take priority over automatic ones and are reserved even when thei
 
 Press **Control + I** to open search. Type an app name, a window title, an alias, or a few keywords. Use the arrow keys to select a result and Enter to open it. Change the shortcut in **Settings → Shortcuts**; updates keep your saved bindings.
 
-With Recent sorting, full app names come first, then partial app names, then title or fuzzy matches. Each group keeps its window recency. An exact window alias puts that window first, followed by other windows from the same app. Other text matches remain available, even when a saved alias has no open window.
+With Recent sorting, full app names come first, then partial app names, then direct title matches, and finally fuzzy matches. Direct-match groups keep their window recency. Fuzzy results favor fewer spelling errors and closer character matches, with recent use breaking ties. An exact window alias puts that window first, followed by other windows from the same app. Other text matches remain available, even when a saved alias has no open window.
+
+Search also tolerates misspelled words in app names and window titles: `chorme` finds Chrome and `fibre` finds a `fiber` project. Words of 4–7 characters allow one edit; longer words allow two, including adjacent letter swaps. Short inputs keep their usual alias, prefix, and abbreviation matching. The same spelling tolerance applies to installed apps you can launch.
 
 An empty search shows existing windows. Once you type, matching installed apps also appear with a **↗ Launch app** label, so you can open an app that is not running yet. Apps that already have windows are not repeated as launch results.
 
