@@ -109,6 +109,7 @@ cat > "$bundle/Contents/Info.plist" <<PLIST
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
+    <key>NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac</key><true/>
 </dict>
 </plist>
 PLIST
