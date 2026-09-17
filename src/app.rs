@@ -18,6 +18,7 @@ use objc2_foundation::{
 use std::time::{Duration, Instant};
 use winlane::aliases::{AliasInput, AliasMatch, Aliases, AppIdentity};
 use winlane::app_catalog::{InstalledApp, matching_apps};
+use winlane::commands::{CommandId, matching_commands};
 use winlane::config::{ApplicationTarget, Config, DisplayDensity, visible_matches};
 use winlane::displays::{Display, Rect, placements};
 use winlane::search::WindowInfo;
@@ -73,11 +74,13 @@ struct RowUi {
 
 #[derive(Clone, PartialEq, Eq)]
 enum RowContent {
+    Command(CommandId),
     Window(WindowInfo, Option<String>),
     Application(ApplicationTarget),
 }
 
 enum SelectedResult {
+    Command(CommandId),
     Window(u64),
     Application(String),
 }
@@ -111,7 +114,10 @@ impl RowUi {
         } else {
             NSColor::labelColor()
         };
-        let launching = matches!(self.content, Some(RowContent::Application(_)));
+        let launching = matches!(
+            self.content,
+            Some(RowContent::Application(_) | RowContent::Command(_))
+        );
         let detail = if launching && !selected {
             NSColor::secondaryLabelColor()
         } else {
@@ -180,6 +186,7 @@ struct AppState {
     windows: RefCell<Vec<WindowInfo>>,
     matches: RefCell<Vec<usize>>,
     launch_matches: RefCell<Vec<usize>>,
+    command_matches: RefCell<Vec<CommandId>>,
     selected: Cell<usize>,
     previous_pid: Cell<i32>,
     previous_window: Cell<Option<u64>>,
@@ -416,7 +423,8 @@ define_class!(
     unsafe impl NSWindowDelegate for Delegate {
         #[unsafe(method(windowDidBecomeKey:))]
         fn became_key(&self, notification: &NSNotification) {
-            if notification.object().and_then(|object| object.downcast::<SearchPanel>().ok()).is_none() { return; }
+            let Some(panel) = notification.object().and_then(|object| object.downcast::<SearchPanel>().ok()) else { return; };
+            self.remember_panel_display(&panel);
             self.ivars().check_panel_focus.set(false);
             self.focus_search();
         }
@@ -681,6 +689,7 @@ define_class!(
         }
         #[unsafe(method(pickWindow:))]
         fn pick(&self, sender: &NSButton) {
+            if let Some(window) = sender.window() { self.remember_panel_display(&window); }
             self.ivars().selected.set(sender.tag() as usize);
             self.render();
             self.activate_selected();
@@ -2393,6 +2402,14 @@ impl Delegate {
             aliases.filter_order(&query, &matched, &windows)
         };
         let matched = alias_matches.unwrap_or(matched);
+        let command_matches = if self.ivars().mode.get() == Some(PanelMode::Search)
+            && !self.ivars().demo.get()
+            && scope_pid.is_none()
+        {
+            matching_commands(&query)
+        } else {
+            Vec::new()
+        };
         let apps = self.ivars().installed_apps.borrow();
         let launch_matches = if self.ivars().mode.get() == Some(PanelMode::Search)
             && !self.ivars().demo.get()
@@ -2416,20 +2433,27 @@ impl Delegate {
         };
         drop(aliases);
         let selected = match selected_id {
-            Some(SelectedResult::Window(id)) => {
-                matched.iter().position(|&index| windows[index].id == id)
+            Some(SelectedResult::Command(id)) => {
+                command_matches.iter().position(|item| *item == id)
             }
+            Some(SelectedResult::Window(id)) => matched
+                .iter()
+                .position(|&index| windows[index].id == id)
+                .map(|index| command_matches.len() + index),
             Some(SelectedResult::Application(id)) => launch_matches
                 .iter()
                 .position(|&index| apps[index].target.bundle_id == id)
-                .map(|index| matched.len() + index)
+                .map(|index| command_matches.len() + matched.len() + index)
                 .or_else(|| {
                     let identities = self.ivars().identities.borrow();
-                    matched.iter().position(|&index| {
-                        identities
-                            .get(&windows[index].pid)
-                            .is_some_and(|app| app.id == id)
-                    })
+                    matched
+                        .iter()
+                        .position(|&index| {
+                            identities
+                                .get(&windows[index].pid)
+                                .is_some_and(|app| app.id == id)
+                        })
+                        .map(|index| command_matches.len() + index)
                 }),
             None => None,
         }
@@ -2446,6 +2470,7 @@ impl Delegate {
         drop(windows);
         self.ivars().matches.replace(matched);
         self.ivars().launch_matches.replace(launch_matches);
+        self.ivars().command_matches.replace(command_matches);
         self.ivars().selected.set(selected);
         self.render();
     }
@@ -2498,8 +2523,9 @@ impl Delegate {
         let windows = state.windows.borrow();
         let matched = state.matches.borrow();
         let launch_matches = state.launch_matches.borrow();
+        let command_matches = state.command_matches.borrow();
         let apps = state.installed_apps.borrow();
-        let count = matched.len() + launch_matches.len();
+        let count = command_matches.len() + matched.len() + launch_matches.len();
         let trusted = accessibility::is_trusted();
         let demo = state.demo.get();
         let switching = state.mode.get() == Some(PanelMode::Switch);
@@ -2671,7 +2697,10 @@ impl Delegate {
             } else {
                 (
                     if !switching && !state.query.borrow().trim().is_empty() {
-                        tr!("没有匹配的窗口或应用", "No matching windows or apps")
+                        tr!(
+                            "没有匹配的窗口、应用或命令",
+                            "No matching windows, apps, or commands"
+                        )
                     } else {
                         tr!("没有匹配的窗口", "No matching windows")
                     },
@@ -2701,12 +2730,14 @@ impl Delegate {
             ui.empty_labels.replace(vec![heading, detail]);
         }
         for position in 0..count {
-            let content = if let Some(&index) = matched.get(position) {
+            let content = if let Some(&command) = command_matches.get(position) {
+                RowContent::Command(command)
+            } else if let Some(&index) = matched.get(position - command_matches.len()) {
                 let item = &windows[index];
                 RowContent::Window(item.clone(), aliases.for_window(item.id).map(str::to_owned))
             } else {
                 RowContent::Application(
-                    apps[launch_matches[position - matched.len()]]
+                    apps[launch_matches[position - command_matches.len() - matched.len()]]
                         .target
                         .clone(),
                 )
@@ -2718,6 +2749,25 @@ impl Delegate {
             let row = &mut rows[position];
             if row.content.as_ref() != Some(&content) {
                 let tooltip = match &content {
+                    RowContent::Command(id) => {
+                        let command = id.definition();
+                        set_label(&row.title, command.title());
+                        set_label(&row.app, command.name);
+                        set_label(&row.alias, ">_");
+                        row.icon.setImage(
+                            NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                                &NSString::from_str(command.symbol),
+                                Some(&NSString::from_str(command.category())),
+                            )
+                            .as_deref(),
+                        );
+                        format!(
+                            "{} — {} · {}",
+                            command.name,
+                            command.title(),
+                            command.category()
+                        )
+                    }
                     RowContent::Window(item, alias) => {
                         let title = if item.title.trim().is_empty() {
                             &item.app
@@ -2795,6 +2845,12 @@ impl Delegate {
                 "{} 项 · 字母定位 · ↑↓ 选择 · Space 搜索 · Esc 取消",
                 "{} items · Type alias · ↑↓ select · Space search · Esc cancel",
                 matched.len()
+            )
+        } else if !command_matches.is_empty() {
+            trf!(
+                "{} 项 · ↑↓ 选择 · ↵ 执行 / 打开 · Esc 取消",
+                "{} items · ↑↓ select · ↵ run / open · Esc cancel",
+                count
             )
         } else if !launch_matches.is_empty() {
             trf!(
@@ -3033,6 +3089,10 @@ impl Delegate {
             tap.finish(self.ivars().session.get());
         }
         self.ivars().switch_selection.replace(None);
+        if let Some(command) = self.selected_command() {
+            self.execute_command(command);
+            return;
+        }
         if let Some(application) = self.selected_application() {
             self.launch_application(&application, LaunchOrigin::Search);
             return;
@@ -3171,12 +3231,54 @@ impl Delegate {
         }
     }
 
+    fn selected_command(&self) -> Option<CommandId> {
+        self.ivars()
+            .command_matches
+            .borrow()
+            .get(self.ivars().selected.get())
+            .copied()
+    }
+
+    fn remember_panel_display(&self, window: &NSWindow) {
+        if let Some(ui) = self.panels().iter().find(|ui| {
+            let panel: &NSWindow = &ui.panel;
+            std::ptr::eq(panel, window)
+        }) {
+            self.ivars().keyboard_display.set(Some(ui.display_id));
+        }
+    }
+
+    fn execute_command(&self, command: CommandId) {
+        match command {
+            CommandId::ShowMenu => {
+                let Some(display) = self.ivars().keyboard_display.get() else {
+                    self.selection_failed(tr!(
+                        "找不到当前屏幕，请重新打开搜索。",
+                        "Display unavailable. Reopen search and try again."
+                    ));
+                    return;
+                };
+                match crate::menu_bar::Reveal::prepare(display, self.mtm()) {
+                    Ok(reveal) => {
+                        self.dismiss();
+                        reveal.show();
+                    }
+                    Err(error) => self.selection_failed(&error),
+                }
+            }
+        }
+    }
+
     fn selected_window(&self) -> Option<WindowInfo> {
         let state = self.ivars();
+        let index = state
+            .selected
+            .get()
+            .checked_sub(state.command_matches.borrow().len())?;
         state
             .matches
             .borrow()
-            .get(state.selected.get())
+            .get(index)
             .and_then(|&index| state.windows.borrow().get(index).cloned())
     }
 
@@ -3185,7 +3287,7 @@ impl Delegate {
         let index = state
             .selected
             .get()
-            .checked_sub(state.matches.borrow().len())?;
+            .checked_sub(state.command_matches.borrow().len() + state.matches.borrow().len())?;
         state.launch_matches.borrow().get(index).and_then(|&index| {
             state
                 .installed_apps
@@ -3196,6 +3298,9 @@ impl Delegate {
     }
 
     fn selected_result(&self) -> Option<SelectedResult> {
+        if let Some(command) = self.selected_command() {
+            return Some(SelectedResult::Command(command));
+        }
         self.selected_window()
             .map(|window| SelectedResult::Window(window.id))
             .or_else(|| {
@@ -3205,7 +3310,9 @@ impl Delegate {
     }
 
     fn match_count(&self) -> usize {
-        self.ivars().matches.borrow().len() + self.ivars().launch_matches.borrow().len()
+        self.ivars().command_matches.borrow().len()
+            + self.ivars().matches.borrow().len()
+            + self.ivars().launch_matches.borrow().len()
     }
 }
 

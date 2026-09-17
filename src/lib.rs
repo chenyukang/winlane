@@ -1,5 +1,6 @@
 pub mod aliases;
 pub mod app_catalog;
+pub mod commands;
 pub mod config;
 pub mod discovery;
 pub mod displays;

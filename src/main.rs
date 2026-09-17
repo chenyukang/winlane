@@ -17,6 +17,8 @@ mod installed_apps;
 #[cfg(target_os = "macos")]
 mod main_wake;
 #[cfg(target_os = "macos")]
+mod menu_bar;
+#[cfg(target_os = "macos")]
 mod settings;
 #[cfg(target_os = "macos")]
 mod shortcut_tap;

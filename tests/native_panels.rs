@@ -11,6 +11,28 @@ mod updater {
 mod main_wake;
 
 #[cfg(target_os = "macos")]
+mod menu_bar {
+    include!("../src/menu_bar.rs");
+
+    pub fn verify_reveal_positions() {
+        for (x, y, width, height) in [
+            (0.0, 0.0, 1728.0, 1117.0),
+            (-2560.0, 0.0, 2560.0, 1440.0),
+            (0.0, -1440.0, 2560.0, 1440.0),
+        ] {
+            let point = reveal_position(NSRect::new(
+                NSPoint::new(x, y),
+                objc2_foundation::NSSize::new(width, height),
+            ));
+            assert_eq!(point.x, x + width * 0.75);
+            assert_eq!(point.y, y + 1.0);
+            assert!(point.x > x && point.x < x + width);
+            assert!(point.y >= y && point.y < y + height);
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
 #[path = "../src/focus_observer.rs"]
 mod focus_observer;
 #[cfg(target_os = "macos")]
@@ -110,6 +132,7 @@ mod window_server;
 mod app {
     include!("../src/app.rs");
     include!("support/launch_search.rs");
+    include!("support/commands.rs");
 
     pub fn inspect_window_discovery(bundle: &str) {
         assert!(
@@ -289,6 +312,8 @@ mod app {
         crate::installed_apps::verify_catalog();
         verify_catalog_refresh(mtm);
         verify_launch_search(mtm);
+        verify_command_search(mtm);
+        crate::menu_bar::verify_reveal_positions();
         verify_typo_search(mtm);
         verify_shortcut_recency(mtm);
         verify_external_focus_history(mtm);
