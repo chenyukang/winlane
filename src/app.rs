@@ -18,7 +18,7 @@ use objc2_foundation::{
 use std::time::{Duration, Instant};
 use winlane::aliases::{AliasInput, AliasMatch, Aliases, AppIdentity};
 use winlane::app_catalog::{InstalledApp, matching_apps};
-use winlane::config::{ApplicationTarget, Config, visible_matches};
+use winlane::config::{ApplicationTarget, Config, DisplayDensity, visible_matches};
 use winlane::displays::{Display, Rect, placements};
 use winlane::search::WindowInfo;
 use winlane::shortcuts::{
@@ -36,7 +36,7 @@ use winlane::input_method::InputSession;
 
 const WIDTH: f64 = 700.0;
 const HEIGHT: f64 = 590.0;
-const ROW_HEIGHT: f64 = 28.0;
+const MODE_LABEL_SPACING: f64 = 28.0;
 const LIST_TOP: f64 = 526.0;
 const LIST_BOTTOM: f64 = 36.0;
 const LIST_WIDTH: f64 = WIDTH - 20.0;
@@ -277,8 +277,9 @@ define_class!(
                 path.fill();
             }
             if self.ivars().has_alias.get() {
+                let (width, height) = alias_badge_size(self.ivars().density.get());
                 let chip = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(
-                    rect(8.0, 4.0, 28.0, 18.0), 5.0, 5.0,
+                    rect(8.0, (self.bounds().size.height - height) / 2.0, width, height), 5.0, 5.0,
                 );
                 if selected {
                     NSColor::whiteColor().colorWithAlphaComponent(0.19).setFill();
@@ -325,6 +326,7 @@ define_class!(
 
 #[derive(Debug, Default)]
 struct RowAppearance {
+    density: Cell<DisplayDensity>,
     selected: Cell<bool>,
     hovered: Cell<bool>,
     has_alias: Cell<bool>,
@@ -1310,9 +1312,7 @@ impl Delegate {
             NSScrollView::alloc(mtm),
             rect(10.0, LIST_BOTTOM, LIST_WIDTH, LIST_TOP - LIST_BOTTOM),
         );
-        scroll.setHasVerticalScroller(true);
-        scroll.setScrollerStyle(NSScrollerStyle::Overlay);
-        scroll.setAutohidesScrollers(true);
+        scroll.setHasVerticalScroller(false);
         scroll.setDrawsBackground(false);
         scroll.setBorderType(NSBorderType::NoBorder);
         let list: Retained<ListView> = unsafe {
@@ -2504,6 +2504,8 @@ impl Delegate {
         let demo = state.demo.get();
         let switching = state.mode.get() == Some(PanelMode::Switch);
         let show_hints = state.config.borrow().show_usage_hints;
+        let density = state.config.borrow().display_density;
+        let row_height = row_height(density);
         let show_mode_label =
             switching && (show_hints || !state.alias_input.borrow().text().is_empty());
         let root = ui.panel.contentView().unwrap();
@@ -2511,7 +2513,7 @@ impl Delegate {
         let mut frame = ui.panel.frame();
         let chrome_height = frame.size.height - previous_height;
         let visible = ui.panel.screen().map(|screen| screen.visibleFrame());
-        let mut height = panel_height(count, switching, !trusted || demo, show_mode_label);
+        let mut height = panel_height(count, switching, !trusted || demo, show_mode_label, density);
         if let Some(visible) = visible {
             height = height.min((visible.size.height - chrome_height).max(1.0));
         }
@@ -2603,18 +2605,31 @@ impl Delegate {
         if ui.mode_label.frame() != mode_frame {
             ui.mode_label.setFrame(mode_frame);
         }
-        let list_bottom = list_bottom + if show_mode_label { ROW_HEIGHT } else { 0.0 };
+        let list_bottom = list_bottom
+            + if show_mode_label {
+                MODE_LABEL_SPACING
+            } else {
+                0.0
+            };
         let list_top = height - if switching { 36.0 } else { HEIGHT - LIST_TOP };
         let list_height = list_top - list_bottom;
         let scroll_frame = rect(10.0, list_bottom, LIST_WIDTH, list_height);
         if ui.scroll.frame() != scroll_frame {
             ui.scroll.setFrame(scroll_frame);
         }
-        let list_size = NSSize::new(LIST_WIDTH, (count as f64 * ROW_HEIGHT).max(list_height));
+        let list_size = NSSize::new(LIST_WIDTH, (count as f64 * row_height).max(list_height));
         if list.frame().size != list_size {
             list.setFrameSize(list_size);
         }
         let mut rows = ui.rows.borrow_mut();
+        if rows
+            .first()
+            .is_some_and(|row| row.button.ivars().density.get() != density)
+        {
+            for row in rows.drain(..) {
+                row.button.removeFromSuperview();
+            }
+        }
         for row in rows.iter_mut().skip(count) {
             if row.attached {
                 row.button.removeFromSuperview();
@@ -2698,7 +2713,7 @@ impl Delegate {
             };
             let selected = position == state.selected.get() && !unmatched_alias;
             if rows.len() <= position {
-                rows.push(self.create_row(position));
+                rows.push(self.create_row(position, density));
             }
             let row = &mut rows[position];
             if row.content.as_ref() != Some(&content) {
@@ -2803,18 +2818,21 @@ impl Delegate {
         ui.footer.setHidden(!show_hints && !has_error);
     }
 
-    fn create_row(&self, position: usize) -> RowUi {
+    fn create_row(&self, position: usize, density: DisplayDensity) -> RowUi {
         let mtm = self.mtm();
+        let normal = density == DisplayDensity::Normal;
+        let row_height = row_height(density);
         let frame = rect(
             2.0,
-            position as f64 * ROW_HEIGHT + 1.0,
+            position as f64 * row_height + 1.0,
             LIST_WIDTH - 4.0,
-            ROW_HEIGHT - 2.0,
+            row_height - 2.0,
         );
         // SAFETY: WindowRowButton inherits NSButton's designated frame initializer.
         let button: Retained<WindowRowButton> = unsafe {
             msg_send![super(WindowRowButton::alloc(mtm).set_ivars(RowAppearance::default())), initWithFrame: frame]
         };
+        button.ivars().density.set(density);
         button.setTitle(ns_string!(""));
         button.setBordered(false);
         button.setTag(position as isize);
@@ -2823,33 +2841,54 @@ impl Delegate {
             button.setTarget(Some(self));
             button.setAction(Some(sel!(pickWindow:)));
         }
-        let title = label("", 13.0, rect(222.0, 3.0, LIST_WIDTH - 236.0, 20.0), mtm);
-        let app = label("", 13.0, rect(42.0, 3.0, 142.0, 20.0), mtm);
-        app.setFont(Some(&NSFont::systemFontOfSize_weight(12.0, unsafe {
-            NSFontWeightMedium
-        })));
+        let (alias_width, _) = alias_badge_size(density);
+        let app_x = alias_width + 14.0;
+        let app_width = if normal { 156.0 } else { 142.0 };
+        let icon_x = app_x + app_width + 8.0;
+        let icon_size = if normal { 24.0 } else { 20.0 };
+        let title_x = icon_x + icon_size + 10.0;
+        let text_height = if normal { 24.0 } else { 20.0 };
+        let text_y = (frame.size.height - text_height) / 2.0;
+        let title = label(
+            "",
+            if normal { 15.0 } else { 13.0 },
+            rect(title_x, text_y, LIST_WIDTH - title_x - 14.0, text_height),
+            mtm,
+        );
+        let app = label("", 13.0, rect(app_x, text_y, app_width, text_height), mtm);
+        app.setFont(Some(&NSFont::systemFontOfSize_weight(
+            if normal { 14.0 } else { 12.0 },
+            unsafe { NSFontWeightMedium },
+        )));
         app.setAlignment(NSTextAlignment::Right);
         for field in [&title, &app] {
             field.setMaximumNumberOfLines(1);
             field.setLineBreakMode(NSLineBreakMode::ByTruncatingTail);
             button.addSubview(field);
         }
-        let alias = label("", 10.0, rect(8.0, 4.0, 28.0, 18.0), mtm);
+        let alias = label("", 10.0, NSRect::ZERO, mtm);
         alias.setAlignment(NSTextAlignment::Center);
         alias.setFont(Some(&NSFont::monospacedSystemFontOfSize_weight(
-            10.0,
+            if normal { 11.0 } else { 10.0 },
             unsafe { NSFontWeightSemibold },
         )));
         let alias_height = alias.intrinsicContentSize().height;
         alias.setFrame(rect(
             8.0,
             (frame.size.height - alias_height) / 2.0,
-            28.0,
+            alias_width,
             alias_height,
         ));
         button.addSubview(&alias);
-        let icon =
-            NSImageView::initWithFrame(NSImageView::alloc(mtm), rect(192.0, 3.0, 20.0, 20.0));
+        let icon = NSImageView::initWithFrame(
+            NSImageView::alloc(mtm),
+            rect(
+                icon_x,
+                (frame.size.height - icon_size) / 2.0,
+                icon_size,
+                icon_size,
+            ),
+        );
         icon.setImageScaling(NSImageScaling::ScaleProportionallyDown);
         button.addSubview(&icon);
         RowUi {
@@ -2896,11 +2935,11 @@ impl Delegate {
             .or_insert_with(|| {
                 let source =
                     NSWorkspace::sharedWorkspace().iconForFile(&NSString::from_str(&app.path));
-                let image = NSImage::initWithSize(NSImage::alloc(), NSSize::new(20.0, 20.0));
+                let image = NSImage::initWithSize(NSImage::alloc(), NSSize::new(24.0, 24.0));
                 #[allow(deprecated)]
                 {
                     image.lockFocus();
-                    source.drawInRect(rect(0.0, 0.0, 20.0, 20.0));
+                    source.drawInRect(rect(0.0, 0.0, 24.0, 24.0));
                     image.unlockFocus();
                 }
                 image
@@ -3250,14 +3289,38 @@ fn window_display_title<'a>(window: &'a WindowInfo, app_id: Option<&str>) -> Cow
 fn rect(x: f64, y: f64, width: f64, height: f64) -> NSRect {
     NSRect::new(NSPoint::new(x, y), NSSize::new(width, height))
 }
-fn panel_height(count: usize, switching: bool, extra_controls: bool, show_mode_label: bool) -> f64 {
+fn row_height(density: DisplayDensity) -> f64 {
+    match density {
+        DisplayDensity::Compact => 28.0,
+        DisplayDensity::Normal => 32.0,
+    }
+}
+
+fn alias_badge_size(density: DisplayDensity) -> (f64, f64) {
+    match density {
+        DisplayDensity::Compact => (28.0, 18.0),
+        DisplayDensity::Normal => (32.0, 22.0),
+    }
+}
+
+fn panel_height(
+    count: usize,
+    switching: bool,
+    extra_controls: bool,
+    show_mode_label: bool,
+    density: DisplayDensity,
+) -> f64 {
     let header = if switching { 36.0 } else { HEIGHT - LIST_TOP };
     let footer = if extra_controls { 64.0 } else { LIST_BOTTOM }
-        + if show_mode_label { ROW_HEIGHT } else { 0.0 };
+        + if show_mode_label {
+            MODE_LABEL_SPACING
+        } else {
+            0.0
+        };
     let content = if count == 0 {
         184.0
     } else {
-        count as f64 * ROW_HEIGHT + 8.0
+        count as f64 * row_height(density) + 8.0
     };
     (header + footer + content).clamp(280.0, HEIGHT)
 }

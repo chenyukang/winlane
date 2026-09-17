@@ -86,13 +86,15 @@ Open Settings from the menu bar or press **Command + ,** while using Winlane. Pr
 | Settings tab | What you can change |
 | --- | --- |
 | **Shortcuts** | Separate shortcuts for search and switching, plus fixed app shortcuts. |
-| **Appearance & Language** | System, light, or dark appearance; background opacity; language; a toggle for footer hints, refresh status, and the Settings button. |
+| **Appearance & Language** | System, light, or dark appearance; Compact or Normal display density; background opacity; language; a toggle for footer hints, refresh status, and the Settings button. |
 | **Input** | Keep the current input source, start searches in English or Chinese, or remember the last input source used in Winlane. |
 | **Window List** | Sorting, minimized windows, and apps to exclude. Recent sorting follows window focus, including mouse, Dock, and shortcut switches. |
 | **Aliases** | Fixed letters for apps or project windows matched by title. |
 | **Startup & Updates** | Launch at login, daily update checks, and Check for Updates. |
 
 Settings save automatically. Menus, switches, and sliders apply immediately; text fields save when you press Return or finish editing. Invalid values and conflicting shortcuts leave the last valid configuration in effect and show an error. Restore Defaults also applies immediately.
+
+**Normal** is the default, with larger text, icons, and taller rows in both search and switch modes. Choose **Compact** for the original, space-saving list. Panel height still follows the result count, with longer lists scrolling within the available space. Updates preserve your saved density choice.
 
 Language changes update the interface without a restart. By default, Winlane uses the first supported language in your macOS preferences, falling back to English.
 

@@ -43,6 +43,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
         for control in [
             &*settings.language,
             &*settings.appearance,
+            &*settings.density,
             &*settings.sort,
             &*settings.input_method,
         ] {
@@ -148,6 +149,16 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
         }
         settings.fill(&Config::default());
         assert_eq!(settings.input_method.indexOfSelectedItem(), 0);
+        assert_eq!(settings.density.indexOfSelectedItem(), 1);
+        assert_eq!(settings.density.itemTitleAtIndex(1).to_string(), match locale {
+            Locale::English => "Normal",
+            Locale::Chinese => "标准",
+        });
+        settings.density.selectItemAtIndex(1);
+        let normal = settings.candidate().unwrap();
+        assert_eq!(normal.display_density, DisplayDensity::Normal);
+        settings.fill(&Config::from_json(&normal.to_json().unwrap()).unwrap());
+        assert_eq!(settings.density.indexOfSelectedItem(), 1);
         settings.opacity_slider.setDoubleValue(67.4);
         settings.opacity_slider_changed();
         assert_eq!(settings.opacity_input.stringValue().to_string(), "67");
@@ -215,6 +226,11 @@ pub fn verify_autosave_controls(settings: &SettingsWindow, saved: impl Fn() -> C
     let send = |control: &NSControl| unsafe {
         assert!(control.sendAction_to(control.action(), control.target().as_deref()));
     };
+    for (index, density) in [(0, DisplayDensity::Compact), (1, DisplayDensity::Normal)] {
+        settings.density.selectItemAtIndex(index);
+        send(&settings.density);
+        assert_eq!(saved().display_density, density);
+    }
     settings.switch_delay.setStringValue(ns_string!("150"));
     send(&settings.switch_delay);
     assert_eq!(saved().switch_delay_ms, 150);

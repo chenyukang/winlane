@@ -1,5 +1,5 @@
 use winlane::config::{
-    Appearance, Config, KEYS, Shortcut, SortOrder, parse_excluded, visible_matches,
+    Appearance, Config, DisplayDensity, KEYS, Shortcut, SortOrder, parse_excluded, visible_matches,
 };
 use winlane::search::WindowInfo;
 
@@ -26,6 +26,7 @@ fn saved_preferences_round_trip_without_window_data() {
     let config = Config {
         sort: SortOrder::Title,
         appearance: Appearance::Dark,
+        display_density: DisplayDensity::Compact,
         excluded_apps: vec!["Safari".into()],
         ..Config::default()
     };
@@ -33,6 +34,10 @@ fn saved_preferences_round_trip_without_window_data() {
     assert_eq!(Config::from_json(&json).unwrap(), config);
     assert!(!json.contains("Zebra"));
     assert_eq!(Config::from_json("{}").unwrap(), Config::default());
+    assert_eq!(
+        Config::from_json("{}").unwrap().display_density,
+        DisplayDensity::Normal
+    );
     assert_eq!(Config::default().shortcut.display(), "⌃I");
     assert!(Config::default().switch_shortcut.is_command_tab());
 }

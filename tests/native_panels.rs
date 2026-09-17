@@ -295,6 +295,7 @@ mod app {
         verify_switch_delay(mtm);
         verify_project_rule_search(mtm);
         verify_adaptive_panels(mtm);
+        verify_display_density(mtm);
         verify_usage_hint_visibility(mtm);
         verify_app_name_search(mtm);
         verify_editor_window_titles(mtm);
@@ -718,6 +719,7 @@ mod app {
     fn verify_usage_hint_visibility(mtm: MainThreadMarker) {
         let delegate = Delegate::new(mtm);
         let state = delegate.ivars();
+        state.config.borrow_mut().display_density = DisplayDensity::Compact;
         state.demo.set(true);
         state.windows.replace(
             (0..10)
@@ -758,7 +760,7 @@ mod app {
                     assert_eq!(
                         root.bounds().size.height,
                         if mode == PanelMode::Switch {
-                            388.0 + if show_hints { ROW_HEIGHT } else { 0.0 }
+                            388.0 + if show_hints { MODE_LABEL_SPACING } else { 0.0 }
                         } else {
                             416.0
                         }
@@ -827,9 +829,116 @@ mod app {
         );
     }
 
+    fn verify_display_density(mtm: MainThreadMarker) {
+        let delegate = Delegate::new(mtm);
+        let state = delegate.ivars();
+        state.demo.set(true);
+        state.windows.replace(
+            (0..24)
+                .map(|id| WindowInfo {
+                    id,
+                    pid: -1,
+                    app: "Editor".into(),
+                    title: format!("Project {id}"),
+                    minimized: false,
+                })
+                .collect(),
+        );
+        delegate.sync_displays();
+        for mode in [PanelMode::Search, PanelMode::Switch] {
+            state.mode.set(Some(mode));
+            state.query.replace(String::new());
+            delegate.filter();
+            state.selected.set(23);
+            for (density, pitch, icon_size, font_size) in [
+                (DisplayDensity::Compact, 28.0, 20.0, 13.0),
+                (DisplayDensity::Normal, 32.0, 24.0, 15.0),
+                (DisplayDensity::Compact, 28.0, 20.0, 13.0),
+            ] {
+                state.config.borrow_mut().display_density = density;
+                delegate.render();
+                for ui in delegate.panels() {
+                    let rows = ui.rows.borrow();
+                    assert_eq!(
+                        rows[1].button.frame().origin.y - rows[0].button.frame().origin.y,
+                        pitch
+                    );
+                    assert_eq!(rows[0].icon.frame().size.width, icon_size);
+                    assert_eq!(rows[0].title.font().unwrap().pointSize(), font_size);
+                    for row in rows.iter() {
+                        let center = row.button.bounds().size.height / 2.0;
+                        for view in [&*row.alias as &NSView, &*row.icon as &NSView] {
+                            let frame = view.frame();
+                            assert!(
+                                (frame.origin.y + frame.size.height / 2.0 - center).abs() < 0.01
+                            );
+                        }
+                        for child in row.button.subviews() {
+                            let frame = child.frame();
+                            assert!(frame.origin.y >= 0.0);
+                            assert!(
+                                frame.origin.y + frame.size.height
+                                    <= row.button.bounds().size.height
+                            );
+                            assert!(
+                                frame.origin.x + frame.size.width <= row.button.bounds().size.width
+                            );
+                        }
+                    }
+                    let selected = rows[23].button.frame();
+                    let viewport = ui.scroll.contentView().bounds();
+                    assert!(selected.origin.y >= viewport.origin.y);
+                    assert!(
+                        selected.origin.y + selected.size.height
+                            <= viewport.origin.y + viewport.size.height
+                    );
+                    assert!(rows[23].button.isAccessibilitySelected());
+                    assert!(ui.panel.contentView().unwrap().bounds().size.height <= HEIGHT);
+                    assert!(!ui.panel.isVisible());
+                }
+                let before: Vec<_> = delegate
+                    .panels()
+                    .iter()
+                    .map(|ui| ui.list.subviews())
+                    .collect();
+                delegate.render();
+                for (ui, rows) in delegate.panels().iter().zip(before) {
+                    assert_eq!(
+                        ui.list.subviews(),
+                        rows,
+                        "unchanged density must reuse rows"
+                    );
+                }
+            }
+            let mut heights = Vec::new();
+            state.query.replace("Project 1".into());
+            for density in [DisplayDensity::Compact, DisplayDensity::Normal] {
+                state.config.borrow_mut().display_density = density;
+                delegate.filter();
+                heights.push(
+                    delegate.panels()[0]
+                        .panel
+                        .contentView()
+                        .unwrap()
+                        .bounds()
+                        .size
+                        .height,
+                );
+            }
+            assert!(
+                heights[1] > heights[0],
+                "normal rows must expand the adaptive panel"
+            );
+        }
+        println!(
+            "Density checks passed: live Compact/Normal changes, centered aliases/icons, scrolling, selection, row reuse and all displays."
+        );
+    }
+
     fn verify_adaptive_panels(mtm: MainThreadMarker) {
         let delegate = Delegate::new(mtm);
         let state = delegate.ivars();
+        state.config.borrow_mut().display_density = DisplayDensity::Compact;
         state.demo.set(true);
         for mode in [PanelMode::Search, PanelMode::Switch] {
             state.mode.set(Some(mode));
@@ -1349,31 +1458,38 @@ mod app {
                 ("dark", NSAppearanceNameDarkAqua),
             ]
         };
-        for (name, appearance) in appearances {
-            ui.panel
-                .setAppearance(NSAppearance::appearanceNamed(appearance).as_deref());
-            for (mode_name, mode) in [("search", PanelMode::Search), ("switch", PanelMode::Switch)]
-            {
-                state.mode.set(Some(mode));
-                delegate.filter();
-                delegate.move_selection(1);
-                let root = ui.panel.contentView().unwrap();
-                root.layoutSubtreeIfNeeded();
-                let bitmap = root
-                    .bitmapImageRepForCachingDisplayInRect(root.bounds())
+        for (density_name, density) in [
+            ("compact", DisplayDensity::Compact),
+            ("normal", DisplayDensity::Normal),
+        ] {
+            state.config.borrow_mut().display_density = density;
+            for (name, appearance) in &appearances {
+                ui.panel
+                    .setAppearance(NSAppearance::appearanceNamed(appearance).as_deref());
+                for (mode_name, mode) in
+                    [("search", PanelMode::Search), ("switch", PanelMode::Switch)]
+                {
+                    state.mode.set(Some(mode));
+                    delegate.filter();
+                    delegate.move_selection(1);
+                    let root = ui.panel.contentView().unwrap();
+                    root.layoutSubtreeIfNeeded();
+                    let bitmap = root
+                        .bitmapImageRepForCachingDisplayInRect(root.bounds())
+                        .unwrap();
+                    root.cacheDisplayInRect_toBitmapImageRep(root.bounds(), &bitmap);
+                    // SAFETY: The empty dictionary does not supply any typed image properties.
+                    let png = unsafe {
+                        bitmap.representationUsingType_properties(
+                            NSBitmapImageFileType::PNG,
+                            &objc2_foundation::NSDictionary::new(),
+                        )
+                    }
                     .unwrap();
-                root.cacheDisplayInRect_toBitmapImageRep(root.bounds(), &bitmap);
-                // SAFETY: The empty dictionary does not supply any typed image properties.
-                let png = unsafe {
-                    bitmap.representationUsingType_properties(
-                        NSBitmapImageFileType::PNG,
-                        &objc2_foundation::NSDictionary::new(),
-                    )
+                    let path = format!("{directory}/{density_name}-{name}-{mode_name}.png");
+                    assert!(png.writeToFile_atomically(&NSString::from_str(&path), true));
+                    assert!(!ui.panel.isVisible());
                 }
-                .unwrap();
-                let path = format!("{directory}/{name}-{mode_name}.png");
-                assert!(png.writeToFile_atomically(&NSString::from_str(&path), true));
-                assert!(!ui.panel.isVisible());
             }
         }
     }

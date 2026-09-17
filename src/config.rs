@@ -259,6 +259,13 @@ pub enum Appearance {
     Dark,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DisplayDensity {
+    Compact,
+    #[default]
+    Normal,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApplicationTarget {
     pub bundle_id: String,
@@ -309,6 +316,7 @@ pub struct Config {
     pub alias_rules: Vec<AliasRule>,
     pub sort: SortOrder,
     pub appearance: Appearance,
+    pub display_density: DisplayDensity,
     pub background_opacity: u8,
     pub show_usage_hints: bool,
     pub switch_delay_ms: u16,
@@ -327,6 +335,7 @@ impl Default for Config {
             alias_rules: Vec::new(),
             sort: SortOrder::Recent,
             appearance: Appearance::System,
+            display_density: DisplayDensity::default(),
             background_opacity: 100,
             show_usage_hints: true,
             switch_delay_ms: 100,

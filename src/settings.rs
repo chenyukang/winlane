@@ -10,8 +10,8 @@ use objc2_service_management::{SMAppService, SMAppServiceStatus};
 use std::cell::RefCell;
 use winlane::aliases::Aliases;
 use winlane::config::{
-    AliasRule, AppShortcut, Appearance, Config, KEYS, Shortcut, SortOrder, key_label,
-    parse_excluded,
+    AliasRule, AppShortcut, Appearance, Config, DisplayDensity, KEYS, Shortcut, SortOrder,
+    key_label, parse_excluded,
 };
 use winlane::i18n::{self, Language};
 use winlane::input_method::InputMethod;
@@ -224,6 +224,7 @@ pub struct SettingsWindow {
     input_method: Retained<NSPopUpButton>,
     sort: Retained<NSPopUpButton>,
     appearance: Retained<NSPopUpButton>,
+    density: Retained<NSPopUpButton>,
     opacity_slider: Retained<NSSlider>,
     opacity_input: Retained<NSTextField>,
     switch_delay: Retained<NSTextField>,
@@ -361,7 +362,7 @@ impl SettingsWindow {
         appearance_tab.addSubview(&label(
             tr!("外观", "Appearance"),
             14.0,
-            rect(30.0, 235.0, 215.0, 25.0),
+            rect(30.0, 245.0, 215.0, 25.0),
             mtm,
         ));
         let appearance = popup(
@@ -370,27 +371,43 @@ impl SettingsWindow {
                 tr!("浅色", "Light"),
                 tr!("深色", "Dark"),
             ],
-            rect(260.0, 232.0, 370.0, 28.0),
+            rect(260.0, 242.0, 370.0, 28.0),
             mtm,
         );
         appearance_tab.addSubview(&appearance);
+        appearance_tab.addSubview(&label(
+            tr!("显示密度", "Display density"),
+            14.0,
+            rect(30.0, 199.0, 215.0, 25.0),
+            mtm,
+        ));
+        let density = popup(
+            &[tr!("紧凑", "Compact"), tr!("标准", "Normal")],
+            rect(260.0, 196.0, 370.0, 28.0),
+            mtm,
+        );
+        density.setAccessibilityLabel(Some(&NSString::from_str(tr!(
+            "显示密度",
+            "Display density"
+        ))));
+        appearance_tab.addSubview(&density);
         appearance_tab.addSubview(&hint(
             tr!(
-                "用于搜索、切换面板和设置窗口。",
-                "Applies to the search panel, switch panel, and settings."
+                "标准模式使用更大的文字、图标和行距，适用于搜索和切换面板。",
+                "Normal uses larger text, icons, and rows in search and switch panels."
             ),
-            rect(30.0, 195.0, 600.0, 32.0),
+            rect(30.0, 158.0, 600.0, 30.0),
             mtm,
         ));
 
         appearance_tab.addSubview(&label(
             tr!("背景不透明度", "Background opacity"),
             14.0,
-            rect(30.0, 153.0, 215.0, 25.0),
+            rect(30.0, 119.0, 215.0, 25.0),
             mtm,
         ));
         let opacity_slider =
-            NSSlider::initWithFrame(NSSlider::alloc(mtm), rect(260.0, 154.0, 275.0, 24.0));
+            NSSlider::initWithFrame(NSSlider::alloc(mtm), rect(260.0, 120.0, 275.0, 24.0));
         opacity_slider.setMinValue(0.0);
         opacity_slider.setMaxValue(100.0);
         opacity_slider.setContinuous(true);
@@ -399,7 +416,7 @@ impl SettingsWindow {
             "Background opacity"
         ))));
         let opacity_input =
-            NSTextField::initWithFrame(NSTextField::alloc(mtm), rect(550.0, 151.0, 58.0, 26.0));
+            NSTextField::initWithFrame(NSTextField::alloc(mtm), rect(550.0, 117.0, 58.0, 26.0));
         opacity_input.setAlignment(NSTextAlignment::Right);
         opacity_input.setAccessibilityLabel(Some(&NSString::from_str(tr!(
             "不透明度百分比",
@@ -414,7 +431,7 @@ impl SettingsWindow {
         }
         appearance_tab.addSubview(&opacity_slider);
         appearance_tab.addSubview(&opacity_input);
-        appearance_tab.addSubview(&label("%", 13.0, rect(613.0, 153.0, 18.0, 24.0), mtm));
+        appearance_tab.addSubview(&label("%", 13.0, rect(613.0, 119.0, 18.0, 24.0), mtm));
         let opacity_hint = NSTextField::wrappingLabelWithString(
             &NSString::from_str(tr!(
                 "100% 保持当前效果；数值越低，背景越透明。文字和图标保持清晰，更改自动保存。",
@@ -424,15 +441,15 @@ impl SettingsWindow {
         );
         opacity_hint.setFont(Some(&NSFont::systemFontOfSize(12.0)));
         opacity_hint.setTextColor(Some(&NSColor::secondaryLabelColor()));
-        opacity_hint.setFrame(rect(30.0, 108.0, 600.0, 36.0));
+        opacity_hint.setFrame(rect(30.0, 74.0, 600.0, 36.0));
         opacity_hint.setMaximumNumberOfLines(2);
         appearance_tab.addSubview(&opacity_hint);
-        let sample = NSView::initWithFrame(NSView::alloc(mtm), rect(30.0, 52.0, 600.0, 44.0));
+        let sample = NSView::initWithFrame(NSView::alloc(mtm), rect(30.0, 38.0, 600.0, 28.0));
         for (x, color) in [
             (0.0, NSColor::systemIndigoColor()),
             (300.0, NSColor::systemTealColor()),
         ] {
-            let tile = NSBox::initWithFrame(NSBox::alloc(mtm), rect(x, 0.0, 300.0, 44.0));
+            let tile = NSBox::initWithFrame(NSBox::alloc(mtm), rect(x, 0.0, 300.0, 28.0));
             tile.setBoxType(NSBoxType::Custom);
             tile.setBorderWidth(0.0);
             tile.setFillColor(&color.colorWithAlphaComponent(0.35));
@@ -447,7 +464,7 @@ impl SettingsWindow {
                 "Preview · Search and switch panels"
             ),
             14.0,
-            rect(18.0, 11.0, 565.0, 23.0),
+            rect(18.0, 3.0, 565.0, 23.0),
             mtm,
         ));
         appearance_tab.addSubview(&sample);
@@ -458,7 +475,7 @@ impl SettingsWindow {
             ),
             mtm,
         );
-        usage_hints.setFrame(rect(30.0, 16.0, 600.0, 26.0));
+        usage_hints.setFrame(rect(30.0, 2.0, 600.0, 26.0));
         set_action(&usage_hints, target, sel!(settingsChanged:));
         appearance_tab.addSubview(&usage_hints);
 
@@ -563,7 +580,7 @@ impl SettingsWindow {
             .setSendsActionOnEndEditing(true);
         search_shortcut.on_change(target, sel!(settingsChanged:));
         switch_shortcut.on_change(target, sel!(settingsChanged:));
-        for control in [&*language, &*appearance, &*sort, &*input_method] {
+        for control in [&*language, &*appearance, &*density, &*sort, &*input_method] {
             set_action(control, target, sel!(settingsChanged:));
         }
         set_action(&minimized, target, sel!(settingsChanged:));
@@ -661,6 +678,7 @@ impl SettingsWindow {
             switch_shortcut,
             sort,
             appearance,
+            density,
             opacity_slider,
             opacity_input,
             switch_delay,
@@ -709,6 +727,11 @@ impl SettingsWindow {
             Appearance::Light => 1,
             Appearance::Dark => 2,
         });
+        self.density
+            .selectItemAtIndex(match config.display_density {
+                DisplayDensity::Compact => 0,
+                DisplayDensity::Normal => 1,
+            });
         self.language.selectItemAtIndex(match config.language {
             Language::System => 0,
             Language::Chinese => 1,
@@ -739,6 +762,10 @@ impl SettingsWindow {
                 1 => Appearance::Light,
                 2 => Appearance::Dark,
                 _ => Appearance::System,
+            },
+            display_density: match self.density.indexOfSelectedItem() {
+                0 => DisplayDensity::Compact,
+                _ => DisplayDensity::Normal,
             },
             background_opacity: self.read_opacity()?,
             show_usage_hints: self.usage_hints.state() == NSControlStateValueOn,
