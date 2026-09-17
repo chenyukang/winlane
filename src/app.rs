@@ -2840,6 +2840,13 @@ impl Delegate {
             10.0,
             unsafe { NSFontWeightSemibold },
         )));
+        let alias_height = alias.intrinsicContentSize().height;
+        alias.setFrame(rect(
+            8.0,
+            (frame.size.height - alias_height) / 2.0,
+            28.0,
+            alias_height,
+        ));
         button.addSubview(&alias);
         let icon =
             NSImageView::initWithFrame(NSImageView::alloc(mtm), rect(192.0, 3.0, 20.0, 20.0));
