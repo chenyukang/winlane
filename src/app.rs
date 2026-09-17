@@ -1291,6 +1291,7 @@ impl Delegate {
             rect((WIDTH - input_width) / 2.0, 538.0, input_width, 34.0),
         );
         input.setFont(Some(&NSFont::systemFontOfSize(15.0)));
+        input.setFocusRingType(NSFocusRingType::None);
         input.setPlaceholderString(Some(ns_string!("")));
         input.setSendsSearchStringImmediately(true);
         input.setMaximumRecents(0);
