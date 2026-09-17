@@ -3,6 +3,7 @@ name: Release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -33,17 +34,20 @@ jobs:
         with:
           toolchain: 1.95.0
           targets: aarch64-apple-darwin, x86_64-apple-darwin
-      - name: Validate release tag
+      - name: Validate release source
+        id: version
         env:
           TAG: ${{ github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           version=$(sed -n 's/^version = "\([^"]*\)".*/\1/p' Cargo.toml | head -n 1)
-          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ && "$TAG" == "v$version" ]] || {
+          if [[ "$EVENT_NAME" == push ]] && ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ && "$TAG" == "v$version" ]]; then
             echo 'The tag must match the Cargo.toml version (vMAJOR.MINOR.PATCH).' >&2
             exit 1
-          }
+          fi
           git merge-base --is-ancestor HEAD origin/master
           cargo metadata --locked --no-deps --format-version 1 > "$RUNNER_TEMP/metadata.json"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
       - name: Check signing configuration
         id: signing
         env:
@@ -53,24 +57,13 @@ jobs:
           NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
           NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
           NOTARY_ISSUER: ${{ secrets.MACOS_NOTARY_ISSUER }}
+          REQUIRE_SIGNING: ${{ vars.WINLANE_REQUIRE_SIGNING }}
           REQUIRE_NOTARIZATION: ${{ vars.WINLANE_REQUIRE_NOTARIZATION }}
-        run: |
-          python3 - <<'PY'
-          import os
-          keys = ('CERT_P12', 'CERT_PASSWORD', 'SIGN_IDENTITY', 'NOTARY_KEY', 'NOTARY_KEY_ID', 'NOTARY_ISSUER')
-          present = [bool(os.environ.get(key)) for key in keys]
-          if any(present) and not all(present):
-              raise SystemExit('Incomplete signing configuration; missing: ' + ', '.join(key for key in keys if not os.environ.get(key)))
-          if os.environ.get('REQUIRE_NOTARIZATION', '').lower() == 'true' and not all(present):
-              raise SystemExit('This repository requires notarization; configure all six MACOS_* secrets.')
-          mode = 'notarized' if all(present) else 'ad-hoc'
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-              output.write(f'mode={mode}\n')
-          print(f'Release signing: {mode}')
-          PY
+        run: python3 scripts/release_signing.py
       - name: Import distribution credentials
-        if: steps.signing.outputs.mode == 'notarized'
+        if: steps.signing.outputs.mode != 'ad-hoc'
         env:
+          SIGNING_MODE: ${{ steps.signing.outputs.mode }}
           CERT_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
           CERT_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
           NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
@@ -84,7 +77,10 @@ jobs:
           python3 - <<'PY'
           import base64, os, pathlib
           directory = pathlib.Path(os.environ['SIGNING_DIR'])
-          for variable, filename in [('CERT_P12', 'certificate.p12'), ('NOTARY_KEY', 'notary.p8')]:
+          files = [('CERT_P12', 'certificate.p12')]
+          if os.environ['SIGNING_MODE'] == 'notarized':
+              files.append(('NOTARY_KEY', 'notary.p8'))
+          for variable, filename in files:
               (directory / filename).write_bytes(base64.b64decode(os.environ[variable], validate=True))
           PY
           keychain="$signing_dir/release.keychain-db"
@@ -95,25 +91,33 @@ jobs:
           security unlock-keychain -p "$password" "$keychain"
           security import "$signing_dir/certificate.p12" -k "$keychain" -P "$CERT_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" >/dev/null
-          xcrun notarytool store-credentials winlane-release --key "$signing_dir/notary.p8" \
-            --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" --keychain "$keychain"
-          rm "$signing_dir/certificate.p12" "$signing_dir/notary.p8"
+          if [[ "$SIGNING_MODE" == notarized ]]; then
+            xcrun notarytool store-credentials winlane-release --key "$signing_dir/notary.p8" \
+              --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" --keychain "$keychain"
+            rm "$signing_dir/notary.p8"
+            echo 'WINLANE_NOTARY_PROFILE=winlane-release' >> "$GITHUB_ENV"
+          fi
+          rm "$signing_dir/certificate.p12"
           echo "WINLANE_SIGNING_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
-          echo 'WINLANE_NOTARY_PROFILE=winlane-release' >> "$GITHUB_ENV"
       - name: Build and package both architectures
         env:
           SIGNING_MODE: ${{ steps.signing.outputs.mode }}
           WINLANE_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
         run: |
-          signing_flag=--adhoc
-          if [[ "$SIGNING_MODE" == notarized ]]; then signing_flag=--distribution; fi
+          signing_args=()
+          case "$SIGNING_MODE" in
+            ad-hoc) signing_args=(--adhoc) ;;
+            certificate) ;;
+            notarized) signing_args=(--distribution) ;;
+            *) echo 'Unexpected signing mode.' >&2; exit 1 ;;
+          esac
           for target in aarch64-apple-darwin x86_64-apple-darwin; do
-            ./scripts/build-app.sh "$signing_flag" --target "$target" --output-dir "dist/$target"
+            ./scripts/build-app.sh "${signing_args[@]}" --target "$target" --output-dir "dist/$target"
             ./scripts/package-app.sh "dist/$target/Winlane.app" dist/release
           done
       - name: Write checksums and build information
         env:
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ steps.version.outputs.tag }}
           SIGNING_MODE: ${{ steps.signing.outputs.mode }}
         run: |
           python3 - <<'PY'
@@ -140,6 +144,7 @@ jobs:
           PY
           (cd dist/release && shasum -a 256 -c SHA256SUMS)
       - name: Publish release
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -158,6 +163,11 @@ jobs:
           NOTES
           if [[ "$SIGNING_MODE" == notarized ]]; then
             printf '\nThese packages are signed with Developer ID and notarized by Apple.\n' >> "$notes"
+          elif [[ "$SIGNING_MODE" == certificate ]]; then
+            cat >> "$notes" <<'NOTES'
+
+          **These packages use a persistent signing certificate and are not notarized by Apple.** macOS may block the first launch. After verifying the download, use System Settings → Privacy & Security → Open Anyway. Upgrading from an older ad hoc build may require granting Accessibility permission once more; subsequent updates keep the same signing identity. Keep the same installation location.
+          NOTES
           else
             cat >> "$notes" <<'NOTES'
 
@@ -167,6 +177,15 @@ jobs:
           gh release create "$TAG" dist/release/* --verify-tag --draft \
             --title "Winlane ${TAG#v}" --notes-file "$notes" --generate-notes
           gh release edit "$TAG" --draft=false --latest
+      - name: Upload verification packages
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Winlane-signing-verification
+          path: dist/release/*
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
       - name: Remove distribution credentials
         if: always()
         run: |

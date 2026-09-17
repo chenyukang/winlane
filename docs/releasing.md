@@ -37,17 +37,34 @@ build-info.json
 
 A release with an existing tag is never overwritten. If an upload fails and leaves an incomplete draft, inspect and remove that draft before rerunning the workflow. A published version should be fixed with a new version and tag. Repository visibility also controls access to releases and Actions artifacts: private repositories do not provide public download links.
 
+To verify signing credentials without publishing a version, run the **Release** workflow manually on `master`. It runs the checks and packages both architectures, then uploads `Winlane-signing-verification` as a three-day Actions artifact. Only a tag push publishes a GitHub release.
+
 ## Signing and notarization
 
-Without distribution credentials, releases use **ad hoc signing**. The release notes state that they are not Apple-notarized, explain macOS's first-launch approval, and note that upgrades can require Accessibility authorization again. No developer certificate is needed for this mode.
+The release workflow supports three modes: a persistent certificate without notarization, Developer ID signing with notarization, and ad hoc signing for repositories without credentials. Partial credentials always fail the release instead of falling back to another mode.
 
-For notarized releases, configure all six repository Actions secrets:
+### Persistent signing without an Apple account
+
+Create one self-signed **Code Signing** identity in Keychain Access, as described in [the development guide](development.md#development-signing). Keep reusing that certificate and private key. Export the identity as a password-protected `.p12`, then configure these repository Actions secrets:
 
 | Secret | Value |
 | --- | --- |
-| `MACOS_CERTIFICATE_P12` | Base64-encoded `.p12` containing a **Developer ID Application** certificate and its private key. |
+| `MACOS_CERTIFICATE_P12` | Base64-encoded `.p12` containing the certificate and its private key. |
 | `MACOS_CERTIFICATE_PASSWORD` | Password protecting the `.p12`. |
-| `MACOS_SIGNING_IDENTITY` | Exact Developer ID Application certificate name or SHA-1 fingerprint. |
+| `MACOS_SIGNING_IDENTITY` | Certificate SHA-1 fingerprint (recommended) or exact certificate name. |
+
+Set the repository Actions variable **`WINLANE_REQUIRE_SIGNING=true`** so removing all signing secrets cannot silently produce an ad hoc release. Leave the `MACOS_NOTARY_*` secrets unset for this mode. The workflow imports the identity into a temporary keychain, signs both app bundles, and verifies the packaged signatures without contacting Apple's notary service. `build-info.json` records this mode as `certificate`.
+
+Keep an encrypted backup of the identity and its export password outside Git. Creating a new certificate with the same name does not preserve the old signing identity. You can reuse the existing local `Windowlane Development` identity when local and CI builds should share Accessibility authorization; its private key will then also be available to this repository's release job.
+
+These builds are not Apple-notarized and can still require first-launch approval in **System Settings → Privacy & Security → Open Anyway**. Switching from ad hoc builds or another certificate may require granting Accessibility permission once more. Subsequent updates signed with the same identity should retain that permission; keep the bundle identifier and installation location unchanged.
+
+### Developer ID signing and Apple notarization
+
+Use a **Developer ID Application** identity for the three certificate secrets above, and also configure:
+
+| Secret | Value |
+| --- | --- |
 | `MACOS_NOTARY_KEY` | Base64-encoded App Store Connect team API `.p8` key. |
 | `MACOS_NOTARY_KEY_ID` | API key ID. |
 | `MACOS_NOTARY_ISSUER` | API issuer ID. |
@@ -56,11 +73,15 @@ Encode files with `base64 -i certificate.p12 | tr -d '\n'` and the equivalent co
 
 When all six secrets are present, the workflow imports them into a temporary keychain on the release runner, signs with hardened runtime and a timestamp, submits each app and DMG to Apple, and staples the accepted tickets. The ZIP is created after stapling its app. The temporary keychain and credential files are removed in a final cleanup step. An incomplete configuration or a signing/notarization failure stops the release; it does not fall back to ad hoc signing.
 
-Once notarized releases are enabled, also set the repository Actions variable **`WINLANE_REQUIRE_NOTARIZATION=true`**. This prevents an accidentally removed set of secrets from producing an ad hoc release.
+Once notarized releases are enabled, also set the repository Actions variable **`WINLANE_REQUIRE_NOTARIZATION=true`**. This prevents missing notary credentials from producing an unnotarized release.
 
-The local **Windowlane Development** certificate is for development only. Do not upload it as a distribution credential. The bundle identifier remains `app.windowlane.desktop`, so local development keeps its existing identity. Moving between development and Developer ID signed versions can require one permission migration.
+A self-signed **Windowlane Development** certificate cannot be used for Apple notarization. The bundle identifier remains `app.windowlane.desktop`. Moving between self-signed and Developer ID signed versions can require one permission migration.
 
 Apple's [notarization guide](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution) describes the certificate and account requirements. This repository does not create certificates or configure GitHub secrets automatically.
+
+### Ad hoc builds
+
+When no credentials or signing requirements are configured, releases use **ad hoc signing**. These signatures change with the executable, so upgrades can require Accessibility authorization again. Pull-request CI always uses ad hoc signatures and never receives the release signing credentials.
 
 ## Package locally
 
@@ -74,4 +95,6 @@ rustup target add aarch64-apple-darwin x86_64-apple-darwin
 
 Use `x86_64-apple-darwin` for an Intel build. Packaging refuses to overwrite existing ZIP/DMG files; use a fresh output directory for a repeat build. The commands above neither install nor launch the app.
 
-For a configured local distribution keychain, use `--distribution` instead of `--adhoc` and set `WINLANE_SIGNING_IDENTITY` and `WINLANE_SIGNING_KEYCHAIN`. Set `WINLANE_NOTARY_PROFILE` to a `notarytool` credential profile in that same keychain when calling `package-app.sh` to notarize and staple the packages. Local developer signing remains the default when neither signing flag is supplied.
+For a persistent self-signed build, omit `--adhoc` and set `WINLANE_SIGNING_IDENTITY` and, if needed, `WINLANE_SIGNING_KEYCHAIN`. Local developer signing is the default when neither signing flag is supplied.
+
+For a configured Developer ID keychain, use `--distribution` instead of `--adhoc` and set `WINLANE_SIGNING_IDENTITY` and `WINLANE_SIGNING_KEYCHAIN`. Set `WINLANE_NOTARY_PROFILE` to a `notarytool` credential profile in that same keychain when calling `package-app.sh` to notarize and staple the packages.

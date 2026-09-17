@@ -30,6 +30,8 @@ jobs:
           persist-credentials: false
       - name: ShellCheck
         run: shellcheck scripts/*.sh
+      - name: Release signing configuration tests
+        run: python3 scripts/test_release_signing.py
       - name: Actionlint
         working-directory: ${{ runner.temp }}
         run: |
