@@ -782,10 +782,10 @@ impl SettingsWindow {
                     )
                 })?,
             input_method: match self.input_method.indexOfSelectedItem() {
-                1 => InputMethod::English,
+                0 => InputMethod::Current,
                 2 => InputMethod::Chinese,
                 3 => InputMethod::LastUsed,
-                _ => InputMethod::Current,
+                _ => InputMethod::English,
             },
             language: match self.language.indexOfSelectedItem() {
                 1 => Language::Chinese,

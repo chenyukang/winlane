@@ -2,10 +2,10 @@ use winlane::config::Config;
 use winlane::input_method::{InputMethod, InputSession};
 
 #[test]
-fn old_settings_keep_current_input_and_all_choices_survive_restart() {
+fn missing_input_policy_defaults_to_english_and_saved_choices_survive_restart() {
     assert_eq!(
         Config::from_json("{}").unwrap().input_method,
-        InputMethod::Current
+        InputMethod::English
     );
     for input_method in [
         InputMethod::Current,

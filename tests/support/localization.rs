@@ -148,7 +148,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
             assert_eq!(settings.candidate().unwrap(), config);
         }
         settings.fill(&Config::default());
-        assert_eq!(settings.input_method.indexOfSelectedItem(), 0);
+        assert_eq!(settings.input_method.indexOfSelectedItem(), 1);
         assert_eq!(settings.density.indexOfSelectedItem(), 1);
         assert_eq!(settings.density.itemTitleAtIndex(1).to_string(), match locale {
             Locale::English => "Normal",
@@ -238,9 +238,9 @@ pub fn verify_autosave_controls(settings: &SettingsWindow, saved: impl Fn() -> C
     send(&settings.switch_delay);
     assert_eq!(saved().switch_delay_ms, 150);
     settings.switch_delay.setStringValue(ns_string!("150"));
-    settings.input_method.selectItemAtIndex(1);
+    settings.input_method.selectItemAtIndex(2);
     send(&settings.input_method);
-    assert_eq!(saved().input_method, InputMethod::English);
+    assert_eq!(saved().input_method, InputMethod::Chinese);
     settings.minimized.setState(NSControlStateValueOff);
     send(&settings.minimized);
     assert!(!saved().include_minimized);
