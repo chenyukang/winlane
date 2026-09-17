@@ -13,11 +13,11 @@ GitHub Actions are pinned to commit SHAs. Dependabot checks Actions and Cargo de
 ## Publish a version
 
 1. Update the package version in `Cargo.toml`, refresh `Cargo.lock`, and commit the tested changes to `master`.
-2. Push a matching tag, such as `v0.8.6` for package version `0.8.6`:
+2. Push a matching tag, such as `v0.8.7` for package version `0.8.7`:
 
    ```sh
-   git tag -a v0.8.6 -m 'Winlane 0.8.6'
-   git push origin v0.8.6
+   git tag -a v0.8.7 -m 'Winlane 0.8.7'
+   git push origin v0.8.7
    ```
 
 3. The **Release** workflow runs the same CI checks, verifies the tag matches the package version and is on `master`, then builds both targets from the tagged source. It uploads all assets into a draft and publishes the release after the upload succeeds.
@@ -25,10 +25,10 @@ GitHub Actions are pinned to commit SHAs. Dependabot checks Actions and Cargo de
 The resulting assets are:
 
 ```text
-Winlane-0.8.6-macos-arm64.dmg
-Winlane-0.8.6-macos-arm64.zip
-Winlane-0.8.6-macos-x86_64.dmg
-Winlane-0.8.6-macos-x86_64.zip
+Winlane-0.8.7-macos-arm64.dmg
+Winlane-0.8.7-macos-arm64.zip
+Winlane-0.8.7-macos-x86_64.dmg
+Winlane-0.8.7-macos-x86_64.zip
 appcast-arm64.xml
 appcast-x86_64.xml
 SHA256SUMS
