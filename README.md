@@ -35,7 +35,7 @@ The script builds a release version at `dist/Winlane.app`. Quit any running copy
 
 Open **System Settings → Privacy & Security → Accessibility**, add the installed Winlane app, and enable access. On macOS 27, this pane is called **Device Control and Data Access**. Open Winlane's panel again after granting permission.
 
-Once authorized, Winlane starts quietly in the menu bar. Its menu provides access to the window picker, settings, and Quit.
+Once authorized, Winlane starts quietly in the menu bar. Its menu provides access to the window picker, settings, and Quit. Choose **Feedback…** to report a bug or request a feature on [GitHub Issues](https://github.com/chenyukang/winlane/issues).
 
 ## Everyday use
 

@@ -651,6 +651,15 @@ define_class!(
                 NSWorkspace::sharedWorkspace().openURL(&url);
             }
         }
+        #[unsafe(method(openFeedback:))]
+        fn feedback(&self, _: Option<&AnyObject>) {
+            self.ivars().launch_receiver.replace(None);
+            self.cancel_routing();
+            self.end_session();
+            if let Some(url) = NSURL::URLWithString(ns_string!("https://github.com/chenyukang/winlane/issues")) {
+                NSWorkspace::sharedWorkspace().openURL(&url);
+            }
+        }
         #[unsafe(method(toggleDemo:))]
         fn toggle_demo(&self, _: Option<&AnyObject>) {
             let state = self.ivars();
@@ -788,6 +797,11 @@ impl Delegate {
             )
         };
         unsafe { quit_item.setTarget(Some(self)) };
+        application_menu.addItem(&self.menu_item(
+            tr!("反馈…", "Feedback…"),
+            sel!(openFeedback:),
+            "",
+        ));
         application_menu.addItem(&quit_item);
         let settings_item = self.menu_item(tr!("设置…", "Settings…"), sel!(showSettings:), ",");
         application_menu.insertItem_atIndex(&settings_item, 0);
@@ -899,6 +913,7 @@ impl Delegate {
                 sel!(openPermissions:),
                 "",
             ),
+            (tr!("反馈…", "Feedback…"), sel!(openFeedback:), ""),
             (tr!("退出 Winlane", "Quit Winlane"), sel!(quitApp:), "q"),
         ] {
             // SAFETY: These selectors belong to this retained delegate and accept one object argument.
