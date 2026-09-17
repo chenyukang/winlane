@@ -38,13 +38,15 @@ When moving from an ad hoc build to a certificate-signed build, remove the old p
 
 Both commands produce `dist/Winlane.app`. The script builds with locked dependencies, bundles the app icon, signs the app, and verifies the signature. It does not install or launch the result.
 
+These development bundles do not load Sparkle or check for updates. Add `--with-updater` to build the same updater-enabled bundle used for releases. This downloads a SHA-256-pinned Sparkle distribution to `target/sparkle/`, embeds the framework, and signs its helpers before signing the app. The manual update menu and update settings are disabled when Sparkle is not bundled.
+
 Quit the installed app before replacing it at `~/Applications/Winlane.app`, then open that copy. Avoid running the installed and build-directory copies together. Directly running `cargo run` skips app-bundle signing and may result in a different permission identity.
 
 The product is named Winlane, but its bundle identifier remains `app.windowlane.desktop` and the default certificate remains `Windowlane Development` to preserve existing authorization and preferences. By default, the build targets the Rust toolchain's host architecture. Use `--target aarch64-apple-darwin` or `--target x86_64-apple-darwin` to build another architecture after installing that Rust target. `--output-dir DIR` selects a separate bundle directory; it does not change the installation path.
 
 For a disposable build only, `./scripts/build-app.sh --adhoc` skips the certificate requirement. Do not use it to replace a daily development installation whose permissions you want to retain.
 
-See [Releasing Winlane](releasing.md) for DMG/ZIP packaging, CI artifacts, and Developer ID signing. None of these scripts install or launch the app.
+See [Releasing Winlane](releasing.md) for DMG/ZIP packaging, CI artifacts, and Developer ID signing. The build and packaging scripts do not install or launch the app.
 
 ## Run checks
 
@@ -57,6 +59,16 @@ cargo fmt --all -- --check
 The tests cover search ranking, alias stability and uniqueness, shortcut routing, preference migration, language selection, application discovery, and display placement. The native test executable creates hidden AppKit windows to check controls, bilingual layouts, and shared state across displays. It does not register global shortcuts or write preferences.
 
 Real foreground activation, input methods, full-screen Spaces, and physical monitor changes still need interactive testing. The macOS 14 deployment target does not imply that every supported OS version or Intel hardware has been tested; current hands-on validation is on Apple Silicon.
+
+To test Sparkle separately:
+
+```sh
+./scripts/build-app.sh --with-updater --output-dir dist/updater
+./scripts/test-updater.sh dist/updater/Winlane.app
+python3 scripts/test-sparkle-update.py dist/updater/Winlane.app
+```
+
+The first probe exercises the Rust bridge, persisted automatic-check preference, and disabled/missing framework paths in a disposable bundle. The end-to-end test uses temporary app identities, ephemeral signing keys, and a loopback HTTP server. It downloads, validates, installs, and relaunches a fixture app, then verifies that altered archives and feeds are rejected. Neither test registers Winlane's shortcuts, changes Accessibility authorization, or replaces the installed app. Test preferences are removed afterward.
 
 ### Native diagnostics
 

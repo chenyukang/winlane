@@ -60,6 +60,14 @@ jobs:
           REQUIRE_SIGNING: ${{ vars.WINLANE_REQUIRE_SIGNING }}
           REQUIRE_NOTARIZATION: ${{ vars.WINLANE_REQUIRE_NOTARIZATION }}
         run: python3 scripts/release_signing.py
+      - name: Require update signing key
+        env:
+          SPARKLE_ED_KEY: ${{ secrets.SPARKLE_ED_KEY }}
+        run: |
+          if [[ -z "$SPARKLE_ED_KEY" ]]; then
+            echo 'SPARKLE_ED_KEY is required to sign the Sparkle update feeds and archives.' >&2
+            exit 1
+          fi
       - name: Import distribution credentials
         if: steps.signing.outputs.mode != 'ad-hoc'
         env:
@@ -114,9 +122,14 @@ jobs:
             *) echo 'Unexpected signing mode.' >&2; exit 1 ;;
           esac
           for target in aarch64-apple-darwin x86_64-apple-darwin; do
-            ./scripts/build-app.sh "${signing_args[@]}" --target "$target" --output-dir "dist/$target"
+            ./scripts/build-app.sh "${signing_args[@]}" --with-updater --target "$target" --output-dir "dist/$target"
             ./scripts/package-app.sh "dist/$target/Winlane.app" dist/release
           done
+      - name: Sign and verify update feeds
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          SPARKLE_ED_KEY: ${{ secrets.SPARKLE_ED_KEY }}
+        run: ./scripts/generate-appcast.sh dist/release "${TAG#v}"
       - name: Write checksums and build information
         env:
           TAG: ${{ steps.version.outputs.tag }}
@@ -128,6 +141,10 @@ jobs:
           assets = sorted([*output.glob('*.zip'), *output.glob('*.dmg')])
           if len(assets) != 4:
               raise SystemExit('Expected one ZIP and one DMG for each architecture.')
+          feeds = [output / f'appcast-{arch}.xml' for arch in ['arm64', 'x86_64']]
+          if not all(feed.is_file() for feed in feeds):
+              raise SystemExit('Both signed Sparkle appcasts are required.')
+          assets += feeds
           hashes = {asset.name: hashlib.sha256(asset.read_bytes()).hexdigest() for asset in assets}
           info = {
               'version': os.environ['TAG'][1:],
@@ -137,6 +154,7 @@ jobs:
               'rustc': subprocess.check_output(['rustc', '--version'], text=True).strip(),
               'minimum_macos': '14.0',
               'signing': os.environ['SIGNING_MODE'],
+              'updater': 'Sparkle 2',
               'artifacts': hashes,
               'workflow_run': f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
           }
@@ -160,6 +178,8 @@ jobs:
           Open the DMG and drag Winlane to Applications, or extract the ZIP and move Winlane.app to Applications. Quit the old copy before replacing it; keep the same installation location when updating.
 
           Enable Winlane in System Settings → Privacy & Security → Accessibility (Device Control and Data Access on macOS 27).
+
+          This version includes Sparkle updates. Choose **Check for Updates…** from Winlane's menu, or enable daily checks in **Settings → Startup & Updates**. Downloading, installation, and relaunch require confirmation. Versions without Sparkle need one manual installation to receive future in-app updates.
 
           `SHA256SUMS` contains download checksums. `build-info.json` records the source commit, compiler, and signing status.
           NOTES

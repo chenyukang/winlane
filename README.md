@@ -37,6 +37,12 @@ Open **System Settings → Privacy & Security → Accessibility**, add the insta
 
 Once authorized, Winlane starts quietly in the menu bar. Its menu provides access to the window picker, settings, and Quit. Choose **Feedback…** to report a bug or request a feature on [GitHub Issues](https://github.com/chenyukang/winlane/issues).
 
+### Stay up to date
+
+Release builds use [Sparkle 2](https://sparkle-project.org/) to check for updates daily. Choose **Check for Updates…** from the menu bar to check immediately. Winlane asks before downloading an update, then offers to install it and relaunch. Turn daily checks off in **Settings → Startup & Updates** to check manually instead.
+
+Versions without Sparkle need one manual installation of a Sparkle-enabled release. Local source builds disable updates by default so a release cannot replace your development build.
+
 ## Everyday use
 
 ### Switch without stopping to search
@@ -84,7 +90,7 @@ Open Settings from the menu bar or press **Command + ,** while using Winlane. Pr
 | **Input** | Keep the current input source, start searches in English or Chinese, or remember the last input source used in Winlane. |
 | **Window List** | Sorting, minimized windows, and apps to exclude. Recent sorting follows window focus, including mouse, Dock, and shortcut switches. |
 | **Aliases** | Fixed letters for apps or project windows matched by title. |
-| **Startup** | Launch at login and access to macOS login-item settings. |
+| **Startup & Updates** | Launch at login, daily update checks, and Check for Updates. |
 
 Settings save automatically. Menus, switches, and sliders apply immediately; text fields save when you press Return or finish editing. Invalid values and conflicting shortcuts leave the last valid configuration in effect and show an error. Restore Defaults also applies immediately.
 
@@ -99,6 +105,8 @@ The **Window** menu lets you limit searches to the current app, minimize or rest
 Winlane uses Accessibility access to read and control windows, and a keyboard event filter to handle its shortcuts. It does not log keystrokes, capture window screenshots, or send window data to a server.
 
 Settings and aliases are stored locally. Window titles, search terms, and selection history stay in memory and are discarded when Winlane quits. Copying a window title explicitly places it on the clipboard.
+
+Update checks contact GitHub Releases for the update feed and packages. Sparkle system profiling is disabled; window titles and search terms are never included. Update feeds and downloads are verified with an embedded Ed25519 public key.
 
 ## Development
 

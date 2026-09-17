@@ -233,6 +233,9 @@ pub struct SettingsWindow {
     excluded: Retained<NSTextField>,
     login: Retained<NSButton>,
     login_status: Retained<NSTextField>,
+    automatic_updates: Retained<NSButton>,
+    check_updates: Retained<NSButton>,
+    update_status: Retained<NSTextField>,
     message: Retained<NSTextField>,
     app_shortcuts: RefCell<Vec<AppShortcut>>,
     alias_rules: RefCell<Vec<AliasRule>>,
@@ -265,7 +268,7 @@ impl SettingsWindow {
         let appearance_tab = settings_tab(&tabs, tr!("外观与语言", "Appearance & Language"), mtm);
         let input_tab = settings_tab(&tabs, tr!("输入", "Input"), mtm);
         let windows = settings_tab(&tabs, tr!("窗口列表", "Window List"), mtm);
-        let startup = settings_tab(&tabs, tr!("启动", "Startup"), mtm);
+        let startup = settings_tab(&tabs, tr!("启动与更新", "Startup & Updates"), mtm);
         let aliases = settings_tab(&tabs, tr!("Alias 规则", "Aliases"), mtm);
         aliases.addSubview(&label(
             tr!(
@@ -618,14 +621,24 @@ impl SettingsWindow {
             rect(30.0, 177.0, 600.0, 38.0),
             mtm,
         ));
-        startup.addSubview(&hint(
-            tr!(
-                "登录启动开关立即生效。",
-                "The launch-at-login toggle takes effect immediately."
-            ),
-            rect(30.0, 131.0, 600.0, 32.0),
+        let automatic_updates =
+            checkbox(tr!("自动检查更新", "Automatically check for updates"), mtm);
+        automatic_updates.setFrame(rect(30.0, 123.0, 375.0, 27.0));
+        set_action(&automatic_updates, target, sel!(toggleAutomaticUpdates:));
+        automatic_updates.setEnabled(false);
+        startup.addSubview(&automatic_updates);
+        let check_updates = button(
+            tr!("检查更新…", "Check for Updates…"),
+            target,
+            sel!(checkForUpdates:),
+            rect(430.0, 122.0, 200.0, 28.0),
             mtm,
-        ));
+        );
+        check_updates.setEnabled(false);
+        startup.addSubview(&check_updates);
+        let update_status = hint("", rect(30.0, 49.0, 600.0, 62.0), mtm);
+        update_status.setMaximumNumberOfLines(3);
+        startup.addSubview(&update_status);
 
         let message = NSTextField::wrappingLabelWithString(ns_string!(""), mtm);
         message.setFont(Some(&NSFont::systemFontOfSize(12.0)));
@@ -657,6 +670,9 @@ impl SettingsWindow {
             excluded,
             login,
             login_status,
+            automatic_updates,
+            check_updates,
+            update_status,
             message,
             app_shortcuts: RefCell::default(),
             alias_rules: RefCell::default(),
@@ -830,6 +846,34 @@ impl SettingsWindow {
         );
         self.window.center();
         self.window.makeKeyAndOrderFront(None);
+    }
+
+    pub fn update_updater(&self, available: bool, automatic: bool, error: Option<&str>) {
+        self.automatic_updates.setEnabled(available);
+        self.automatic_updates.setState(if automatic {
+            NSControlStateValueOn
+        } else {
+            NSControlStateValueOff
+        });
+        self.check_updates.setEnabled(available || error.is_some());
+        let status = if error.is_some() {
+            tr!(
+                "更新组件未能启动。点击“检查更新”查看详情。",
+                "The updater could not start. Choose Check for Updates for details."
+            )
+        } else if available {
+            tr!(
+                "每天检查一次；确认后才会下载、安装并重启。",
+                "Checks once a day. Downloads, installation, and relaunch require your confirmation."
+            )
+        } else {
+            tr!(
+                "开发构建不检查更新。请使用发布版获取自动更新。",
+                "Updates are disabled in development builds. Use a release build to receive updates."
+            )
+        };
+        self.update_status
+            .setStringValue(&NSString::from_str(status));
     }
 
     pub fn update_login_status(&self) {

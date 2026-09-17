@@ -2,11 +2,12 @@
 set -euo pipefail
 
 usage() {
-    printf 'Usage: %s [--debug] [--adhoc | --distribution] [--target TRIPLE] [--output-dir DIR]\n' "${0##*/}"
+    printf 'Usage: %s [--debug] [--adhoc | --distribution] [--with-updater] [--target TRIPLE] [--output-dir DIR]\n' "${0##*/}"
     printf 'Build dist/Winlane.app using the Windowlane Development signing identity.\n'
     printf 'Override with WINLANE_SIGNING_IDENTITY (exact certificate name or SHA-1).\n'
     printf 'Use --adhoc only for disposable builds; permissions may reset after rebuilding.\n'
     printf 'Use --distribution with a Developer ID Application identity for notarization.\n'
+    printf 'Use --with-updater for distributable builds with Sparkle (downloads a pinned framework).\n'
     printf 'The app is not installed or launched. See docs/development.md for one-time certificate setup.\n'
 }
 
@@ -14,6 +15,7 @@ profile=release
 build_args=(--locked --release)
 adhoc=false
 distribution=false
+with_updater=false
 target=$(rustc -vV | sed -n 's/^host: //p')
 output_dir=
 while [[ $# -gt 0 ]]; do
@@ -21,6 +23,7 @@ while [[ $# -gt 0 ]]; do
         --debug) profile=debug; build_args=(--locked) ;;
         --adhoc) adhoc=true ;;
         --distribution) distribution=true ;;
+        --with-updater) with_updater=true ;;
         --target|--output-dir)
             [[ $# -ge 2 && -n "$2" ]] || { usage >&2; exit 2; }
             if [[ "$1" == --target ]]; then target=$2; else output_dir=$2; fi
@@ -119,6 +122,39 @@ if [[ -f "$project_dir/resources/AppIcon.icns" ]]; then
     /usr/libexec/PlistBuddy -c 'Add :CFBundleIconFile string AppIcon.icns' "$bundle/Contents/Info.plist"
 fi
 /usr/bin/plutil -lint "$bundle/Contents/Info.plist"
+if [[ "$with_updater" == true ]]; then
+    sparkle_dir=$("$project_dir/scripts/fetch-sparkle.sh")
+    framework="$bundle/Contents/Frameworks/Sparkle.framework"
+    mkdir -p "$bundle/Contents/Frameworks"
+    ditto "$sparkle_dir/Sparkle.framework" "$framework"
+    # Winlane is not sandboxed, so neither Sparkle XPC service is needed.
+    rm -rf "$framework/Versions/B/XPCServices" "$framework/XPCServices"
+    cp "$sparkle_dir/LICENSE" "$bundle/Contents/Resources/Sparkle-LICENSE.txt"
+    arch=arm64
+    if [[ "$target" == x86_64-apple-darwin ]]; then arch=x86_64; fi
+    python3 - "$bundle/Contents/Info.plist" "$project_dir/resources/sparkle-public-key.txt" "$arch" <<'PY'
+import base64, pathlib, plistlib, sys
+path, key_path, arch = sys.argv[1:]
+key = pathlib.Path(key_path).read_text().strip()
+if len(base64.b64decode(key, validate=True)) != 32:
+    raise SystemExit('Sparkle public key must contain 32 bytes.')
+with open(path, 'rb') as stream:
+    info = plistlib.load(stream)
+info.update({
+    'SUFeedURL': f'https://github.com/chenyukang/winlane/releases/latest/download/appcast-{arch}.xml',
+    'SUPublicEDKey': key,
+    'SUEnableAutomaticChecks': True,
+    'SUScheduledCheckInterval': 86400,
+    'SUAutomaticallyUpdate': False,
+    'SUAllowsAutomaticUpdates': False,
+    'SUEnableSystemProfiling': False,
+    'SUVerifyUpdateBeforeExtraction': True,
+    'SURequireSignedFeed': True,
+})
+with open(path, 'wb') as stream:
+    plistlib.dump(info, stream)
+PY
+fi
 printf 'Signing identity: %s\n' "$signing_identity"
 sign_args=(--timestamp=none)
 if [[ "$distribution" == true ]]; then
@@ -127,8 +163,14 @@ fi
 if [[ -n ${WINLANE_SIGNING_KEYCHAIN:-} ]]; then
     sign_args+=(--keychain "$WINLANE_SIGNING_KEYCHAIN")
 fi
+if [[ "$with_updater" == true ]]; then
+    # Sign nested code inside out. Hardened runtime is only used with Developer ID.
+    for component in "$framework/Versions/B/Autoupdate" "$framework/Versions/B/Updater.app" "$framework"; do
+        /usr/bin/codesign --force --sign "$signing_identity" "${sign_args[@]}" "$component"
+    done
+fi
 /usr/bin/codesign --force --sign "$signing_identity" "${sign_args[@]}" --identifier app.windowlane.desktop "$bundle"
-/usr/bin/codesign --verify --strict "$bundle"
+/usr/bin/codesign --verify --deep --strict "$bundle"
 /usr/bin/codesign --display --requirements - "$bundle"
 
 destination="$output_dir/Winlane.app"

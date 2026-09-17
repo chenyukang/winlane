@@ -153,6 +153,8 @@ struct AppState {
     alias_error: RefCell<Option<String>>,
     aliases_writable: Cell<bool>,
     settings: RefCell<Option<Rc<SettingsWindow>>>,
+    updater: OnceCell<crate::updater::Updater>,
+    updater_error: RefCell<Option<String>>,
     app_shortcuts: RefCell<Option<Rc<AppShortcutsWindow>>>,
     alias_rules: RefCell<Option<Rc<crate::alias_rules::AliasRulesWindow>>>,
     launch_receiver: RefCell<Option<PendingLaunch>>,
@@ -386,6 +388,14 @@ define_class!(
                 Err(error) => { self.ivars().alias_error.replace(Some(error)); }
             }
             settings::apply_appearance(&self.ivars().config.borrow(), self.mtm());
+            match crate::updater::Updater::new(self.mtm(), self) {
+                Ok(Some(updater)) => { let _ = self.ivars().updater.set(updater); }
+                Ok(None) => {}
+                Err(error) => {
+                    eprintln!("Update initialization failed: {error}");
+                    self.ivars().updater_error.replace(Some(error));
+                }
+            }
             self.build_ui();
             self.register_hotkeys();
             if !accessibility::is_trusted() { self.show(); } else { self.refresh(); }
@@ -457,7 +467,10 @@ define_class!(
         #[unsafe(method(validateMenuItem:))]
         fn validate_menu_item(&self, item: &NSMenuItem) -> bool {
             let action = item.action();
-            if action == Some(sel!(toggleScope:)) {
+            if action == Some(sel!(checkForUpdates:)) {
+                self.ivars().updater.get().is_some_and(crate::updater::Updater::can_check)
+                    || self.ivars().updater_error.borrow().is_some()
+            } else if action == Some(sel!(toggleScope:)) {
                 item.setState(if self.ivars().current_app_only.get() { NSControlStateValueOn } else { NSControlStateValueOff });
                 self.any_panel_visible() && self.ivars().mode.get() == Some(PanelMode::Search)
             } else if [sel!(minimizeChosen:), sel!(hideChosen:), sel!(copyTitle:), sel!(quickSelect:)].into_iter().any(|sel| action == Some(sel)) {
@@ -494,7 +507,33 @@ define_class!(
             let settings = self.ensure_settings_window();
             NSApplication::sharedApplication(self.mtm()).activate();
             settings.show(&self.ivars().config.borrow());
+            self.update_update_settings();
             self.report_shortcut_status();
+        }
+        #[unsafe(method(checkForUpdates:))]
+        fn check_for_updates(&self, _: Option<&AnyObject>) {
+            self.prepare_update_ui();
+            if let Some(updater) = self.ivars().updater.get() {
+                updater.check();
+            } else if let Some(error) = self.ivars().updater_error.borrow().as_ref() {
+                let alert = NSAlert::new(self.mtm());
+                alert.setMessageText(&NSString::from_str(tr!("无法检查更新", "Unable to Check for Updates")));
+                alert.setInformativeText(&NSString::from_str(error));
+                alert.runModal();
+            }
+        }
+        #[unsafe(method(toggleAutomaticUpdates:))]
+        fn toggle_automatic_updates(&self, sender: &NSButton) {
+            if let Some(updater) = self.ivars().updater.get() {
+                updater.set_automatic_checks(sender.state() == NSControlStateValueOn);
+            }
+            self.update_update_settings();
+        }
+        #[unsafe(method(standardUserDriverWillShowModalAlert))]
+        fn update_will_show_alert(&self) { self.prepare_update_ui(); }
+        #[unsafe(method(standardUserDriverWillHandleShowingUpdate:forUpdate:state:))]
+        fn update_will_show(&self, showing: bool, _: &AnyObject, _: &AnyObject) {
+            if showing { self.prepare_update_ui(); }
         }
         #[unsafe(method(settingsChanged:))]
         fn settings_changed(&self, _: Option<&AnyObject>) { self.autosave_settings(); }
@@ -798,6 +837,11 @@ impl Delegate {
         };
         unsafe { quit_item.setTarget(Some(self)) };
         application_menu.addItem(&self.menu_item(
+            tr!("检查更新…", "Check for Updates…"),
+            sel!(checkForUpdates:),
+            "",
+        ));
+        application_menu.addItem(&self.menu_item(
             tr!("反馈…", "Feedback…"),
             sel!(openFeedback:),
             "",
@@ -914,6 +958,11 @@ impl Delegate {
                 "",
             ),
             (tr!("反馈…", "Feedback…"), sel!(openFeedback:), ""),
+            (
+                tr!("检查更新…", "Check for Updates…"),
+                sel!(checkForUpdates:),
+                "",
+            ),
             (tr!("退出 Winlane", "Quit Winlane"), sel!(quitApp:), "q"),
         ] {
             // SAFETY: These selectors belong to this retained delegate and accept one object argument.
@@ -950,7 +999,26 @@ impl Delegate {
             .window
             .setDelegate(Some(ProtocolObject::from_ref(self)));
         self.ivars().settings.replace(Some(window.clone()));
+        self.update_update_settings();
         window
+    }
+
+    fn prepare_update_ui(&self) {
+        self.ivars().launch_receiver.replace(None);
+        self.cancel_routing();
+        self.end_session();
+        NSApplication::sharedApplication(self.mtm()).activate();
+    }
+
+    fn update_update_settings(&self) {
+        if let Some(settings) = self.settings_window() {
+            let updater = self.ivars().updater.get();
+            settings.update_updater(
+                updater.is_some(),
+                updater.is_some_and(crate::updater::Updater::automatic_checks),
+                self.ivars().updater_error.borrow().as_deref(),
+            );
+        }
     }
 
     fn ensure_alias_rules_window(&self) -> Rc<crate::alias_rules::AliasRulesWindow> {

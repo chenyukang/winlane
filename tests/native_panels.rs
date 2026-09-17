@@ -1,6 +1,12 @@
 #![allow(dead_code)]
 
 #[cfg(target_os = "macos")]
+mod updater {
+    include!("../src/updater.rs");
+    include!("support/updater.rs");
+}
+
+#[cfg(target_os = "macos")]
 #[path = "../src/main_wake.rs"]
 mod main_wake;
 
@@ -1377,7 +1383,9 @@ fn main() {
     #[cfg(target_os = "macos")]
     objc2::rc::autoreleasepool(|_| {
         winlane::i18n::set_locale(winlane::i18n::Locale::Chinese);
-        if std::env::var_os("WINLANE_LAUNCH_SMOKE").is_some() {
+        if let Ok(expectation) = std::env::var("WINLANE_UPDATER_SMOKE") {
+            updater::verify(&expectation);
+        } else if std::env::var_os("WINLANE_LAUNCH_SMOKE").is_some() {
             app_shortcuts::verify_background_launch();
         } else if std::env::var_os("WINLANE_APP_SCAN").is_some() {
             let start = std::time::Instant::now();

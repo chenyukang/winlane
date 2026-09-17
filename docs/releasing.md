@@ -1,10 +1,10 @@
 # Releasing Winlane
 
-Winlane ships a separate macOS app for Apple Silicon (`arm64`) and Intel (`x86_64`). Both require macOS 14 or later. Each architecture has a ZIP containing `Winlane.app` and a DMG with an Applications shortcut for drag-and-drop installation. There is no installer service or automatic updater.
+Winlane ships a separate macOS app for Apple Silicon (`arm64`) and Intel (`x86_64`). Both require macOS 14 or later. Each architecture has a ZIP containing `Winlane.app` and a DMG with an Applications shortcut for drag-and-drop installation. Sparkle 2 provides in-app updates using the ZIP archives.
 
 ## Continuous integration
 
-The **CI** workflow runs on pull requests and pushes to `master`, and can be started manually from Actions. It checks formatting, Clippy, and tests on native Apple Silicon and Intel macOS 15 runners, plus ShellCheck and actionlint on Linux. It also builds release bundles with ad hoc signatures, packages them, verifies the DMG, and checks the extracted ZIP's executable and signature. Native panel tests use hidden windows; if the runner has no display, those checks report a skip.
+The **CI** workflow runs on pull requests and pushes to `master`, and can be started manually from Actions. It checks formatting, Clippy, and tests on native Apple Silicon and Intel macOS 15 runners, plus ShellCheck and actionlint on Linux. It also builds release bundles with ad hoc signatures, tests Sparkle's runtime bridge and an isolated update/install/relaunch cycle, verifies rejection of tampered feeds and archives, packages the app, verifies the DMG, and checks the extracted ZIP's executable and signature. Native panel tests use hidden windows; if the runner has no display, those checks report a skip.
 
 Download test builds from the workflow's `Winlane-ci-arm64` and `Winlane-ci-x86_64` artifacts. They expire after seven days. These are not notarized and should not replace a locally signed development installation. CI does not request Accessibility permission or test interactive window activation.
 
@@ -29,6 +29,8 @@ Winlane-0.8.5-macos-arm64.dmg
 Winlane-0.8.5-macos-arm64.zip
 Winlane-0.8.5-macos-x86_64.dmg
 Winlane-0.8.5-macos-x86_64.zip
+appcast-arm64.xml
+appcast-x86_64.xml
 SHA256SUMS
 build-info.json
 ```
@@ -38,6 +40,27 @@ build-info.json
 A release with an existing tag is never overwritten. If an upload fails and leaves an incomplete draft, inspect and remove that draft before rerunning the workflow. A published version should be fixed with a new version and tag. Repository visibility also controls access to releases and Actions artifacts: private repositories do not provide public download links.
 
 To verify signing credentials without publishing a version, run the **Release** workflow manually on `master`. It runs the checks and packages both architectures, then uploads `Winlane-signing-verification` as a three-day Actions artifact. Only a tag push publishes a GitHub release.
+
+## Sparkle updates
+
+Release builds embed the pinned Sparkle version from `scripts/fetch-sparkle.sh`. Downloads are verified against its recorded SHA-256 before extraction. Sparkle's unused sandbox XPC services are omitted; its installer and relaunch helpers are signed inside out with the app's identity.
+
+Each architecture uses its own `releases/latest/download/appcast-ARCH.xml` feed. Feed entries point to immutable, versioned GitHub Release ZIP URLs, not to `latest` archives. `generate-appcast.sh` signs both the ZIP entry and XML feed with Sparkle's official tools. It verifies the feed signature, checks the ZIP against the public key embedded in Winlane, and checks version, URL, and minimum OS before the workflow publishes all assets together. The release fails if the key or either feed is missing. The first integration uses full ZIP updates without deltas.
+
+Generate the update key once, separately from the app's code-signing certificate:
+
+```sh
+sparkle_dir=$(./scripts/fetch-sparkle.sh)
+"$sparkle_dir/bin/generate_keys" --account app.windowlane.desktop
+```
+
+Keep its public key in `resources/sparkle-public-key.txt`. Export the private key with `generate_keys --account app.windowlane.desktop -x /secure/temporary/key` and set the repository Actions secret **`SPARKLE_ED_KEY`** to the exported file's contents (already base64-encoded). Remove the temporary export after uploading it. The release job passes the secret on standard input, never as a command-line argument. Local appcast generation uses the named Keychain entry when the environment variable is unset.
+
+Keep a secure backup of this key outside Git. Do not regenerate it for each release. Without Developer ID signing, losing it requires a manual app installation to establish a new update identity. The update key and the persistent app certificate have different roles: Ed25519 verifies feed/package authenticity; the app certificate preserves the macOS application identity. Sparkle does not replace Apple notarization.
+
+Daily checks are enabled by default; silent downloading and installation are disabled. Both feed signatures and archive verification before extraction are required. The user's automatic-check choice is persisted by Sparkle in the app's preferences (`SUEnableAutomaticChecks`), outside Winlane's configuration JSON. Ordinary local builds omit Sparkle; `--with-updater` enables it explicitly.
+
+Users of versions without Sparkle must manually install the first updater-enabled release. Later releases can be installed through **Check for Updates…**. Keep the bundle identifier, certificate, update public key, and installation location stable.
 
 ## Signing and notarization
 
@@ -81,7 +104,7 @@ Apple's [notarization guide](https://developer.apple.com/documentation/security/
 
 ### Ad hoc builds
 
-When no credentials or signing requirements are configured, releases use **ad hoc signing**. These signatures change with the executable, so upgrades can require Accessibility authorization again. Pull-request CI always uses ad hoc signatures and never receives the release signing credentials.
+When no macOS certificate credentials or signing requirements are configured, releases use **ad hoc signing**. The Sparkle update-signing key is still required. Ad hoc app signatures change with the executable, so upgrades can require Accessibility authorization again. Pull-request CI always uses ad hoc signatures and ephemeral test update keys; it never receives the release signing credentials.
 
 ## Package locally
 

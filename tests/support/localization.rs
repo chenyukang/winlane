@@ -9,7 +9,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
                 "Appearance & Language",
                 "Input",
                 "Window List",
-                "Startup",
+                "Startup & Updates",
                 "Aliases",
             ],
         ),
@@ -21,13 +21,25 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
                 "外观与语言",
                 "输入",
                 "窗口列表",
-                "启动",
+                "启动与更新",
                 "Alias 规则",
             ],
         ),
     ] {
         i18n::set_locale(locale);
         let settings = SettingsWindow::new(target, mtm);
+        settings.update_updater(false, false, None);
+        assert!(!settings.automatic_updates.isEnabled());
+        assert!(!settings.check_updates.isEnabled());
+        settings.update_updater(true, true, None);
+        assert!(settings.automatic_updates.isEnabled());
+        assert_eq!(settings.automatic_updates.state(), NSControlStateValueOn);
+        assert_eq!(settings.automatic_updates.action(), Some(sel!(toggleAutomaticUpdates:)));
+        assert_eq!(settings.check_updates.action(), Some(sel!(checkForUpdates:)));
+        settings.update_updater(true, false, None);
+        assert_eq!(settings.automatic_updates.state(), NSControlStateValueOff);
+        settings.update_updater(false, false, Some("invalid feed"));
+        assert!(settings.check_updates.isEnabled());
         for control in [
             &*settings.language,
             &*settings.appearance,

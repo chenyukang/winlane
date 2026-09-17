@@ -21,6 +21,8 @@ mod settings;
 #[cfg(target_os = "macos")]
 mod shortcut_tap;
 #[cfg(target_os = "macos")]
+mod updater;
+#[cfg(target_os = "macos")]
 mod window_server;
 
 fn main() {
