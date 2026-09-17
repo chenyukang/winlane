@@ -91,6 +91,8 @@ jobs:
           security unlock-keychain -p "$password" "$keychain"
           security import "$signing_dir/certificate.p12" -k "$keychain" -P "$CERT_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" >/dev/null
+          # codesign also needs the search list to resolve the certificate chain.
+          security list-keychains -d user -s "$keychain"
           if [[ "$SIGNING_MODE" == notarized ]]; then
             xcrun notarytool store-credentials winlane-release --key "$signing_dir/notary.p8" \
               --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" --keychain "$keychain"
