@@ -1,5 +1,12 @@
 #!/bin/bash
-set -euo pipefail
+set -Eeuo pipefail
+
+packaging_failed() {
+    local status=$1 line=$2 command=$3
+    printf 'Packaging failed at line %s (exit %s): %s\n' "$line" "$status" "$command" >&2
+    exit "$status"
+}
+trap 'packaging_failed "$?" "$LINENO" "$BASH_COMMAND"' ERR
 
 if [[ $# != 2 ]]; then
     printf 'Usage: %s PATH/Winlane.app OUTPUT_DIR\n' "${0##*/}" >&2
@@ -57,9 +64,11 @@ if [[ -n ${WINLANE_NOTARY_PROFILE:-} ]]; then
 fi
 
 # Archive the stapled app so both download formats can be checked offline.
+printf 'Creating ZIP archive…\n'
 /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$app" "$staging_dir/$name.zip"
 ln -s /Applications "$staging_dir/image/Applications"
-/usr/bin/hdiutil create -quiet -volname "Winlane $version" -srcfolder "$staging_dir/image" \
+printf 'Creating DMG image…\n'
+/usr/bin/hdiutil create -volname "Winlane $version" -srcfolder "$staging_dir/image" \
     -format UDZO "$staging_dir/$name.dmg"
 if [[ -n ${WINLANE_NOTARY_PROFILE:-} ]]; then
     /usr/bin/codesign --force --sign "$WINLANE_SIGNING_IDENTITY" \
@@ -68,7 +77,9 @@ if [[ -n ${WINLANE_NOTARY_PROFILE:-} ]]; then
     xcrun stapler staple "$staging_dir/$name.dmg"
     xcrun stapler validate "$staging_dir/$name.dmg"
 fi
-/usr/bin/hdiutil verify -quiet "$staging_dir/$name.dmg"
+printf 'Verifying DMG image…\n'
+/usr/bin/hdiutil verify "$staging_dir/$name.dmg"
+printf 'Verifying ZIP contents…\n'
 /usr/bin/ditto -x -k "$staging_dir/$name.zip" "$staging_dir/unpacked"
 /usr/bin/codesign --verify --strict "$staging_dir/unpacked/Winlane.app"
 cmp "$app/Contents/MacOS/winlane" "$staging_dir/unpacked/Winlane.app/Contents/MacOS/winlane"

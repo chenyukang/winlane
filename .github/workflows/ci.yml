@@ -74,12 +74,14 @@ jobs:
         run: cargo test --locked
       - name: Check shell syntax
         run: for script in scripts/*.sh; do bash -n "$script"; done
-      - name: Build and verify release packages
-        run: |
-          ./scripts/build-app.sh --adhoc --with-updater --output-dir dist/ci
-          ./scripts/test-updater.sh dist/ci/Winlane.app
-          python3 scripts/test-sparkle-update.py dist/ci/Winlane.app
-          ./scripts/package-app.sh dist/ci/Winlane.app dist/packages
+      - name: Build release app
+        run: ./scripts/build-app.sh --adhoc --with-updater --output-dir dist/ci
+      - name: Test updater runtime
+        run: ./scripts/test-updater.sh dist/ci/Winlane.app
+      - name: Test Sparkle updates
+        run: python3 scripts/test-sparkle-update.py dist/ci/Winlane.app
+      - name: Package and verify archives
+        run: ./scripts/package-app.sh dist/ci/Winlane.app dist/packages
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Winlane-ci-${{ matrix.arch }}
