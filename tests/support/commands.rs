@@ -23,7 +23,7 @@ fn verify_command_search(mtm: MainThreadMarker) {
     assert_eq!(delegate.match_count(), 1);
     assert!(state.command_matches.borrow().is_empty());
 
-    state.query.replace("show".into());
+    state.query.replace("menu".into());
     delegate.filter();
     assert_eq!(delegate.match_count(), 3);
     assert_eq!(delegate.selected_command(), Some(CommandId::ShowMenu));
@@ -82,5 +82,27 @@ fn verify_command_search(mtm: MainThreadMarker) {
     state.query.replace("rust".into());
     delegate.filter();
     assert!(delegate.selected_command().is_none());
+
+    for command in [CommandId::LockScreen, CommandId::Sleep, CommandId::MissionControl] {
+        state.query.replace(command.definition().name.into());
+        delegate.filter();
+        assert_eq!(delegate.match_count(), 1);
+        assert_eq!(delegate.selected_command(), Some(command));
+        for ui in delegate.panels() {
+            let rows = ui.rows.borrow();
+            assert_eq!(rows[0].app.stringValue().to_string(), command.definition().name);
+            assert_eq!(rows[0].title.stringValue().to_string(), command.definition().title());
+            assert!(rows[0].icon.image().is_some());
+            assert!(rows[0].button.isAccessibilitySelected());
+        }
+        delegate.filter_preserving(delegate.selected_result());
+        assert_eq!(delegate.selected_command(), Some(command));
+    }
+    state.query.replace("show".into());
+    delegate.filter();
+    assert_eq!(delegate.match_count(), 1);
+    assert_eq!(delegate.selected_command(), Some(CommandId::ShowMenu));
+    delegate.filter_preserving(delegate.selected_result());
+    assert_eq!(delegate.selected_command(), Some(CommandId::ShowMenu));
     assert!(delegate.panels().iter().all(|ui| !ui.panel.isVisible()));
 }

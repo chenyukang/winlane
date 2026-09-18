@@ -11,6 +11,12 @@ mod updater {
 mod main_wake;
 
 #[cfg(target_os = "macos")]
+mod system_commands {
+    include!("../src/system_commands.rs");
+    include!("support/system_commands.rs");
+}
+
+#[cfg(target_os = "macos")]
 mod menu_bar {
     include!("../src/menu_bar.rs");
 
@@ -313,6 +319,7 @@ mod app {
         verify_catalog_refresh(mtm);
         verify_launch_search(mtm);
         verify_command_search(mtm);
+        crate::system_commands::verify_prepared_commands(mtm);
         crate::menu_bar::verify_reveal_positions();
         verify_typo_search(mtm);
         verify_shortcut_recency(mtm);

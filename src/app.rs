@@ -2557,8 +2557,27 @@ impl Delegate {
             }
             ui.panel.setFrame_display(frame, false);
         }
+        let (input_height, input_font_size, input_control_size) = match density {
+            DisplayDensity::Compact => (34.0, 15.0, NSControlSize::Regular),
+            DisplayDensity::Normal => (38.0, 16.0, NSControlSize::Large),
+        };
+        if ui.input.controlSize() != input_control_size {
+            ui.input.setControlSize(input_control_size);
+        }
+        if ui.input.frame().size.height != input_height {
+            ui.input
+                .setFrameSize(NSSize::new(ui.input.frame().size.width, input_height));
+        }
+        if ui
+            .input
+            .font()
+            .is_none_or(|font| font.pointSize() != input_font_size)
+        {
+            ui.input
+                .setFont(Some(&NSFont::systemFontOfSize(input_font_size)));
+        }
         let header: [(&NSView, f64); 2] = [
-            (&ui.input, height - 52.0),
+            (&ui.input, height - 35.0 - input_height / 2.0),
             (
                 &ui.shortcut_label,
                 height - if switching { 26.0 } else { 44.0 },
@@ -2903,15 +2922,13 @@ impl Delegate {
         let icon_x = app_x + app_width + 8.0;
         let icon_size = if normal { 24.0 } else { 20.0 };
         let title_x = icon_x + icon_size + 10.0;
-        let text_height = if normal { 24.0 } else { 20.0 };
-        let text_y = (frame.size.height - text_height) / 2.0;
         let title = label(
             "",
             if normal { 15.0 } else { 13.0 },
-            rect(title_x, text_y, LIST_WIDTH - title_x - 14.0, text_height),
+            rect(title_x, 0.0, LIST_WIDTH - title_x - 14.0, 0.0),
             mtm,
         );
-        let app = label("", 13.0, rect(app_x, text_y, app_width, text_height), mtm);
+        let app = label("", 13.0, rect(app_x, 0.0, app_width, 0.0), mtm);
         app.setFont(Some(&NSFont::systemFontOfSize_weight(
             if normal { 14.0 } else { 12.0 },
             unsafe { NSFontWeightMedium },
@@ -2920,6 +2937,10 @@ impl Delegate {
         for field in [&title, &app] {
             field.setMaximumNumberOfLines(1);
             field.setLineBreakMode(NSLineBreakMode::ByTruncatingTail);
+            let mut text_frame = field.frame();
+            text_frame.size.height = field.intrinsicContentSize().height;
+            text_frame.origin.y = (frame.size.height - text_frame.size.height) / 2.0;
+            field.setFrame(text_frame);
             button.addSubview(field);
         }
         let alias = label("", 10.0, NSRect::ZERO, mtm);
@@ -3249,23 +3270,24 @@ impl Delegate {
     }
 
     fn execute_command(&self, command: CommandId) {
-        match command {
-            CommandId::ShowMenu => {
-                let Some(display) = self.ivars().keyboard_display.get() else {
-                    self.selection_failed(tr!(
-                        "找不到当前屏幕，请重新打开搜索。",
-                        "Display unavailable. Reopen search and try again."
-                    ));
-                    return;
-                };
-                match crate::menu_bar::Reveal::prepare(display, self.mtm()) {
-                    Ok(reveal) => {
-                        self.dismiss();
-                        reveal.show();
-                    }
-                    Err(error) => self.selection_failed(&error),
+        match crate::system_commands::PreparedCommand::prepare(
+            command,
+            self.ivars().keyboard_display.get(),
+            self.mtm(),
+        ) {
+            Ok(prepared) => {
+                if command == CommandId::ShowMenu {
+                    self.dismiss();
+                } else {
+                    // Reactivating an app afterward would interrupt Mission Control or locking.
+                    self.cancel_routing();
+                    self.end_session();
+                }
+                if let Err(error) = prepared.execute() {
+                    self.selection_failed(&error);
                 }
             }
+            Err(error) => self.selection_failed(&error),
         }
     }
 

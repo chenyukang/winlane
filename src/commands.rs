@@ -3,6 +3,9 @@ use crate::{i18n::Locale, tr};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CommandId {
     ShowMenu,
+    LockScreen,
+    Sleep,
+    MissionControl,
 }
 
 pub struct Command {
@@ -27,14 +30,40 @@ impl Command {
     }
 }
 
-pub const COMMANDS: &[Command] = &[Command {
-    id: CommandId::ShowMenu,
-    name: "show-menu",
-    title_en: "Show macOS menu bar",
-    title_zh: "显示 macOS 菜单栏",
-    symbol: "menubar.rectangle",
-    keywords: &["show menu", "menu bar", "menubar", "显示菜单栏", "菜单栏"],
-}];
+pub const COMMANDS: &[Command] = &[
+    Command {
+        id: CommandId::ShowMenu,
+        name: "show-menu",
+        title_en: "Show macOS menu bar",
+        title_zh: "显示 macOS 菜单栏",
+        symbol: "menubar.rectangle",
+        keywords: &["show menu", "menu bar", "menubar", "显示菜单栏", "菜单栏"],
+    },
+    Command {
+        id: CommandId::LockScreen,
+        name: "lock-screen",
+        title_en: "Lock screen",
+        title_zh: "锁定屏幕",
+        symbol: "lock",
+        keywords: &["lock screen", "lock", "锁屏", "锁定屏幕"],
+    },
+    Command {
+        id: CommandId::Sleep,
+        name: "sleep",
+        title_en: "Put Mac to sleep",
+        title_zh: "让 Mac 进入睡眠",
+        symbol: "moon.zzz",
+        keywords: &["sleep mac", "睡眠", "休眠"],
+    },
+    Command {
+        id: CommandId::MissionControl,
+        name: "mission-control",
+        title_en: "Open Mission Control",
+        title_zh: "打开调度中心",
+        symbol: "rectangle.3.group",
+        keywords: &["mission control", "调度中心", "窗口总览"],
+    },
+];
 
 impl CommandId {
     pub fn definition(self) -> &'static Command {

@@ -71,7 +71,7 @@ Search also tolerates misspelled words in app names and window titles: `chorme` 
 
 An empty search shows existing windows. Once you type, matching installed apps also appear with a **↗ Launch app** label, so you can open an app that is not running yet. Apps that already have windows are not repeated as launch results.
 
-You can also run Winlane commands from search. Type **show-menu** (or **menu**) and choose **Show macOS menu bar**. The command closes the picker and moves the pointer to the top edge of that display to reveal the whole menu bar, including status icons. It does not click a menu or change your auto-hide settings; moving the pointer away lets macOS hide the bar again. The system's reveal animation still applies. Commands use a **>_** badge and appear only when your search matches them. See [adding commands](docs/commands.md) to extend the built-in registry.
+You can also run commands from search: **lock-screen**, **sleep**, **mission-control**, and **show-menu**. Type a command name or a keyword such as **lock**, **mission control**, or **菜单栏**, then press Enter to run it. Commands use a **>_** badge and appear only when your search matches them. `mission-control` opens the macOS overview so you can choose a window or desktop. `show-menu` moves the pointer to the display's top edge to reveal the whole menu bar without changing auto-hide settings. See [built-in commands](docs/commands.md) for details and how to add more.
 
 Press **Space** in the switcher to start searching. In an empty search field, Space returns to switching; with text already entered, it remains a normal space. Input-method composition keeps its usual keyboard behavior.
 
