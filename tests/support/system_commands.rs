@@ -1,7 +1,20 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 static LOCK_CALLS: AtomicUsize = AtomicUsize::new(0);
 static MISSION_CONTROL_CALLS: AtomicUsize = AtomicUsize::new(0);
+static DARK_APPEARANCE: AtomicBool = AtomicBool::new(false);
+static APPEARANCE_READS: AtomicUsize = AtomicUsize::new(0);
+static APPEARANCE_WRITES: AtomicUsize = AtomicUsize::new(0);
+
+unsafe extern "C" fn read_appearance() -> Bool {
+    APPEARANCE_READS.fetch_add(1, Ordering::Relaxed);
+    Bool::new(DARK_APPEARANCE.load(Ordering::Relaxed))
+}
+
+unsafe extern "C" fn set_appearance(dark: Bool) {
+    APPEARANCE_WRITES.fetch_add(1, Ordering::Relaxed);
+    DARK_APPEARANCE.store(dark.as_bool(), Ordering::Relaxed);
+}
 
 unsafe extern "C" fn record_mission_control(message: CFStringRef, flags: i32) -> i32 {
     if message.is_null() || flags != 0 { return 1001; }
@@ -16,6 +29,22 @@ unsafe extern "C" fn record_lock() {
 }
 
 pub fn verify_prepared_commands(mtm: MainThreadMarker) {
+    for (index, dark) in [false, true].into_iter().enumerate() {
+        let mut appearance = PreparedCommand::prepare(CommandId::ToggleAppearance, None, mtm).unwrap();
+        let Operation::Appearance { current, set, .. } = &mut appearance.operation else {
+            panic!("appearance toggle must resolve system getter and setter");
+        };
+        // Keep the real functions uncalled; only dispatch to the isolated state below.
+        *current = read_appearance;
+        *set = set_appearance;
+        assert_eq!(APPEARANCE_READS.load(Ordering::Relaxed), index);
+        assert_eq!(APPEARANCE_WRITES.load(Ordering::Relaxed), index);
+        DARK_APPEARANCE.store(dark, Ordering::Relaxed);
+        appearance.execute().unwrap();
+        assert_eq!(DARK_APPEARANCE.load(Ordering::Relaxed), !dark);
+        assert_eq!(APPEARANCE_READS.load(Ordering::Relaxed), index + 1);
+        assert_eq!(APPEARANCE_WRITES.load(Ordering::Relaxed), index + 1);
+    }
     // Resolve actual system interfaces, but replace callable functions before exercising dispatch.
     let mut lock = PreparedCommand::prepare(CommandId::LockScreen, None, mtm).unwrap();
     let Operation::Lock { lock: function, .. } = &mut lock.operation else {
@@ -68,5 +97,5 @@ pub fn verify_prepared_commands(mtm: MainThreadMarker) {
         assert!(error.contains(command.definition().title()));
         assert!(error.contains("ffffffff"));
     }
-    println!("System command checks passed: native interfaces resolved, dispatch recorded, error handling verified; no screen locked, sleep requested or desktop changed.");
+    println!("System command checks passed: native interfaces resolved, light/dark toggles dispatched to isolated state, error handling verified; no system appearance, screen lock, sleep or desktop changed.");
 }

@@ -1,6 +1,6 @@
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Sel};
-use objc2::{MainThreadOnly, define_class, msg_send, sel};
+use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::*;
 use objc2_foundation::{
     MainThreadMarker, NSLocale, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString,
@@ -125,11 +125,6 @@ pub(crate) struct ShortcutControls {
 }
 
 impl ShortcutControls {
-    fn new(view: &NSView, title: &str, y: f64, switching: bool, mtm: MainThreadMarker) -> Self {
-        view.addSubview(&label(title, 14.0, rect(30.0, y, 500.0, 24.0), mtm));
-        Self::at(view, y - 32.0, switching, mtm)
-    }
-
     pub(crate) fn at(view: &NSView, y: f64, switching: bool, mtm: MainThreadMarker) -> Self {
         let modifiers =
             ["⌃ Control", "⌥ Option", "⇧ Shift", "⌘ Command"].map(|title| checkbox(title, mtm));
@@ -221,6 +216,73 @@ struct SearchShortcutRow {
     remove: Retained<NSButton>,
 }
 
+#[derive(Debug)]
+struct NavigationStyle {
+    color: Retained<NSColor>,
+    symbol: Option<Retained<NSImage>>,
+}
+
+define_class!(
+    // SAFETY: Settings navigation and drawing stay on AppKit's main thread.
+    #[unsafe(super = NSButton)]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = NavigationStyle]
+    #[derive(Debug)]
+    struct SettingsNavigationButton;
+    unsafe impl NSObjectProtocol for SettingsNavigationButton {}
+    impl SettingsNavigationButton {
+        #[unsafe(method(drawRect:))]
+        fn draw(&self, dirty: NSRect) {
+            if self.state() == NSControlStateValueOn || self.isHighlighted() {
+                NSColor::labelColor().colorWithAlphaComponent(0.09).setFill();
+                NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(self.bounds(), 9.0, 9.0).fill();
+            }
+            // SAFETY: The native button draws its title and keyboard focus indication.
+            unsafe { let _: () = msg_send![super(self), drawRect: dirty]; }
+            self.ivars().color.setFill();
+            NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(rect(10.0, 7.0, 26.0, 26.0), 6.0, 6.0).fill();
+            if let Some(symbol) = &self.ivars().symbol {
+                // SAFETY: No drawing hints are provided; respect the native button's flipped coordinates.
+                unsafe { symbol.drawInRect_fromRect_operation_fraction_respectFlipped_hints(rect(14.0, 11.0, 18.0, 18.0), NSRect::ZERO, NSCompositingOperation::SourceOver, 1.0, true, None); }
+            }
+        }
+    }
+);
+
+impl SettingsNavigationButton {
+    fn new(
+        title: &str,
+        symbol: &str,
+        color: Retained<NSColor>,
+        frame: NSRect,
+        target: &AnyObject,
+        mtm: MainThreadMarker,
+    ) -> Retained<Self> {
+        let symbol = NSImage::imageWithSystemSymbolName_accessibilityDescription(
+            &NSString::from_str(symbol),
+            None,
+        )
+        .and_then(|image| {
+            image.imageWithSymbolConfiguration(
+                &NSImageSymbolConfiguration::configurationWithHierarchicalColor(
+                    &NSColor::whiteColor(),
+                ),
+            )
+        });
+        let this = Self::alloc(mtm).set_ivars(NavigationStyle { color, symbol });
+        // SAFETY: The button is initialized once with its main-thread-owned drawing state.
+        let this: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: frame] };
+        this.setTitle(&NSString::from_str(&format!("           {title}")));
+        this.setFont(Some(&NSFont::systemFontOfSize(14.0)));
+        this.setAlignment(NSTextAlignment::Left);
+        this.setBordered(false);
+        this.setButtonType(NSButtonType::MomentaryChange);
+        this.setAccessibilityLabel(Some(&NSString::from_str(title)));
+        set_action(&this, target, sel!(selectSettingsSection:));
+        this
+    }
+}
+
 pub struct SettingsWindow {
     pub window: Retained<NSWindow>,
     search_shortcut: ShortcutControls,
@@ -231,6 +293,12 @@ pub struct SettingsWindow {
     add_search: Retained<NSButton>,
     switch_shortcut: ShortcutControls,
     tabs: Retained<NSTabView>,
+    navigation: Vec<Retained<SettingsNavigationButton>>,
+    page_title: Retained<NSTextField>,
+    page_description: Retained<NSTextField>,
+    search_card: Retained<NSView>,
+    switch_card: Retained<NSView>,
+    app_shortcuts_card: Retained<NSView>,
     snippets_tab: Retained<NSView>,
     quicklinks_tab: Retained<NSView>,
     clipboard: crate::clipboard_settings::ClipboardControls,
@@ -260,157 +328,216 @@ pub struct SettingsWindow {
 
 impl SettingsWindow {
     pub fn new(target: &AnyObject, mtm: MainThreadMarker) -> Self {
-        let window = preferences_window(rect(0.0, 0.0, 800.0, 620.0), mtm);
+        let window = preferences_window(rect(0.0, 0.0, 1020.0, 740.0), mtm);
         window.setTitle(&NSString::from_str(tr!("Winlane 设置", "Winlane Settings")));
-        let view = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 800.0, 620.0));
+        window.setTitleVisibility(NSWindowTitleVisibility::Hidden);
+        window.setTitlebarAppearsTransparent(true);
+        let view = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 1020.0, 740.0));
         window.setContentView(Some(&view));
-        view.addSubview(&label(
-            tr!("Winlane 设置", "Winlane Settings"),
-            23.0,
-            rect(28.0, 558.0, 650.0, 33.0),
+        let sidebar = NSVisualEffectView::initWithFrame(
+            NSVisualEffectView::alloc(mtm),
+            rect(0.0, 0.0, 220.0, 740.0),
+        );
+        sidebar.setMaterial(NSVisualEffectMaterial::Sidebar);
+        sidebar.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
+        view.addSubview(&sidebar);
+        let brand = label("Winlane", 21.0, rect(24.0, 677.0, 178.0, 32.0), mtm);
+        brand.setFont(Some(&NSFont::boldSystemFontOfSize(21.0)));
+        sidebar.addSubview(&brand);
+        sidebar.addSubview(&hint(
+            env!("CARGO_PKG_VERSION"),
+            rect(25.0, 654.0, 175.0, 22.0),
             mtm,
         ));
-        view.addSubview(&hint(
-            tr!(
-                "设置保存在本机；窗口标题与搜索历史不会保存。",
-                "Settings stay on this Mac. Window titles and search history are not saved."
-            ),
-            rect(28.0, 530.0, 660.0, 25.0),
+        sidebar.addSubview(&hint(
+            tr!("偏好设置", "PREFERENCES"),
+            rect(24.0, 618.0, 178.0, 20.0),
             mtm,
         ));
-        let tabs = NSTabView::initWithFrame(NSTabView::alloc(mtm), rect(20.0, 112.0, 760.0, 404.0));
-        tabs.setTabViewType(NSTabViewType::TopTabsBezelBorder);
-        tabs.setAutoresizingMask(NSAutoresizingMaskOptions::ViewHeightSizable);
-        for child in view.subviews() {
-            child.setAutoresizingMask(NSAutoresizingMaskOptions::ViewMinYMargin);
-        }
+        sidebar.addSubview(&hint(
+            tr!("工具", "TOOLS"),
+            rect(24.0, 314.0, 178.0, 20.0),
+            mtm,
+        ));
+        let divider = NSBox::initWithFrame(NSBox::alloc(mtm), rect(219.0, 0.0, 1.0, 740.0));
+        divider.setBoxType(NSBoxType::Separator);
+        view.addSubview(&divider);
+        let page_title = label("", 25.0, rect(252.0, 677.0, 740.0, 36.0), mtm);
+        page_title.setFont(Some(&NSFont::boldSystemFontOfSize(25.0)));
+        view.addSubview(&page_title);
+        let page_description = hint("", rect(252.0, 632.0, 740.0, 38.0), mtm);
+        page_description.setFont(Some(&NSFont::systemFontOfSize(13.0)));
+        view.addSubview(&page_description);
+        let tabs = NSTabView::initWithFrame(NSTabView::alloc(mtm), rect(252.0, 48.0, 740.0, 574.0));
+        tabs.setTabViewType(NSTabViewType::NoTabsNoBorder);
+        tabs.setDrawsBackground(false);
         view.addSubview(&tabs);
         let shortcuts_host = settings_tab(&tabs, tr!("快捷键", "Shortcuts"), mtm);
-        let shortcuts_scroll =
-            NSScrollView::initWithFrame(NSScrollView::alloc(mtm), shortcuts_host.bounds());
-        shortcuts_scroll.setAutoresizingMask(
-            NSAutoresizingMaskOptions::ViewWidthSizable
-                | NSAutoresizingMaskOptions::ViewHeightSizable,
-        );
-        shortcuts_scroll.setHasVerticalScroller(true);
-        shortcuts_scroll.setAutohidesScrollers(true);
-        shortcuts_scroll.setDrawsBackground(false);
-        let shortcuts = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 660.0, 350.0));
-        shortcuts_scroll.setDocumentView(Some(&shortcuts));
-        shortcuts_host.addSubview(&shortcuts_scroll);
-        let appearance_tab = settings_tab(&tabs, tr!("外观与语言", "Appearance"), mtm);
+        let appearance_tab = settings_tab(&tabs, tr!("外观", "Appearance"), mtm);
         let input_tab = settings_tab(&tabs, tr!("输入", "Input"), mtm);
         let windows = settings_tab(&tabs, tr!("窗口列表", "Windows"), mtm);
-        let startup = settings_tab(&tabs, tr!("启动与更新", "Startup"), mtm);
+        let general = settings_tab(&tabs, tr!("常规", "General"), mtm);
         let aliases = settings_tab(&tabs, tr!("Alias 规则", "Aliases"), mtm);
         let snippets_tab = settings_tab(&tabs, tr!("文本片段", "Snippets"), mtm);
         let clipboard_tab = settings_tab(&tabs, tr!("剪贴板", "Clipboard"), mtm);
         let quicklinks_tab = settings_tab(&tabs, tr!("快捷链接", "Quicklinks"), mtm);
-        let clipboard =
-            crate::clipboard_settings::ClipboardControls::new(&clipboard_tab, target, mtm);
-        aliases.addSubview(&label(
-            tr!(
-                "固定应用与项目的字母",
-                "Keep familiar aliases for apps and projects"
-            ),
-            16.0,
-            rect(30.0, 303.0, 600.0, 30.0),
-            mtm,
-        ));
-        aliases.addSubview(&hint(tr!("例如 w → WeChat，ck → Code 的 ckb 项目。\n规则优先于自动分配，重启后保留；标题关键词不区分大小写。", "For example, w → WeChat, ck → the ckb project in Code.\nRules override automatic aliases and survive restarts. Title matching ignores case."), rect(30.0, 218.0, 600.0, 70.0), mtm));
-        aliases.addSubview(&button(
-            tr!("配置 Alias 规则…", "Alias Rules…"),
+        let mut navigation = Vec::new();
+        for (position, (index, symbol, color)) in [
+            (4, "gearshape.fill", NSColor::systemGrayColor()),
+            (1, "paintpalette.fill", NSColor::systemPinkColor()),
+            (0, "keyboard", NSColor::systemPurpleColor()),
+            (2, "character.cursor.ibeam", NSColor::systemBlueColor()),
+            (3, "macwindow.on.rectangle", NSColor::systemIndigoColor()),
+            (5, "textformat.abc", NSColor::systemTealColor()),
+            (6, "text.quote", NSColor::systemGreenColor()),
+            (7, "doc.on.clipboard", NSColor::systemOrangeColor()),
+            (8, "link", NSColor::systemCyanColor()),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let y = if position < 6 {
+                568.0 - position as f64 * 44.0
+            } else {
+                264.0 - (position - 6) as f64 * 44.0
+            };
+            let item = tabs.tabViewItemAtIndex(index);
+            let control = SettingsNavigationButton::new(
+                &item.label().to_string(),
+                symbol,
+                color,
+                rect(12.0, y, 196.0, 40.0),
+                target,
+                mtm,
+            );
+            control.setTag(index);
+            sidebar.addSubview(&control);
+            navigation.push(control);
+        }
+        sidebar.addSubview(&button(
+            tr!("恢复默认设置", "Restore Defaults"),
             target,
-            sel!(showAliasRules:),
-            rect(30.0, 166.0, 240.0, 32.0),
+            sel!(resetSettings:),
+            rect(16.0, 20.0, 188.0, 30.0),
             mtm,
         ));
 
+        let shortcuts_scroll =
+            NSScrollView::initWithFrame(NSScrollView::alloc(mtm), shortcuts_host.bounds());
+        shortcuts_scroll.setHasVerticalScroller(true);
+        shortcuts_scroll.setAutohidesScrollers(true);
+        shortcuts_scroll.setScrollerStyle(NSScrollerStyle::Overlay);
+        shortcuts_scroll.setDrawsBackground(false);
+        let shortcuts = NSView::initWithFrame(NSView::alloc(mtm), shortcuts_host.bounds());
+        shortcuts_scroll.setDocumentView(Some(&shortcuts));
+        shortcuts_host.addSubview(&shortcuts_scroll);
+        let search_card = card(&shortcuts, rect(0.0, 470.0, 740.0, 104.0), mtm);
         let search_header =
-            NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 244.0, 660.0, 106.0));
-        shortcuts.addSubview(&search_header);
+            NSView::initWithFrame(NSView::alloc(mtm), rect(40.0, 0.0, 660.0, 104.0));
+        search_card.addSubview(&search_header);
         let add_search = button(
             tr!("＋ 添加搜索快捷键", "＋ Add Search Shortcut"),
             target,
             sel!(addSearchShortcut:),
-            rect(435.0, 70.0, 200.0, 28.0),
+            rect(435.0, 60.0, 200.0, 28.0),
             mtm,
         );
         search_header.addSubview(&add_search);
         search_header.addSubview(&label(
             tr!("搜索模式", "Search mode"),
-            14.0,
-            rect(30.0, 71.0, 380.0, 24.0),
+            15.0,
+            rect(30.0, 60.0, 380.0, 24.0),
             mtm,
         ));
-        let search_shortcut = ShortcutControls::at(&search_header, 39.0, false, mtm);
-        search_header.addSubview(&hint(
-            tr!(
-                "可添加多个组合，均用于打开或关闭搜索；Enter 确认。",
-                "Add shortcuts to open or close the same search panel; Enter selects."
-            ),
-            rect(30.0, 0.0, 600.0, 32.0),
+        let search_shortcut = ShortcutControls::at(&search_header, 19.0, false, mtm);
+        let switch_card = card(&shortcuts, rect(0.0, 350.0, 740.0, 104.0), mtm);
+        let switch_content =
+            NSView::initWithFrame(NSView::alloc(mtm), rect(40.0, 0.0, 660.0, 104.0));
+        switch_card.addSubview(&switch_content);
+        switch_content.addSubview(&label(
+            tr!("切换模式", "Switch mode"),
+            15.0,
+            rect(30.0, 60.0, 600.0, 24.0),
             mtm,
         ));
-        let switch_shortcut =
-            ShortcutControls::new(&shortcuts, tr!("切换模式", "Switch mode"), 207.0, true, mtm);
-        shortcuts.addSubview(&hint(
-            tr!(
-                "重复按键选择，松开主修饰键确认；Space 进入搜索。",
-                "Press repeatedly to select; release the modifier to switch. Space opens search."
-            ),
-            rect(30.0, 136.0, 600.0, 32.0),
-            mtm,
-        ));
-        let divider = NSBox::initWithFrame(NSBox::alloc(mtm), rect(30.0, 109.0, 600.0, 1.0));
-        divider.setBoxType(NSBoxType::Separator);
-        shortcuts.addSubview(&divider);
-        shortcuts.addSubview(&label(
+        let switch_shortcut = ShortcutControls::at(&switch_content, 19.0, true, mtm);
+        let app_shortcuts_card = card(&shortcuts, rect(0.0, 270.0, 740.0, 64.0), mtm);
+        app_shortcuts_card.addSubview(&label(
             tr!("应用快捷键", "App shortcuts"),
-            14.0,
-            rect(30.0, 68.0, 410.0, 24.0),
+            15.0,
+            rect(24.0, 20.0, 470.0, 25.0),
             mtm,
         ));
-        shortcuts.addSubview(&hint(
-            tr!(
-                "为常用应用绑定固定快捷键，未运行时自动启动。",
-                "Assign a shortcut to any app. Launch it if it is not running."
-            ),
-            rect(30.0, 26.0, 410.0, 38.0),
-            mtm,
-        ));
-        shortcuts.addSubview(&button(
+        app_shortcuts_card.addSubview(&button(
             tr!("配置应用快捷键…", "App Shortcuts…"),
             target,
             sel!(showAppShortcuts:),
-            rect(455.0, 61.0, 175.0, 32.0),
+            rect(510.0, 17.0, 208.0, 30.0),
             mtm,
         ));
 
-        appearance_tab.addSubview(&label(
-            tr!("界面语言", "Language"),
-            14.0,
-            rect(30.0, 315.0, 215.0, 25.0),
-            mtm,
-        ));
-        let language = popup(
-            &[tr!("跟随系统", "System"), "中文", "English"],
-            rect(260.0, 312.0, 370.0, 28.0),
+        let localization = settings_group(&general, tr!("语言", "Language"), 570.0, 80.0, mtm);
+        row_text(
+            &localization,
+            tr!("界面语言", "Interface language"),
+            tr!("更改立即生效。", "Changes take effect immediately."),
+            80.0,
+            390.0,
             mtm,
         );
-        appearance_tab.addSubview(&language);
-        appearance_tab.addSubview(&hint(
-            tr!(
-                "跟随 macOS 的首选语言；更改立即生效。",
-                "Use your preferred macOS language. Changes take effect immediately."
-            ),
-            rect(30.0, 274.0, 600.0, 32.0),
+        let language = popup(
+            &[tr!("跟随系统", "System"), "中文", "English"],
+            rect(420.0, 25.0, 300.0, 28.0),
+            mtm,
+        );
+        localization.addSubview(&language);
+        let startup = settings_group(&general, tr!("启动", "Startup"), 436.0, 114.0, mtm);
+        let login = checkbox(tr!("登录时自动启动", "Launch at login"), mtm);
+        login.setFrame(rect(20.0, 72.0, 360.0, 26.0));
+        set_action(&login, target, sel!(toggleLogin:));
+        startup.addSubview(&login);
+        startup.addSubview(&button(
+            tr!("管理登录项…", "Manage Login Items…"),
+            target,
+            sel!(manageLogin:),
+            rect(500.0, 69.0, 220.0, 30.0),
             mtm,
         ));
-        appearance_tab.addSubview(&label(
+        let login_status = hint("", rect(22.0, 18.0, 696.0, 44.0), mtm);
+        startup.addSubview(&login_status);
+        let updates = settings_group(&general, tr!("更新", "Updates"), 268.0, 116.0, mtm);
+        let automatic_updates =
+            checkbox(tr!("自动检查更新", "Automatically check for updates"), mtm);
+        automatic_updates.setFrame(rect(20.0, 73.0, 448.0, 27.0));
+        set_action(&automatic_updates, target, sel!(toggleAutomaticUpdates:));
+        automatic_updates.setEnabled(false);
+        updates.addSubview(&automatic_updates);
+        let check_updates = button(
+            tr!("检查更新…", "Check for Updates…"),
+            target,
+            sel!(checkForUpdates:),
+            rect(500.0, 71.0, 220.0, 28.0),
+            mtm,
+        );
+        check_updates.setEnabled(false);
+        updates.addSubview(&check_updates);
+        let update_status = hint("", rect(22.0, 14.0, 696.0, 48.0), mtm);
+        update_status.setMaximumNumberOfLines(3);
+        updates.addSubview(&update_status);
+        general.addSubview(&hint(
+            tr!(
+                "设置保存在本机；窗口标题与搜索历史不会保存。",
+                "Settings stay on this Mac. Window titles and search history are not saved."
+            ),
+            rect(16.0, 43.0, 708.0, 42.0),
+            mtm,
+        ));
+
+        let display = settings_group(&appearance_tab, tr!("显示", "Display"), 570.0, 192.0, mtm);
+        display.addSubview(&label(
             tr!("外观", "Appearance"),
             14.0,
-            rect(30.0, 245.0, 215.0, 25.0),
+            rect(20.0, 150.0, 300.0, 24.0),
             mtm,
         ));
         let appearance = popup(
@@ -419,43 +546,60 @@ impl SettingsWindow {
                 tr!("浅色", "Light"),
                 tr!("深色", "Dark"),
             ],
-            rect(260.0, 242.0, 370.0, 28.0),
+            rect(420.0, 148.0, 300.0, 28.0),
             mtm,
         );
-        appearance_tab.addSubview(&appearance);
-        appearance_tab.addSubview(&label(
+        display.addSubview(&appearance);
+        row_divider(&display, 128.0, mtm);
+        row_text(
+            &display,
             tr!("显示密度", "Display density"),
-            14.0,
-            rect(30.0, 199.0, 215.0, 25.0),
+            tr!(
+                "标准模式使用更大的文字和图标。",
+                "Normal uses larger text and icons."
+            ),
+            124.0,
+            380.0,
             mtm,
-        ));
+        );
         let density = popup(
             &[tr!("紧凑", "Compact"), tr!("标准", "Normal")],
-            rect(260.0, 196.0, 370.0, 28.0),
+            rect(420.0, 73.0, 300.0, 28.0),
             mtm,
         );
         density.setAccessibilityLabel(Some(&NSString::from_str(tr!(
             "显示密度",
             "Display density"
         ))));
-        appearance_tab.addSubview(&density);
-        appearance_tab.addSubview(&hint(
+        display.addSubview(&density);
+        row_divider(&display, 49.0, mtm);
+        let usage_hints = checkbox(
             tr!(
-                "标准模式使用更大的文字、图标和行距，适用于搜索和切换面板。",
-                "Normal uses larger text, icons, and rows in search and switch panels."
+                "显示底部提示和设置按钮",
+                "Show footer hints and Settings button"
             ),
-            rect(30.0, 158.0, 600.0, 30.0),
             mtm,
-        ));
-
-        appearance_tab.addSubview(&label(
+        );
+        usage_hints.setFrame(rect(20.0, 13.0, 690.0, 26.0));
+        set_action(&usage_hints, target, sel!(settingsChanged:));
+        display.addSubview(&usage_hints);
+        let opacity = settings_group(
+            &appearance_tab,
             tr!("背景不透明度", "Background opacity"),
-            14.0,
-            rect(30.0, 119.0, 215.0, 25.0),
+            324.0,
+            196.0,
+            mtm,
+        );
+        opacity.addSubview(&hint(
+            tr!(
+                "降低百分比可透出更多背景；文字和图标保持清晰。",
+                "Lower values reveal more background. Text and icons stay clear."
+            ),
+            rect(20.0, 148.0, 700.0, 30.0),
             mtm,
         ));
         let opacity_slider =
-            NSSlider::initWithFrame(NSSlider::alloc(mtm), rect(260.0, 120.0, 275.0, 24.0));
+            NSSlider::initWithFrame(NSSlider::alloc(mtm), rect(20.0, 109.0, 594.0, 24.0));
         opacity_slider.setMinValue(0.0);
         opacity_slider.setMaxValue(100.0);
         opacity_slider.setContinuous(true);
@@ -464,40 +608,23 @@ impl SettingsWindow {
             "Background opacity"
         ))));
         let opacity_input =
-            NSTextField::initWithFrame(NSTextField::alloc(mtm), rect(550.0, 117.0, 58.0, 26.0));
+            NSTextField::initWithFrame(NSTextField::alloc(mtm), rect(634.0, 107.0, 58.0, 26.0));
         opacity_input.setAlignment(NSTextAlignment::Right);
         opacity_input.setAccessibilityLabel(Some(&NSString::from_str(tr!(
             "不透明度百分比",
             "Opacity percentage"
         ))));
-        // SAFETY: The delegate outlives these controls and implements both actions.
-        unsafe {
-            opacity_slider.setTarget(Some(target));
-            opacity_slider.setAction(Some(sel!(changeBackgroundOpacity:)));
-            opacity_input.setTarget(Some(target));
-            opacity_input.setAction(Some(sel!(commitBackgroundOpacity:)));
-        }
-        appearance_tab.addSubview(&opacity_slider);
-        appearance_tab.addSubview(&opacity_input);
-        appearance_tab.addSubview(&label("%", 13.0, rect(613.0, 119.0, 18.0, 24.0), mtm));
-        let opacity_hint = NSTextField::wrappingLabelWithString(
-            &NSString::from_str(tr!(
-                "100% 保持当前效果；数值越低，背景越透明。文字和图标保持清晰，更改自动保存。",
-                "100% keeps the current look. Lower values reveal more background. Text and icons stay clear. Changes save automatically."
-            )),
-            mtm,
-        );
-        opacity_hint.setFont(Some(&NSFont::systemFontOfSize(12.0)));
-        opacity_hint.setTextColor(Some(&NSColor::secondaryLabelColor()));
-        opacity_hint.setFrame(rect(30.0, 74.0, 600.0, 36.0));
-        opacity_hint.setMaximumNumberOfLines(2);
-        appearance_tab.addSubview(&opacity_hint);
-        let sample = NSView::initWithFrame(NSView::alloc(mtm), rect(30.0, 38.0, 600.0, 28.0));
+        set_action(&opacity_slider, target, sel!(changeBackgroundOpacity:));
+        set_action(&opacity_input, target, sel!(commitBackgroundOpacity:));
+        opacity.addSubview(&opacity_slider);
+        opacity.addSubview(&opacity_input);
+        opacity.addSubview(&label("%", 13.0, rect(700.0, 109.0, 20.0, 24.0), mtm));
+        let sample = NSView::initWithFrame(NSView::alloc(mtm), rect(20.0, 20.0, 700.0, 64.0));
         for (x, color) in [
             (0.0, NSColor::systemIndigoColor()),
-            (300.0, NSColor::systemTealColor()),
+            (350.0, NSColor::systemTealColor()),
         ] {
-            let tile = NSBox::initWithFrame(NSBox::alloc(mtm), rect(x, 0.0, 300.0, 28.0));
+            let tile = NSBox::initWithFrame(NSBox::alloc(mtm), rect(x, 0.0, 350.0, 64.0));
             tile.setBoxType(NSBoxType::Custom);
             tile.setBorderWidth(0.0);
             tile.setFillColor(&color.colorWithAlphaComponent(0.35));
@@ -512,25 +639,22 @@ impl SettingsWindow {
                 "Preview · Search and switch panels"
             ),
             14.0,
-            rect(18.0, 3.0, 565.0, 23.0),
+            rect(18.0, 20.0, 665.0, 24.0),
             mtm,
         ));
-        appearance_tab.addSubview(&sample);
-        let usage_hints = checkbox(
-            tr!(
-                "显示底部提示和设置按钮",
-                "Show footer hints and Settings button"
-            ),
+        opacity.addSubview(&sample);
+
+        let source = settings_group(
+            &input_tab,
+            tr!("搜索输入法", "Search input source"),
+            570.0,
+            112.0,
             mtm,
         );
-        usage_hints.setFrame(rect(30.0, 2.0, 600.0, 26.0));
-        set_action(&usage_hints, target, sel!(settingsChanged:));
-        appearance_tab.addSubview(&usage_hints);
-
-        input_tab.addSubview(&label(
-            tr!("搜索输入法", "Search input method"),
+        source.addSubview(&label(
+            tr!("打开搜索时使用", "When search opens"),
             14.0,
-            rect(30.0, 315.0, 215.0, 25.0),
+            rect(20.0, 72.0, 285.0, 24.0),
             mtm,
         ));
         let input_method = popup(
@@ -540,55 +664,58 @@ impl SettingsWindow {
                 tr!("始终中文", "Always Chinese"),
                 tr!("记住 Winlane 上次使用", "Last used in Winlane"),
             ],
-            rect(260.0, 312.0, 370.0, 28.0),
+            rect(330.0, 69.0, 390.0, 28.0),
             mtm,
         );
         input_method.setAccessibilityLabel(Some(&NSString::from_str(tr!(
             "搜索输入法",
             "Search input method"
         ))));
-        input_tab.addSubview(&input_method);
-        for (text, frame) in [
+        source.addSubview(&input_method);
+        source.addSubview(&hint(tr!("从切换模式按 Space 进入搜索时也会应用；输入过程中仍可手动切换。", "Also applies when Space opens search from switch mode. You can still change input sources while typing."), rect(20.0, 14.0, 700.0, 44.0), mtm));
+        let behavior = settings_group(
+            &input_tab,
+            tr!("输入行为", "How it works"),
+            404.0,
+            236.0,
+            mtm,
+        );
+        for (title, description, top) in [
             (
+                tr!("英文 / 中文", "English / Chinese"),
                 tr!(
-                    "进入搜索框时应用，包括从切换模式按 Space 进入搜索。输入过程中仍可手动切换输入法。",
-                    "Applied when you enter search, including Space from switch mode. You can still change input sources while typing."
+                    "使用 macOS 对应语言的已启用输入法，支持第三方输入法。",
+                    "Use the enabled input source macOS chooses for the language, including third-party input methods."
                 ),
-                rect(30.0, 245.0, 600.0, 52.0),
+                234.0,
             ),
             (
+                tr!("记住上次使用", "Last used in Winlane"),
                 tr!(
-                    "英文 / 中文：使用 macOS 为该语言选择的已启用输入法，支持第三方输入法。",
-                    "English / Chinese: use the enabled input source macOS chooses for that language, including third-party input methods."
+                    "记住上次在 Winlane 中使用的输入法，重启后也会保留。",
+                    "Remember the last input source used in Winlane, even after restarting."
                 ),
-                rect(30.0, 169.0, 600.0, 52.0),
+                157.0,
             ),
             (
+                tr!("输入法不可用时", "If a source is unavailable"),
                 tr!(
-                    "记住上次：保存上次在 Winlane 搜索框中使用的输入法，重启后也会保留。",
-                    "Last used: remember the input source used in Winlane search, even after restarting Winlane."
+                    "保留当前输入法。切换模式中的 alias 不受影响。",
+                    "Keep the current input source. Switch-mode aliases are unaffected."
                 ),
-                rect(30.0, 101.0, 600.0, 52.0),
-            ),
-            (
-                tr!(
-                    "所需输入法未启用或已移除时，保留当前输入法。切换模式的 alias 不受影响。",
-                    "If the requested input source is unavailable, keep the current one. Switch-mode aliases are unaffected."
-                ),
-                rect(30.0, 33.0, 600.0, 52.0),
+                80.0,
             ),
         ] {
-            let text = NSTextField::wrappingLabelWithString(&NSString::from_str(text), mtm);
-            text.setFont(Some(&NSFont::systemFontOfSize(12.0)));
-            text.setTextColor(Some(&NSColor::secondaryLabelColor()));
-            text.setFrame(frame);
-            input_tab.addSubview(&text);
+            row_text(&behavior, title, description, top, 700.0, mtm);
         }
+        row_divider(&behavior, 158.0, mtm);
+        row_divider(&behavior, 81.0, mtm);
 
-        windows.addSubview(&label(
+        let listing = settings_group(&windows, tr!("窗口列表", "Window list"), 570.0, 130.0, mtm);
+        listing.addSubview(&label(
             tr!("窗口排序", "Sort windows"),
             14.0,
-            rect(30.0, 296.0, 215.0, 25.0),
+            rect(20.0, 91.0, 315.0, 24.0),
             mtm,
         ));
         let sort = popup(
@@ -597,133 +724,104 @@ impl SettingsWindow {
                 tr!("应用名称", "Application name"),
                 tr!("窗口标题", "Window title"),
             ],
-            rect(260.0, 293.0, 370.0, 28.0),
+            rect(375.0, 88.0, 345.0, 28.0),
             mtm,
         );
-        windows.addSubview(&sort);
+        listing.addSubview(&sort);
+        row_divider(&listing, 67.0, mtm);
         let minimized = checkbox(
             tr!("在列表中显示最小化窗口", "Include minimized windows"),
             mtm,
         );
-        minimized.setFrame(rect(30.0, 237.0, 600.0, 26.0));
-        windows.addSubview(&minimized);
-        windows.addSubview(&label(
-            tr!("排除这些应用", "Excluded apps"),
-            14.0,
-            rect(30.0, 173.0, 600.0, 25.0),
+        minimized.setFrame(rect(20.0, 23.0, 690.0, 26.0));
+        listing.addSubview(&minimized);
+        let exclusions = settings_group(
+            &windows,
+            tr!("排除的应用", "Excluded apps"),
+            386.0,
+            124.0,
             mtm,
-        ));
+        );
         let excluded =
-            NSTextField::initWithFrame(NSTextField::alloc(mtm), rect(30.0, 134.0, 600.0, 28.0));
+            NSTextField::initWithFrame(NSTextField::alloc(mtm), rect(20.0, 71.0, 700.0, 28.0));
         excluded.setPlaceholderString(Some(&NSString::from_str(tr!(
             "例如：Finder, Terminal",
             "For example: Finder, Terminal"
         ))));
-        windows.addSubview(&excluded);
-        set_action(&excluded, target, sel!(settingsChanged:));
-        excluded.cell().unwrap().setSendsActionOnEndEditing(true);
-        opacity_input
-            .cell()
-            .unwrap()
-            .setSendsActionOnEndEditing(true);
-        search_shortcut.on_change(target, sel!(settingsChanged:));
-        switch_shortcut.on_change(target, sel!(settingsChanged:));
-        for control in [&*language, &*appearance, &*density, &*sort, &*input_method] {
-            set_action(control, target, sel!(settingsChanged:));
-        }
-        set_action(&minimized, target, sel!(settingsChanged:));
-        windows.addSubview(&hint(
-            tr!(
-                "填写列表里显示的完整应用名，用逗号分隔。",
-                "Enter app names exactly as shown in the list, separated by commas."
-            ),
-            rect(30.0, 85.0, 600.0, 38.0),
-            mtm,
-        ));
-
-        windows.addSubview(&label(
+        exclusions.addSubview(&excluded);
+        exclusions.addSubview(&hint(tr!("填写列表中显示的完整应用名，用逗号分隔。这些应用将不出现在候选列表里。", "Enter app names exactly as shown in the list, separated by commas. These apps will be hidden from results."), rect(20.0, 18.0, 700.0, 42.0), mtm));
+        let timing = settings_group(&windows, tr!("响应速度", "Timing"), 208.0, 102.0, mtm);
+        row_text(
+            &timing,
             tr!("切换面板显示延迟（毫秒）", "Switcher display delay (ms)"),
-            13.0,
-            rect(30.0, 45.0, 360.0, 24.0),
-            mtm,
-        ));
-        let switch_delay =
-            NSTextField::initWithFrame(NSTextField::alloc(mtm), rect(480.0, 45.0, 150.0, 26.0));
-        switch_delay
-            .cell()
-            .unwrap()
-            .setSendsActionOnEndEditing(true);
-        set_action(&switch_delay, target, sel!(settingsChanged:));
-        windows.addSubview(&switch_delay);
-        windows.addSubview(&hint(
             tr!(
                 "快速松键直接切换；0 表示立即显示。",
                 "Quick releases switch directly; 0 shows the panel immediately."
             ),
-            rect(30.0, 8.0, 600.0, 30.0),
-            mtm,
-        ));
-
-        let login = checkbox(tr!("登录时自动启动", "Launch at login"), mtm);
-        login.setFrame(rect(30.0, 293.0, 330.0, 27.0));
-        set_action(&login, target, sel!(toggleLogin:));
-        startup.addSubview(&login);
-        startup.addSubview(&button(
-            tr!("管理登录项…", "Manage Login Items…"),
-            target,
-            sel!(manageLogin:),
-            rect(430.0, 292.0, 200.0, 28.0),
-            mtm,
-        ));
-        let login_status = hint("", rect(30.0, 237.0, 600.0, 43.0), mtm);
-        login_status.setMaximumNumberOfLines(2);
-        startup.addSubview(&login_status);
-        startup.addSubview(&hint(
-            tr!(
-                "已授权后，启动时仅显示菜单栏图标。",
-                "Once authorized, Winlane starts quietly in the menu bar."
-            ),
-            rect(30.0, 177.0, 600.0, 38.0),
-            mtm,
-        ));
-        let automatic_updates =
-            checkbox(tr!("自动检查更新", "Automatically check for updates"), mtm);
-        automatic_updates.setFrame(rect(30.0, 123.0, 375.0, 27.0));
-        set_action(&automatic_updates, target, sel!(toggleAutomaticUpdates:));
-        automatic_updates.setEnabled(false);
-        startup.addSubview(&automatic_updates);
-        let check_updates = button(
-            tr!("检查更新…", "Check for Updates…"),
-            target,
-            sel!(checkForUpdates:),
-            rect(430.0, 122.0, 200.0, 28.0),
+            89.0,
+            505.0,
             mtm,
         );
-        check_updates.setEnabled(false);
-        startup.addSubview(&check_updates);
-        let update_status = hint("", rect(30.0, 49.0, 600.0, 62.0), mtm);
-        update_status.setMaximumNumberOfLines(3);
-        startup.addSubview(&update_status);
+        let switch_delay =
+            NSTextField::initWithFrame(NSTextField::alloc(mtm), rect(560.0, 38.0, 160.0, 28.0));
+        timing.addSubview(&switch_delay);
+        for field in [&excluded, &switch_delay, &opacity_input] {
+            field.cell().unwrap().setSendsActionOnEndEditing(true);
+        }
+        let controls: [&NSControl; 8] = [
+            &*language,
+            &*appearance,
+            &*density,
+            &*sort,
+            &*input_method,
+            &*excluded,
+            &*switch_delay,
+            &*minimized,
+        ];
+        for control in controls {
+            set_action(control, target, sel!(settingsChanged:));
+        }
+        search_shortcut.on_change(target, sel!(settingsChanged:));
+        switch_shortcut.on_change(target, sel!(settingsChanged:));
 
-        let message = NSTextField::wrappingLabelWithString(ns_string!(""), mtm);
-        message.setFont(Some(&NSFont::systemFontOfSize(12.0)));
-        message.setFrame(rect(28.0, 62.0, 664.0, 38.0));
-        message.setMaximumNumberOfLines(2);
-        view.addSubview(&message);
-        view.addSubview(&button(
-            tr!("恢复默认设置", "Restore Defaults"),
-            target,
-            sel!(resetSettings:),
-            rect(28.0, 20.0, 190.0, 30.0),
+        let alias_card = settings_group(
+            &aliases,
+            tr!("应用与项目", "Apps & projects"),
+            570.0,
+            172.0,
+            mtm,
+        );
+        alias_card.addSubview(&label(
+            tr!("固定常用窗口的字母", "Keep familiar aliases"),
+            16.0,
+            rect(20.0, 130.0, 700.0, 25.0),
             mtm,
         ));
-        // SAFETY: The application delegate outlives the settings window and handles tab changes.
+        alias_card.addSubview(&hint(tr!("例如 w → WeChat，ck → Code 的 ckb 项目。\n规则优先于自动分配，重启后保留；标题关键词不区分大小写。", "For example, w → WeChat, ck → the ckb project in Code.\nRules override automatic aliases and survive restarts. Title matching ignores case."), rect(20.0, 68.0, 700.0, 50.0), mtm));
+        alias_card.addSubview(&button(
+            tr!("配置 Alias 规则…", "Alias Rules…"),
+            target,
+            sel!(showAliasRules:),
+            rect(500.0, 20.0, 220.0, 30.0),
+            mtm,
+        ));
+        let clipboard =
+            crate::clipboard_settings::ClipboardControls::new(&clipboard_tab, target, mtm);
+        let message = hint("", rect(252.0, 4.0, 740.0, 38.0), mtm);
+        view.addSubview(&message);
+        // SAFETY: The application delegate outlives the settings window and handles section changes.
         unsafe {
             let _: () = msg_send![&tabs, setDelegate: target];
         }
-        Self {
+        let settings = Self {
             window,
             tabs,
+            navigation,
+            page_title,
+            page_description,
+            search_card,
+            switch_card,
+            app_shortcuts_card,
             snippets_tab,
             quicklinks_tab,
             clipboard,
@@ -756,7 +854,9 @@ impl SettingsWindow {
             alias_rules: RefCell::default(),
             snippets: RefCell::default(),
             quicklinks: RefCell::default(),
-        }
+        };
+        settings.select_tab(4);
+        settings
     }
 
     pub fn fill(&self, config: &Config) {
@@ -845,7 +945,7 @@ impl SettingsWindow {
             "Remove search shortcut"
         ))));
         view.addSubview(&remove);
-        self.shortcuts_document.addSubview(&view);
+        self.search_card.addSubview(&view);
         self.search_rows.borrow_mut().push(SearchShortcutRow {
             view,
             shortcut,
@@ -855,19 +955,29 @@ impl SettingsWindow {
 
     fn layout_search_shortcuts(&self) {
         let rows = self.search_rows.borrow();
-        let height =
-            self.shortcuts_scroll.contentSize().height.max(350.0) + rows.len() as f64 * 40.0;
+        let search_height = 104.0 + rows.len() as f64 * 44.0;
+        let height = self
+            .shortcuts_scroll
+            .contentSize()
+            .height
+            .max(search_height + 208.0);
         self.shortcuts_document
-            .setFrameSize(NSSize::new(660.0, height));
+            .setFrameSize(NSSize::new(740.0, height));
+        self.search_card
+            .setFrame(rect(0.0, height - search_height, 740.0, search_height));
         self.search_header
-            .setFrameOrigin(NSPoint::new(0.0, height - 106.0));
+            .setFrameOrigin(NSPoint::new(40.0, search_height - 104.0));
         for (index, row) in rows.iter().enumerate() {
             row.view.setFrameOrigin(NSPoint::new(
-                0.0,
-                height - 106.0 - (index + 1) as f64 * 40.0,
+                40.0,
+                4.0 + (rows.len() - index - 1) as f64 * 44.0,
             ));
             row.remove.setTag(index as isize);
         }
+        self.switch_card
+            .setFrameOrigin(NSPoint::new(0.0, height - search_height - 120.0));
+        self.app_shortcuts_card
+            .setFrameOrigin(NSPoint::new(0.0, height - search_height - 200.0));
         self.add_search
             .setEnabled(rows.len() + 1 < winlane::config::MAX_SEARCH_SHORTCUTS);
     }
@@ -1013,6 +1123,8 @@ impl SettingsWindow {
 
     pub fn select_tab(&self, index: isize) {
         if (0..self.tabs.numberOfTabViewItems()).contains(&index) {
+            // End text editing before replacing its page so pending values still autosave.
+            self.window.makeFirstResponder(None);
             self.tabs.selectTabViewItemAtIndex(index);
             self.layout_selected_tab();
         }
@@ -1032,29 +1144,58 @@ impl SettingsWindow {
     }
 
     pub fn layout_selected_tab(&self) {
-        let height = if self.selected_tab() == 6 {
-            800.0
-        } else {
-            620.0
-        };
-        let Some(view) = self.window.contentView() else {
-            return;
-        };
-        if (view.frame().size.height - height).abs() < 0.5 {
-            return;
+        let selected = self.selected_tab();
+        for button in &self.navigation {
+            button.setState(if button.tag() == selected {
+                NSControlStateValueOn
+            } else {
+                NSControlStateValueOff
+            });
+            NSView::setNeedsDisplay(button, true);
         }
-        self.window.makeFirstResponder(None);
-        let old_frame = self.window.frame();
-        self.window.setContentSize(NSSize::new(800.0, height));
-        let frame = self.window.frame();
-        let mut origin = NSPoint::new(
-            old_frame.origin.x,
-            old_frame.origin.y + old_frame.size.height - frame.size.height,
-        );
-        if let Some(screen) = self.window.screen() {
-            origin.y = origin.y.max(screen.visibleFrame().origin.y);
+        if let Some(item) = self.tabs.selectedTabViewItem() {
+            self.page_title.setStringValue(&item.label());
         }
-        self.window.setFrameOrigin(origin);
+        self.page_description.setHidden(selected == 0);
+        self.tabs
+            .setFrameOrigin(NSPoint::new(252.0, if selected == 0 { 84.0 } else { 48.0 }));
+        let description = match selected {
+            0 => "",
+            1 => tr!(
+                "调整搜索与切换面板的外观、密度和透明度。",
+                "Make search and switch panels feel right for you."
+            ),
+            2 => tr!(
+                "选择每次进入搜索时使用的输入法。",
+                "Choose the input source used when you start a search."
+            ),
+            3 => tr!(
+                "控制候选窗口、排列顺序和面板响应速度。",
+                "Control which windows appear, their order, and when the switcher opens."
+            ),
+            4 => tr!(
+                "管理 Winlane 的语言、启动行为和更新。",
+                "Manage language, startup behavior, and updates."
+            ),
+            5 => tr!(
+                "为常用应用和项目保留容易记住的 alias。",
+                "Use memorable aliases for your apps and projects."
+            ),
+            6 => tr!(
+                "创建可复用的文本，加入日期、剪贴板和自定义占位符。",
+                "Reusable text with dates, clipboard content, and custom placeholders."
+            ),
+            7 => tr!(
+                "管理复制的文本和图片，以及它们在本机的保留方式。",
+                "Control how copied text and images are kept on this Mac."
+            ),
+            _ => tr!(
+                "为网址、文件和常用搜索创建快捷入口。",
+                "Shortcuts to websites, files, and your everyday searches."
+            ),
+        };
+        self.page_description
+            .setStringValue(&NSString::from_str(description));
     }
 
     pub fn set_snippets(&self, snippets: &[winlane::snippets::Snippet]) {
@@ -1081,13 +1222,7 @@ impl SettingsWindow {
 
     pub fn show(&self, config: &Config) {
         self.fill(config);
-        self.report(
-            tr!(
-                "更改自动保存；文字输入在按 Return 或结束编辑时保存。",
-                "Changes save automatically. Text fields save on Return or when editing ends."
-            ),
-            false,
-        );
+        self.report("", false);
         self.window.center();
         self.window.makeKeyAndOrderFront(None);
     }
@@ -1195,10 +1330,80 @@ impl SettingsWindow {
 fn settings_tab(tabs: &NSTabView, title: &str, mtm: MainThreadMarker) -> Retained<NSView> {
     let item = NSTabViewItem::new();
     item.setLabel(&NSString::from_str(title));
-    let view = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 660.0, 360.0));
+    let view = NSView::initWithFrame(NSView::alloc(mtm), tabs.contentRect());
     item.setView(Some(&view));
     tabs.addTabViewItem(&item);
     view
+}
+
+pub(crate) fn card(parent: &NSView, frame: NSRect, mtm: MainThreadMarker) -> Retained<NSView> {
+    let view = NSView::initWithFrame(NSView::alloc(mtm), frame);
+    let background = NSBox::initWithFrame(NSBox::alloc(mtm), view.bounds());
+    background.setBoxType(NSBoxType::Custom);
+    background.setTitlePosition(NSTitlePosition::NoTitle);
+    background.setCornerRadius(10.0);
+    background.setBorderWidth(1.0);
+    background.setBorderColor(&NSColor::separatorColor().colorWithAlphaComponent(0.5));
+    background.setFillColor(&NSColor::controlBackgroundColor().colorWithAlphaComponent(0.5));
+    background.setAutoresizingMask(
+        NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable,
+    );
+    view.addSubview(&background);
+    parent.addSubview(&view);
+    view
+}
+
+pub(crate) fn settings_group(
+    parent: &NSView,
+    title: &str,
+    top: f64,
+    height: f64,
+    mtm: MainThreadMarker,
+) -> Retained<NSView> {
+    let heading = hint(title, rect(6.0, top - 22.0, 728.0, 22.0), mtm);
+    heading.setFont(Some(&NSFont::boldSystemFontOfSize(12.0)));
+    parent.addSubview(&heading);
+    card(parent, rect(0.0, top - 32.0 - height, 740.0, height), mtm)
+}
+
+pub(crate) fn row_text(
+    parent: &NSView,
+    title: &str,
+    description: &str,
+    top: f64,
+    width: f64,
+    mtm: MainThreadMarker,
+) {
+    parent.addSubview(&label(
+        title,
+        14.0,
+        rect(20.0, top - 33.0, width, 24.0),
+        mtm,
+    ));
+    parent.addSubview(&hint(description, rect(20.0, top - 72.0, width, 38.0), mtm));
+}
+
+pub(crate) fn editor_chrome(parent: &NSView, mtm: MainThreadMarker) {
+    for frame in [rect(0.0, 0.0, 204.0, 574.0), rect(220.0, 0.0, 520.0, 574.0)] {
+        let background = card(parent, frame, mtm);
+        parent.addSubview_positioned_relativeTo(&background, NSWindowOrderingMode::Below, None);
+    }
+    let heading = hint(
+        tr!("内容列表", "LIBRARY"),
+        rect(16.0, 538.0, 174.0, 22.0),
+        mtm,
+    );
+    heading.setFont(Some(&NSFont::boldSystemFontOfSize(12.0)));
+    parent.addSubview(&heading);
+}
+
+pub(crate) fn row_divider(parent: &NSView, y: f64, mtm: MainThreadMarker) {
+    let line = NSBox::initWithFrame(
+        NSBox::alloc(mtm),
+        rect(20.0, y, parent.bounds().size.width - 40.0, 1.0),
+    );
+    line.setBoxType(NSBoxType::Separator);
+    parent.addSubview(&line);
 }
 
 pub fn manage_login() {
@@ -1221,7 +1426,9 @@ pub(crate) fn label(
     value
 }
 pub(crate) fn hint(text: &str, frame: NSRect, mtm: MainThreadMarker) -> Retained<NSTextField> {
-    let value = label(text, 12.0, frame, mtm);
+    let value = NSTextField::wrappingLabelWithString(&NSString::from_str(text), mtm);
+    value.setFont(Some(&NSFont::systemFontOfSize(12.0)));
+    value.setFrame(frame);
     value.setTextColor(Some(&NSColor::secondaryLabelColor()));
     value.setMaximumNumberOfLines(2);
     value

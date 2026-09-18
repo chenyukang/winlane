@@ -39,7 +39,7 @@ Once authorized, Winlane starts quietly in the menu bar. Its menu provides acces
 
 ### Stay up to date
 
-Release builds use [Sparkle 2](https://sparkle-project.org/) to check for updates daily. Choose **Check for Updates…** from the menu bar to check immediately. Winlane asks before downloading an update, then offers to install it and relaunch. Turn daily checks off in **Settings → Startup** to check manually instead.
+Release builds use [Sparkle 2](https://sparkle-project.org/) to check for updates daily. Choose **Check for Updates…** from the menu bar to check immediately. Winlane asks before downloading an update, then offers to install it and relaunch. Turn daily checks off in **Settings → General** to check manually instead.
 
 Versions without Sparkle need one manual installation of a Sparkle-enabled release. Local source builds disable updates by default so a release cannot replace your development build.
 
@@ -95,7 +95,7 @@ Search also tolerates misspelled words in app names and window titles: `chorme` 
 
 An empty search shows existing windows. Once you type, matching installed apps also appear with a **↗ Launch app** label, so you can open an app that is not running yet. Apps that already have windows are not repeated as launch results.
 
-You can also run commands from search: **lock-screen**, **sleep**, **mission-control**, **show-menu**, and **screenshot**. Type a command name or a keyword such as **lock**, **mission control**, or **菜单栏**, then press Enter to run it. Commands use a **>_** badge and appear only when your search matches them. `mission-control` opens the macOS overview so you can choose a window or desktop. `show-menu` moves the pointer to the display's top edge to reveal the whole menu bar without changing auto-hide settings. `screenshot` lets you drag to select an area and copies the image to the clipboard; Esc cancels. See [built-in commands](docs/commands.md) for details and how to add more.
+You can also run commands from search: **lock-screen**, **sleep**, **mission-control**, **show-menu**, **screenshot**, and **toggle-appearance**. Type a command name or a keyword such as **lock**, **mission control**, or **菜单栏**, then press Enter to run it. Commands use a **>_** badge and appear only when your search matches them. `mission-control` opens the macOS overview so you can choose a window or desktop. `show-menu` moves the pointer to the display's top edge to reveal the whole menu bar without changing auto-hide settings. `screenshot` lets you drag to select an area and copies the image to the clipboard; Esc cancels. `toggle-appearance` switches macOS between light and dark mode; search **dark mode**, **light mode**, or **切换外观** to find it. See [built-in commands](docs/commands.md) for details and how to add more.
 
 Press **Space** in the switcher to start searching. In an empty search field, Space returns to switching; with text already entered, it remains a normal space. Input-method composition keeps its usual keyboard behavior.
 
@@ -109,17 +109,19 @@ These shortcuts work without opening the picker and launch the app if needed. Th
 
 Open Settings from the menu bar or press **Command + ,** while using Winlane. Press **Esc** to close the current settings window, including App Shortcuts and Alias Rules. While composing text with an input method, Esc keeps its normal cancellation behavior.
 
-| Settings tab | What you can change |
+Use the sidebar to move between settings. Each section has its own grouped controls; Snippets and Quicklinks have a list and editor inside the same window.
+
+| Settings section | What you can change |
 | --- | --- |
+| **General** | Interface language, launch at login, daily update checks, and Check for Updates. |
+| **Appearance** | System, light, or dark appearance; Compact or Normal display density; background opacity; a toggle for footer hints, refresh status, and the Settings button. |
 | **Shortcuts** | Separate shortcuts for search and switching, plus fixed app shortcuts. |
-| **Appearance** | System, light, or dark appearance; Compact or Normal display density; background opacity; language; a toggle for footer hints, refresh status, and the Settings button. |
 | **Input** | Start searches in English (default) or Chinese, keep the current input source, or remember the last input source used in Winlane. |
 | **Windows** | Sorting, minimized windows, and apps to exclude. Recent sorting follows window focus, including mouse, Dock, and shortcut switches. |
+| **Aliases** | Fixed letters for apps or project windows matched by title. |
 | **Snippets** | Saved text and dynamic placeholders. |
 | **Clipboard** | Recording, local storage, retention limits, and clearing history. |
 | **Quicklinks** | Saved URLs and paths, input placeholders, target apps, and Raycast JSON import. |
-| **Aliases** | Fixed letters for apps or project windows matched by title. |
-| **Startup** | Launch at login, daily update checks, and Check for Updates. |
 
 Settings save automatically. Menus, switches, and sliders apply immediately; text fields save when you press Return or finish editing. Invalid values and conflicting shortcuts leave the last valid configuration in effect and show an error. Restore Defaults also applies immediately.
 

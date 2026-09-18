@@ -94,32 +94,33 @@ impl QuicklinkEditor {
             save,
         });
         let this: Retained<Self> = unsafe { msg_send![super(this), init] };
-        let root = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 740.0, 360.0));
+        let root = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 740.0, 574.0));
         root.setAutoresizingMask(
             NSAutoresizingMaskOptions::ViewWidthSizable
                 | NSAutoresizingMaskOptions::ViewHeightSizable,
         );
         let scroll =
-            NSScrollView::initWithFrame(NSScrollView::alloc(mtm), rect(12.0, 54.0, 192.0, 290.0));
+            NSScrollView::initWithFrame(NSScrollView::alloc(mtm), rect(12.0, 56.0, 180.0, 468.0));
         scroll.setAutoresizingMask(NSAutoresizingMaskOptions::ViewHeightSizable);
         scroll.setHasVerticalScroller(true);
         scroll.setAutohidesScrollers(true);
         scroll.setDrawsBackground(false);
-        let list = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 177.0, 290.0));
+        scroll.setScrollerStyle(NSScrollerStyle::Overlay);
+        let list = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 180.0, 468.0));
         scroll.setDocumentView(Some(&list));
         root.addSubview(&scroll);
         root.addSubview(&button(
             tr!("＋ 新建", "＋ New"),
             &this,
             sel!(addQuicklink:),
-            rect(8.0, 12.0, 96.0, 30.0),
+            rect(10.0, 12.0, 90.0, 30.0),
             mtm,
         ));
         let remove = button(
             tr!("删除", "Delete"),
             &this,
             sel!(deleteQuicklink:),
-            rect(108.0, 12.0, 96.0, 30.0),
+            rect(106.0, 12.0, 88.0, 30.0),
             mtm,
         );
         root.addSubview(&remove);
@@ -128,12 +129,12 @@ impl QuicklinkEditor {
             (
                 tr!("名称", "Name"),
                 tr!("快捷链接名称", "Quicklink name"),
-                311.0,
+                498.0,
             ),
             (
                 tr!("链接", "Link"),
                 "https://example.com/search?q={Query}",
-                244.0,
+                408.0,
             ),
             (
                 tr!("打开方式", "Open with"),
@@ -141,13 +142,13 @@ impl QuicklinkEditor {
                     "默认应用（可填写应用名称或 bundle ID）",
                     "Default app (or enter an app name / bundle ID)"
                 ),
-                177.0,
+                318.0,
             ),
         ] {
-            let caption = label(title, 13.0, rect(225.0, y + 25.0, 500.0, 22.0), mtm);
+            let caption = label(title, 13.0, rect(236.0, y + 32.0, 488.0, 22.0), mtm);
             caption.setAutoresizingMask(NSAutoresizingMaskOptions::ViewMinYMargin);
             root.addSubview(&caption);
-            let field = input(rect(225.0, y, 500.0, 26.0), placeholder, mtm);
+            let field = input(rect(236.0, y, 488.0, 30.0), placeholder, mtm);
             field.setAutoresizingMask(
                 NSAutoresizingMaskOptions::ViewMinYMargin
                     | NSAutoresizingMaskOptions::ViewWidthSizable,
@@ -161,16 +162,26 @@ impl QuicklinkEditor {
         let name = fields.remove(0);
         let link = fields.remove(0);
         let application = fields.remove(0);
-        root.addSubview(&hint(tr!("支持网址、应用链接、/绝对路径与 ~/路径。\n{Query} 输入参数 · {clipboard} 剪贴板\n网址参数自动编码；{clipboard | raw} 保留原文。", "URLs, app links, /absolute paths and ~/paths.\n{Query} prompts for input · {clipboard} uses copied text\nURL values are encoded; {clipboard | raw} keeps them unchanged."), rect(225.0, 82.0, 500.0, 76.0), mtm));
-        let message = hint("", rect(225.0, 43.0, 500.0, 36.0), mtm);
+        let help = hint(
+            tr!(
+                "支持网址、应用链接、/绝对路径与 ~/路径。\n{Query} 输入参数 · {clipboard} 剪贴板\n网址参数自动编码；{clipboard | raw} 保留原文。",
+                "URLs, app links, /absolute paths and ~/paths.\n{Query} prompts for input · {clipboard} uses copied text\nURL values are encoded; {clipboard | raw} keeps them unchanged."
+            ),
+            rect(236.0, 202.0, 488.0, 96.0),
+            mtm,
+        );
+        help.setMaximumNumberOfLines(0);
+        root.addSubview(&help);
+        let message = hint("", rect(236.0, 88.0, 488.0, 96.0), mtm);
         root.addSubview(&message);
         root.addSubview(&button(
             tr!("导入 Raycast JSON…", "Import Raycast JSON…"),
             &this,
             sel!(importQuicklinks:),
-            rect(491.0, 10.0, 234.0, 30.0),
+            rect(490.0, 20.0, 234.0, 30.0),
             mtm,
         ));
+        crate::settings::editor_chrome(&root, mtm);
         this.ivars()
             .ui
             .set(EditorUi {

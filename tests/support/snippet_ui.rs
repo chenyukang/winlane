@@ -10,7 +10,7 @@ pub fn verify_editor(target: &AnyObject, mtm: MainThreadMarker) {
     settings.embed_snippets(editor.view());
     settings.select_tab(6);
     assert_eq!(editor.view().window().unwrap(), *host);
-    assert_eq!(host.contentView().unwrap().frame().size.height, 800.0);
+    let size = host.contentView().unwrap().frame().size;
     for child in editor.view().subviews() {
         let frame = child.frame();
         assert!(frame.origin.x >= 0.0 && frame.origin.y >= 0.0);
@@ -26,7 +26,7 @@ pub fn verify_editor(target: &AnyObject, mtm: MainThreadMarker) {
     assert_eq!(stored.borrow().len(), 1);
     let initial = stored.borrow().clone();
     settings.select_tab(0);
-    assert_eq!(host.contentView().unwrap().frame().size.height, 620.0);
+    assert_eq!(host.contentView().unwrap().frame().size, size);
     settings.select_tab(6);
     assert_eq!(editor.ui().name.stringValue().to_string(), "Greeting");
     assert_eq!(editor.ui().body.string().to_string(), initial[0].body);

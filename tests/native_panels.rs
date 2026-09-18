@@ -687,6 +687,7 @@ mod app {
             saved
         };
         crate::settings::verify_autosave_controls(&settings, saved);
+        crate::settings::verify_sidebar_actions(&settings, saved);
         unsafe {
             let _: () = msg_send![&*delegate, resetSettings: None::<&AnyObject>];
         }

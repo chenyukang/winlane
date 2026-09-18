@@ -127,45 +127,46 @@ impl SnippetEditor {
             save,
         });
         let this: Retained<Self> = unsafe { msg_send![super(this), init] };
-        let root = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 660.0, 540.0));
+        let root = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 740.0, 574.0));
         root.setAutoresizingMask(
             NSAutoresizingMaskOptions::ViewWidthSizable
                 | NSAutoresizingMaskOptions::ViewHeightSizable,
         );
         let scroll =
-            NSScrollView::initWithFrame(NSScrollView::alloc(mtm), rect(12.0, 52.0, 178.0, 472.0));
+            NSScrollView::initWithFrame(NSScrollView::alloc(mtm), rect(12.0, 56.0, 180.0, 468.0));
         scroll.setAutoresizingMask(NSAutoresizingMaskOptions::ViewHeightSizable);
         scroll.setHasVerticalScroller(true);
         scroll.setAutohidesScrollers(true);
         scroll.setDrawsBackground(false);
-        let list = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 163.0, 472.0));
+        scroll.setScrollerStyle(NSScrollerStyle::Overlay);
+        let list = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 180.0, 468.0));
         scroll.setDocumentView(Some(&list));
         root.addSubview(&scroll);
         root.addSubview(&button(
             tr!("＋ 新建", "＋ New"),
             &this,
             sel!(addSnippet:),
-            rect(8.0, 10.0, 94.0, 30.0),
+            rect(10.0, 12.0, 90.0, 30.0),
             mtm,
         ));
         let remove = button(
             tr!("删除", "Delete"),
             &this,
             sel!(deleteSnippet:),
-            rect(105.0, 10.0, 88.0, 30.0),
+            rect(106.0, 12.0, 88.0, 30.0),
             mtm,
         );
         root.addSubview(&remove);
         let name_label = label(
             tr!("名称", "Name"),
             13.0,
-            rect(212.0, 493.0, 65.0, 24.0),
+            rect(236.0, 538.0, 65.0, 24.0),
             mtm,
         );
         name_label.setAutoresizingMask(NSAutoresizingMaskOptions::ViewMinYMargin);
         root.addSubview(&name_label);
         let name = input(
-            rect(276.0, 491.0, 372.0, 28.0),
+            rect(304.0, 536.0, 420.0, 28.0),
             tr!("片段名称", "Snippet name"),
             mtm,
         );
@@ -176,7 +177,7 @@ impl SnippetEditor {
             NSAutoresizingMaskOptions::ViewMinYMargin | NSAutoresizingMaskOptions::ViewWidthSizable,
         );
         root.addSubview(&name);
-        let (body_scroll, body) = text_area(rect(212.0, 225.0, 436.0, 246.0), true, mtm);
+        let (body_scroll, body) = text_area(rect(236.0, 254.0, 488.0, 262.0), true, mtm);
         body_scroll.setAutoresizingMask(
             NSAutoresizingMaskOptions::ViewHeightSizable
                 | NSAutoresizingMaskOptions::ViewWidthSizable,
@@ -186,7 +187,7 @@ impl SnippetEditor {
         body.setAccessibilityLabel(Some(&NSString::from_str(tr!("片段正文", "Snippet text"))));
         let placeholder = NSPopUpButton::initWithFrame_pullsDown(
             NSPopUpButton::alloc(mtm),
-            rect(212.0, 186.0, 280.0, 30.0),
+            rect(236.0, 214.0, 280.0, 30.0),
             false,
         );
         for title in [
@@ -202,24 +203,28 @@ impl SnippetEditor {
             placeholder.setAction(Some(sel!(insertPlaceholder:)));
         }
         root.addSubview(&placeholder);
-        root.addSubview(&hint(tr!("动态值在使用时展开。同名输入字段只需填写一次。\n输入 \\{date} 可保留字面量 {date}。", "Dynamic values expand when used. Repeated fields share one value.\nUse \\{date} to insert the literal text {date}."), rect(212.0, 136.0, 436.0, 43.0), mtm));
+        root.addSubview(&hint(tr!("动态值在使用时展开。同名输入字段只需填写一次。\n输入 \\{date} 可保留字面量 {date}。", "Dynamic values expand when used. Repeated fields share one value.\nUse \\{date} to insert the literal text {date}."), rect(236.0, 165.0, 488.0, 43.0), mtm));
         root.addSubview(&label(
             tr!("预览", "Preview"),
             13.0,
-            rect(212.0, 112.0, 436.0, 22.0),
+            rect(236.0, 142.0, 488.0, 22.0),
             mtm,
         ));
-        let (preview_scroll, preview) = text_area(rect(212.0, 42.0, 436.0, 68.0), false, mtm);
+        let (preview_scroll, preview) = text_area(rect(236.0, 64.0, 488.0, 70.0), false, mtm);
         root.addSubview(&preview_scroll);
-        let message = hint("", rect(212.0, 0.0, 436.0, 38.0), mtm);
+        let message = hint("", rect(236.0, 16.0, 488.0, 38.0), mtm);
         root.addSubview(&message);
         let editing_views = root
             .subviews()
             .iter()
-            .filter(|view| view.frame().origin.x >= 210.0 && view.frame().origin.y < 490.0)
+            .filter(|view| view.frame().origin.x >= 236.0 && view.frame().origin.y < 536.0)
             .collect();
         let builder = PlaceholderBuilder::new(&this, mtm);
+        builder
+            .view
+            .setFrameOrigin(objc2_foundation::NSPoint::new(236.0, 64.0));
         root.addSubview(&builder.view);
+        crate::settings::editor_chrome(&root, mtm);
         this.ivars()
             .ui
             .set(EditorUi {

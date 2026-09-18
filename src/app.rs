@@ -128,11 +128,7 @@ impl RowUi {
             .has_alias
             .set(!self.alias.stringValue().is_empty());
         NSView::setNeedsDisplay(&self.button, true);
-        let text = if selected {
-            NSColor::whiteColor()
-        } else {
-            NSColor::labelColor()
-        };
+        let text = NSColor::labelColor();
         let launching = matches!(
             self.content,
             Some(
@@ -338,7 +334,18 @@ define_class!(
             let selected = self.ivars().selected.get();
             let path = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(self.bounds(), 7.0, 7.0);
             if selected {
-                selection_gradient().drawInBezierPath_angle(&path, 0.0);
+                let bounds = self.bounds();
+                let glass = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(
+                    rect(bounds.origin.x + 0.5, bounds.origin.y + 0.5, bounds.size.width - 1.0, bounds.size.height - 1.0), 7.0, 7.0,
+                );
+                // Reuse the panel's blurred backdrop beneath a uniform translucent tint.
+                NSColor::whiteColor().colorWithAlphaComponent(0.10).setFill();
+                glass.fill();
+                tint(0x76a1df, 0.20).setFill();
+                glass.fill();
+                NSColor::whiteColor().colorWithAlphaComponent(0.28).setStroke();
+                glass.setLineWidth(1.0);
+                glass.stroke();
             } else if self.ivars().hovered.get() || self.isHighlighted() {
                 NSColor::systemBlueColor().colorWithAlphaComponent(0.09).setFill();
                 path.fill();
@@ -629,6 +636,10 @@ define_class!(
         #[unsafe(method(addSearchShortcut:))]
         fn add_search_shortcut(&self, _: Option<&AnyObject>) {
             if let Some(settings) = self.settings_window() { settings.add_search_shortcut(); }
+        }
+        #[unsafe(method(selectSettingsSection:))]
+        fn select_settings_section(&self, sender: &NSButton) {
+            if let Some(settings) = self.settings_window() { settings.select_tab(sender.tag()); }
         }
         #[unsafe(method(removeSearchShortcut:))]
         fn remove_search_shortcut(&self, sender: &NSButton) {
@@ -4647,7 +4658,10 @@ impl Delegate {
             self.mtm(),
         ) {
             Ok(prepared) => {
-                if matches!(command, CommandId::ShowMenu | CommandId::Screenshot) {
+                if matches!(
+                    command,
+                    CommandId::ShowMenu | CommandId::Screenshot | CommandId::ToggleAppearance
+                ) {
                     self.dismiss();
                 } else {
                     // Reactivating an app afterward would interrupt Mission Control or locking.
@@ -4867,17 +4881,6 @@ fn tint(rgb: u32, alpha: f64) -> Retained<NSColor> {
         (rgb & 0xff) as f64 / 255.0,
         alpha,
     )
-}
-fn selection_gradient() -> &'static NSGradient {
-    static GRADIENT: std::sync::OnceLock<Retained<NSGradient>> = std::sync::OnceLock::new();
-    GRADIENT.get_or_init(|| {
-        NSGradient::initWithStartingColor_endingColor(
-            NSGradient::alloc(),
-            &tint(0x4c6bd6, 1.0),
-            &tint(0x367f91, 1.0),
-        )
-        .unwrap()
-    })
 }
 fn set_label(field: &NSTextField, text: &str) {
     if field.stringValue().to_string() != text {

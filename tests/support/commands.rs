@@ -83,7 +83,7 @@ fn verify_command_search(mtm: MainThreadMarker) {
     delegate.filter();
     assert!(delegate.selected_command().is_none());
 
-    for command in [CommandId::LockScreen, CommandId::Sleep, CommandId::MissionControl, CommandId::Screenshot] {
+    for command in [CommandId::LockScreen, CommandId::Sleep, CommandId::MissionControl, CommandId::Screenshot, CommandId::ToggleAppearance] {
         state.query.replace(command.definition().name.into());
         delegate.filter();
         assert_eq!(delegate.match_count(), 1);

@@ -11,6 +11,7 @@ Winlane's search accepts windows, installed applications, and built-in commands.
 | `show-menu` | `menu`, `菜单栏` | Temporarily reveal the macOS menu bar. |
 | `lock-screen` | `lock`, `lock screen`, `锁屏` | Lock the Mac without closing applications. |
 | `screenshot` | `screenshot`, `screen shot`, `capture area`, `截图`, `截屏` | Select an area with the mouse and copy its screenshot to the clipboard. |
+| `toggle-appearance` | `dark mode`, `light mode`, `theme`, `切换外观`, `暗黑模式` | Toggle macOS between light and dark appearance. |
 | `sleep` | `sleep`, `睡眠`, `休眠` | Request system sleep, not just display sleep. |
 | `mission-control` | `mission control`, `mission`, `调度中心`, `窗口总览` | Open Mission Control to choose a window or desktop. |
 
@@ -21,6 +22,10 @@ Winlane's search accepts windows, installed applications, and built-in commands.
 `screenshot` closes Winlane's picker and starts macOS's interactive area capture. Drag to select the area you want; releasing the mouse copies the image to the clipboard for pasting with **Command + V**. Press **Esc** to cancel without replacing the clipboard. It does not take an automatic full-screen capture or save a file. When clipboard history is enabled, the image follows its usual recording and retention rules.
 
 The screenshot command runs `/usr/sbin/screencapture -i -s -c -d` without a shell. It waits for your selection outside Winlane's main thread and lets macOS display capture errors. The helper exits when you finish or cancel; merely searching for the command does not start it.
+
+`toggle-appearance` reads the current system appearance when you execute it, then switches light to dark or dark to light. Both `dark mode` and `light mode` find the same toggle command. Winlane's own appearance preference is preserved: choose **Settings → Appearance → System** if you want Winlane to follow the system change.
+
+The appearance toggle resolves SkyLight's native [system appearance functions](https://saagarjha.com/blog/2018/12/01/scheduling-dark-mode/) at runtime. It does not launch a helper or send Apple Events to System Events. If either function is unavailable, the command reports an error without changing the appearance. These are undocumented interfaces and may need updating for future macOS versions; the setter does not report whether every application has finished updating.
 
 The picker closes before a system command executes. These commands do not change power, password, or keyboard-shortcut preferences. They do not run shell scripts or require a persistent helper. `lock-screen` and `mission-control` resolve undocumented macOS functions at runtime, as [Hammerspoon](https://github.com/Hammerspoon/hammerspoon/tree/master/extensions) does. If an interface is missing, Winlane reports an error instead of attempting the action; future macOS changes may require an update. `sleep` uses Apple's [IOPMSleepSystem](https://developer.apple.com/documentation/iokit/1557121-iopmsleepsystem) and reports a system error if the request is rejected. The lock API does not report whether the screen actually locked.
 

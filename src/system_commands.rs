@@ -2,6 +2,7 @@ use core_foundation::base::TCFType;
 use core_foundation::bundle::CFBundle;
 use core_foundation::string::{CFString, CFStringRef};
 use core_foundation::url::CFURL;
+use objc2::runtime::Bool;
 use objc2_foundation::MainThreadMarker;
 use std::ffi::c_void;
 use std::process::{Command, Stdio};
@@ -17,6 +18,8 @@ unsafe extern "C" {
 
 type LockScreen = unsafe extern "C" fn();
 type DockNotification = unsafe extern "C" fn(CFStringRef, i32) -> i32;
+type GetAppearance = unsafe extern "C" fn() -> Bool;
+type SetAppearance = unsafe extern "C" fn(Bool);
 
 enum Operation {
     Menu(crate::menu_bar::Reveal),
@@ -26,6 +29,11 @@ enum Operation {
     },
     Sleep(PowerConnection),
     Screenshot(Command),
+    Appearance {
+        _bundle: CFBundle,
+        current: GetAppearance,
+        set: SetAppearance,
+    },
     MissionControl {
         _bundle: CFBundle,
         send: DockNotification,
@@ -93,6 +101,27 @@ impl PreparedCommand {
                     .stderr(Stdio::null());
                 Operation::Screenshot(capture)
             }
+            CommandId::ToggleAppearance => {
+                let (bundle, current) = load_function(
+                    "/System/Library/PrivateFrameworks/SkyLight.framework",
+                    "SLSGetAppearanceThemeLegacy",
+                )
+                .ok_or_else(|| unavailable(command))?;
+                let set =
+                    bundle.function_pointer_for_name(CFString::new("SLSSetAppearanceThemeLegacy"));
+                if set.is_null() {
+                    return Err(unavailable(command));
+                }
+                Operation::Appearance {
+                    _bundle: bundle,
+                    // SAFETY: SkyLight uses BOOL(void) and void(BOOL) for these symbols.
+                    // Objective-C Bool preserves the ABI on both Apple Silicon and Intel.
+                    current: unsafe {
+                        std::mem::transmute::<*const c_void, GetAppearance>(current)
+                    },
+                    set: unsafe { std::mem::transmute::<*const c_void, SetAppearance>(set) },
+                }
+            }
             CommandId::Sleep => {
                 // SAFETY: MACH_PORT_NULL (0) selects the default power-management service.
                 let connection = unsafe { IOPMFindPowerManagement(0) };
@@ -124,6 +153,15 @@ impl PreparedCommand {
     pub fn execute(self) -> Result<(), String> {
         match self.operation {
             Operation::Menu(reveal) => reveal.show(),
+            Operation::Appearance {
+                _bundle,
+                current,
+                set,
+            } => {
+                // SAFETY: Both functions were resolved together and their framework stays live.
+                // Read the system state at execution, independent of Winlane's own appearance.
+                unsafe { set(Bool::new(!current().as_bool())) };
+            }
             Operation::Lock { _bundle, lock } => {
                 // SAFETY: The function was resolved from login.framework and the bundle is live.
                 // This API has no result; issuing the request is not proof that the screen locked.

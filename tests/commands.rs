@@ -1,6 +1,37 @@
 use winlane::commands::{COMMANDS, CommandId, matching_commands};
 
 #[test]
+fn appearance_toggle_matches_both_modes_and_languages() {
+    for query in [
+        "toggle-appearance",
+        "toggle appearance",
+        " TOGGLE DARK MODE ",
+        "toggle light/dark mode",
+        "toggle light mode",
+        "dark mode",
+        "light mode",
+        "dark",
+        "light",
+        "theme",
+        "appearance",
+        "切换外观",
+        "切换深浅模式",
+        "深色模式",
+        "浅色模式",
+        "暗黑模式",
+    ] {
+        assert_eq!(
+            matching_commands(query),
+            [CommandId::ToggleAppearance],
+            "{query}"
+        );
+    }
+    for query in ["t", "d", "l", "toggle-appearance extra", "dark mode; sleep"] {
+        assert!(matching_commands(query).is_empty(), "{query}");
+    }
+}
+
+#[test]
 fn screenshot_matches_area_capture_keywords() {
     for query in [
         "screenshot",

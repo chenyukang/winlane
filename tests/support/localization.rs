@@ -9,7 +9,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
                 "Appearance",
                 "Input",
                 "Windows",
-                "Startup",
+                "General",
                 "Aliases",
                 "Snippets",
                 "Clipboard",
@@ -21,10 +21,10 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
             "Winlane 设置",
             [
                 "快捷键",
-                "外观与语言",
+                "外观",
                 "输入",
                 "窗口列表",
-                "启动与更新",
+                "常规",
                 "Alias 规则",
                 "文本片段",
                 "剪贴板",
@@ -95,17 +95,33 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
                 })
         );
         assert_eq!(settings.window.title().to_string(), title);
+        assert_eq!(settings.tabs.tabViewType(), NSTabViewType::NoTabsNoBorder);
+        assert_eq!(settings.selected_tab(), 4, "open settings on General");
+        let size = settings.window.contentView().unwrap().frame().size;
+        assert_eq!(settings.navigation.iter().map(|button| button.tag()).collect::<Vec<_>>(), [4, 1, 0, 2, 3, 5, 6, 7, 8]);
+        for button in &settings.navigation {
+            assert_eq!(button.action(), Some(sel!(selectSettingsSection:)));
+            assert!(button.ivars().symbol.is_some(), "navigation symbol must exist");
+            assert!(button.target().is_some_and(|value| std::ptr::eq(&*value, target)));
+        }
         for (index, title) in tabs.iter().enumerate() {
             settings.select_tab(index as isize);
             let item = settings.tabs.selectedTabViewItem().unwrap();
             assert_eq!(item.label().to_string(), *title);
             assert_eq!(settings.selected_tab(), index as isize);
+            assert_eq!(settings.page_title.stringValue().to_string(), *title);
+            assert_eq!(settings.page_description.isHidden(), index == 0);
+            assert_eq!(settings.page_description.stringValue().is_empty(), index == 0);
+            assert_eq!(settings.window.contentView().unwrap().frame().size, size, "switching sections must not resize the window");
+            let selected: Vec<_> = settings.navigation.iter().filter(|button| button.state() == NSControlStateValueOn).map(|button| button.tag()).collect();
+            assert_eq!(selected, [index as isize]);
             settings
                 .window
                 .contentView()
                 .unwrap()
                 .layoutSubtreeIfNeeded();
             let view = item.view(mtm).unwrap();
+            verify_settings_bounds(&view);
             for child in view.subviews() {
                 let frame = child.frame();
                 assert!(frame.origin.x >= 0.0 && frame.origin.y >= 0.0);
@@ -235,7 +251,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
         crate::app_shortcuts::verify_hidden_settings(target, mtm);
     }
     println!(
-        "English and Chinese settings: nine tabs, input and language choices, layout bounds, configuration round trips passed."
+        "English and Chinese settings: sidebar navigation, stable window size, grouped layout bounds, configuration round trips passed."
     );
 }
 
@@ -375,7 +391,7 @@ fn verify_multiple_search_controls(settings: &SettingsWindow) {
     let mut previous = settings.search_header.frame().origin.y;
     for row in settings.search_rows.borrow().iter() {
         let frame = row.view.frame();
-        assert!(frame.origin.y >= 244.0);
+        assert!(frame.origin.y >= 0.0);
         assert!(frame.origin.y + frame.size.height <= previous);
         previous = frame.origin.y;
         for child in row.view.subviews() {
@@ -385,10 +401,44 @@ fn verify_multiple_search_controls(settings: &SettingsWindow) {
             assert!(frame.origin.y + frame.size.height <= row.view.bounds().size.height);
         }
     }
+    assert!(settings.shortcuts_document.frame().size.height > settings.shortcuts_scroll.contentSize().height);
+    assert!(settings.app_shortcuts_card.frame().origin.y >= 0.0);
+    assert!(settings.app_shortcuts_card.frame().origin.y + settings.app_shortcuts_card.frame().size.height < settings.switch_card.frame().origin.y);
+    assert!(settings.switch_card.frame().origin.y + settings.switch_card.frame().size.height < settings.search_card.frame().origin.y);
     settings.remove_search_shortcut(6);
     assert!(settings.add_search.isEnabled());
     settings.fill(&Config::default());
     assert!(settings.search_rows.borrow().is_empty());
     assert_eq!(settings.candidate().unwrap(), Config::default());
     store.removePersistentDomainForName(&domain);
+}
+
+fn verify_settings_bounds(parent: &NSView) {
+    for child in parent.subviews() {
+        let frame = child.frame();
+        assert!(frame.origin.x >= 0.0 && frame.origin.y >= 0.0, "negative control origin: {frame:?}");
+        assert!(frame.origin.x + frame.size.width <= parent.bounds().size.width + 0.5, "control wider than its container: {frame:?}");
+        assert!(frame.origin.y + frame.size.height <= parent.bounds().size.height + 0.5, "control taller than its container: {frame:?}");
+        if child.downcast_ref::<NSControl>().is_none() && child.downcast_ref::<NSBox>().is_none() && child.downcast_ref::<NSScrollView>().is_none() {
+            verify_settings_bounds(&child);
+        }
+    }
+}
+
+pub fn verify_sidebar_actions(settings: &SettingsWindow, saved: impl Fn() -> Config) {
+    let windows = NSApplication::sharedApplication(settings.window.mtm()).windows().len();
+    for button in &settings.navigation {
+        unsafe { assert!(button.sendAction_to(button.action(), button.target().as_deref())); }
+        assert_eq!(settings.selected_tab(), button.tag());
+    }
+    settings.select_tab(3);
+    unsafe { settings.excluded.selectText(None) };
+    let editor = settings.window.firstResponder().unwrap().downcast::<NSTextView>().unwrap();
+    editor.setString(ns_string!("Example Browser"));
+    let button = &settings.navigation[0];
+    unsafe { assert!(button.sendAction_to(button.action(), button.target().as_deref())); }
+    assert_eq!(settings.selected_tab(), 4);
+    assert_eq!(saved().excluded_apps, ["Example Browser"], "leaving a section must save its active text edit");
+    assert_eq!(NSApplication::sharedApplication(settings.window.mtm()).windows().len(), windows);
+    assert!(!settings.window.isVisible());
 }
