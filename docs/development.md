@@ -99,7 +99,9 @@ Opening a panel renders cached results once. Application metadata, focus notific
 
 ## Platform behavior
 
-Search selects the preferred input source before focusing its field editor, then sets the editor's input context to the same source. Initial key-down events wait until both report that source, preserving the order of text, editing keys, and Return. Escape and focus loss discard pending events. The short-lived readiness timer stops immediately on completion; it gives up after 250 ms if macOS cannot activate the source, so input cannot remain blocked. Manual input-source changes after startup remain supported.
+Search resolves an enabled input source from the saved English, Chinese, or Last Used policy; Current and unavailable sources require no switch. It selects that source before focusing its field editor, then aligns the editor's input context, skipping either request when it already has the target source. Initial key-down events wait until both report that source, preserving the order of text, editing keys, and Return. Escape and focus loss discard pending events. The short-lived readiness timer stops immediately on completion; it gives up after 250 ms if macOS cannot activate the source, so input cannot remain blocked. Manual input-source changes after startup remain supported.
+
+Result refreshes preserve marked text in the active search field. During IME composition, the field can contain pinyin that is not yet in the shared query; copying that query back would erase the first letters. Only starting a new search discards the previous editing session. Native tests cover composition across repeated refreshes, committing Chinese text, and reopening the picker without stale composition.
 
 Window discovery combines Accessibility results with the system window inventory. An optional private Accessibility lookup recovers standard windows that some apps omit from their published lists, including windows on other Spaces. That recovery path may stop working if macOS changes the underlying interface. Apps with incomplete Accessibility support can still omit windows or reject focus and restore requests.
 

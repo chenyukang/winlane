@@ -2094,6 +2094,11 @@ impl Delegate {
         }
         self.cancel_switch_timer();
         self.finish_search_input();
+        // A new search intentionally discards the previous editing session;
+        // ordinary result refreshes must preserve its uncommitted composition.
+        for ui in self.panels() {
+            ui.input.abortEditing();
+        }
         if mode == PanelMode::Search {
             self.prepare_search_input();
         }
@@ -2227,6 +2232,9 @@ impl Delegate {
                         if let Some(source) = source
                             && let Some(id) = source.id()
                             && let Some(context) = editor.inputContext()
+                            && context
+                                .selectedKeyboardInputSource()
+                                .is_none_or(|current| current.to_string() != id)
                         {
                             context.setSelectedKeyboardInputSource(Some(&NSString::from_str(&id)));
                         }
@@ -3196,7 +3204,15 @@ impl Delegate {
             ui.backdrop.setAlphaValue(opacity);
         }
         let query = self.ivars().query.borrow();
-        if ui.input.stringValue().to_string() != *query {
+        // The field's value can include uncommitted pinyin while the shared
+        // query still contains the last committed text. A background refresh
+        // must not replace that live composition with the stale query.
+        let composing = ui
+            .input
+            .currentEditor()
+            .and_then(|editor| editor.downcast::<NSTextView>().ok())
+            .is_some_and(|editor| NSTextInputClient::hasMarkedText(&*editor));
+        if !composing && ui.input.stringValue().to_string() != *query {
             ui.input.setStringValue(&NSString::from_str(&query));
         }
         drop(query);

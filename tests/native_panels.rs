@@ -167,6 +167,7 @@ mod app {
     include!("support/projects.rs");
     include!("support/clipboard.rs");
     include!("support/responsiveness.rs");
+    include!("support/input_start.rs");
 
     pub fn inspect_window_discovery(bundle: &str) {
         assert!(
@@ -374,6 +375,7 @@ mod app {
         verify_external_focus_history(mtm);
         verify_switch_delay(mtm);
         verify_responsive_panels(mtm);
+        verify_search_composition_survives_refresh(mtm);
         verify_async_focus_order(mtm);
         verify_async_window_snapshot(mtm);
         verify_project_rule_search(mtm);
@@ -391,9 +393,27 @@ mod app {
         for policy in [
             winlane::input_method::InputMethod::English,
             winlane::input_method::InputMethod::Chinese,
+            winlane::input_method::InputMethod::Current,
+            winlane::input_method::InputMethod::LastUsed,
         ] {
+            let expected = match policy {
+                winlane::input_method::InputMethod::English => Source::for_language("en", mtm),
+                winlane::input_method::InputMethod::Chinese => Source::for_language("zh", mtm),
+                winlane::input_method::InputMethod::Current => None,
+                winlane::input_method::InputMethod::LastUsed => {
+                    NSUserDefaults::standardUserDefaults()
+                        .stringForKey(ns_string!("WinlaneSearchInputSource"))
+                        .and_then(|id| Source::by_id(&id.to_string(), mtm))
+                }
+            }
+            .and_then(|source| source.id());
             delegate.ivars().config.borrow_mut().input_method = policy;
             delegate.prepare_search_input();
+            assert_eq!(
+                delegate.ivars().input_gate.borrow().target(),
+                expected.as_deref(),
+                "startup must respect the saved policy: {policy:?}"
+            );
             delegate.start_input_gate_timer();
             let pending = delegate.ivars().input_start_timer.borrow().clone();
             delegate.focus_search();

@@ -118,10 +118,38 @@ fn cancelled_input_never_leaks_into_a_new_search() {
 #[test]
 fn already_selected_and_follow_current_sources_do_not_wait() {
     let mut gate: InputGate<char> = InputGate::default();
-    gate.begin(Some("English".into()));
-    assert_eq!(gate.finish(Some("English"), false), Some(vec![]));
+    for current in ["English", "Chinese", "Saved input source"] {
+        gate.begin(Some(current.into()));
+        assert_eq!(gate.finish(Some(current), false), Some(vec![]));
+    }
     gate.begin(None); // Current policy, or no available source for the policy.
     assert_eq!(gate.finish(Some("Chinese"), false), Some(vec![]));
+}
+
+#[test]
+fn language_and_last_used_policies_wait_for_their_own_target_and_restore_the_source() {
+    for (policy, previous, target) in [
+        (InputMethod::English, "Chinese", "English"),
+        (InputMethod::Chinese, "English", "Chinese"),
+        (InputMethod::LastUsed, "Chinese", "Japanese"),
+    ] {
+        let mut session = InputSession::default();
+        session.prepare(Some(previous.into()), policy);
+        let mut gate = InputGate::default();
+        gate.begin(Some(target.into()));
+        for key in ["n", "i", "Space"] {
+            gate.push(key);
+        }
+        assert_eq!(gate.finish(Some(previous), false), None);
+        assert_eq!(gate.finish(None, false), None);
+        session.focused = true;
+        assert!(session.observe(Some(target.into())));
+        assert_eq!(
+            gate.finish(Some(target), false),
+            Some(vec!["n", "i", "Space"])
+        );
+        assert_eq!(session.finish(Some(target)), Some(previous.into()));
+    }
 }
 
 #[test]

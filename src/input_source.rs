@@ -80,7 +80,13 @@ impl Source {
             .map(|value| value.to_string())
     }
 
-    pub fn select(&self, _: MainThreadMarker) -> bool {
+    pub fn select(&self, mtm: MainThreadMarker) -> bool {
+        if self
+            .id()
+            .is_some_and(|id| Self::current(mtm).and_then(|source| source.id()) == Some(id))
+        {
+            return true;
+        }
         // SAFETY: The source is retained and selection occurs only on the main thread.
         unsafe { TISSelectInputSource(self.0.as_CFTypeRef()) == 0 }
     }
