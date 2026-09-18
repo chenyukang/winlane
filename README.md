@@ -39,7 +39,7 @@ Once authorized, Winlane starts quietly in the menu bar. Its menu provides acces
 
 ### Stay up to date
 
-Release builds use [Sparkle 2](https://sparkle-project.org/) to check for updates daily. Choose **Check for Updates…** from the menu bar to check immediately. Winlane asks before downloading an update, then offers to install it and relaunch. Turn daily checks off in **Settings → Startup & Updates** to check manually instead.
+Release builds use [Sparkle 2](https://sparkle-project.org/) to check for updates daily. Choose **Check for Updates…** from the menu bar to check immediately. Winlane asks before downloading an update, then offers to install it and relaunch. Turn daily checks off in **Settings → Startup** to check manually instead.
 
 Versions without Sparkle need one manual installation of a Sparkle-enabled release. Local source builds disable updates by default so a release cannot replace your development build.
 
@@ -49,11 +49,15 @@ Versions without Sparkle need one manual installation of a Sparkle-enabled relea
 
 Hold **Command**, press **Tab** to open the switcher, then press Tab again or keep it held to move through the list. Release Command to switch to the selected window. Add Shift to move backward, or press Esc to cancel.
 
-A quick press and release switches back without showing the panel. Hold the shortcut for 100 ms to see the list; adjust this delay in **Settings → Window List** (0 shows it immediately). Search always opens immediately.
+A quick press and release switches back without showing the panel. Hold the shortcut for 100 ms to see the list; adjust this delay in **Settings → Windows** (0 shows it immediately). Search always opens immediately.
 
 Each row represents an independent window. Separate editor projects appear separately; VS Code entries show the project name first, as `project: file`. Browser tabs and background helpers do not become extra entries. On multiple displays, the same picker appears on every screen, with a shared selection.
 
 The letters beside each window are its **alias**. Type those letters while holding Command, then release Command to jump directly to that window. Aliases are assigned automatically from English app names, stay unique across windows, and are remembered when Winlane restarts. Additional window aliases may change when the target app closes and creates new windows.
+
+### Open saved links
+
+Save websites, app links, and folders in **Settings → Quicklinks**, or import a Raycast Quicklinks JSON export. Find them by name in search, or select **quicklink** to browse only links. Matching windows retain priority. Templates such as `https://example.com/search?q={Query}` show parameter fields inside the search panel; `{clipboard}` uses copied text. See [Quicklinks](docs/quicklinks.md) for placeholders and import details.
 
 ### Reuse text with snippets
 
@@ -100,13 +104,14 @@ Open Settings from the menu bar or press **Command + ,** while using Winlane. Pr
 | Settings tab | What you can change |
 | --- | --- |
 | **Shortcuts** | Separate shortcuts for search and switching, plus fixed app shortcuts. |
-| **Appearance & Language** | System, light, or dark appearance; Compact or Normal display density; background opacity; language; a toggle for footer hints, refresh status, and the Settings button. |
+| **Appearance** | System, light, or dark appearance; Compact or Normal display density; background opacity; language; a toggle for footer hints, refresh status, and the Settings button. |
 | **Input** | Start searches in English (default) or Chinese, keep the current input source, or remember the last input source used in Winlane. |
-| **Window List** | Sorting, minimized windows, and apps to exclude. Recent sorting follows window focus, including mouse, Dock, and shortcut switches. |
+| **Windows** | Sorting, minimized windows, and apps to exclude. Recent sorting follows window focus, including mouse, Dock, and shortcut switches. |
 | **Snippets** | Saved text and dynamic placeholders. |
 | **Clipboard** | Recording, local storage, retention limits, and clearing history. |
+| **Quicklinks** | Saved URLs and paths, input placeholders, target apps, and Raycast JSON import. |
 | **Aliases** | Fixed letters for apps or project windows matched by title. |
-| **Startup & Updates** | Launch at login, daily update checks, and Check for Updates. |
+| **Startup** | Launch at login, daily update checks, and Check for Updates. |
 
 Settings save automatically. Menus, switches, and sliders apply immediately; text fields save when you press Return or finish editing. Invalid values and conflicting shortcuts leave the last valid configuration in effect and show an error. Restore Defaults also applies immediately.
 

@@ -5,6 +5,7 @@ Winlane's search accepts windows, installed applications, and built-in commands.
 | Command | Search examples | Action |
 | --- | --- | --- |
 | `clipboard` | `clipboard`, `clip`, `剪贴板` | Open a dedicated list to search and paste clipboard history. |
+| `quicklink` | `quicklinks`, `links`, `快捷链接` | Browse and open saved links. |
 | `snippet` | `snippet`, `snippets`, `片段` | Open a dedicated list to browse and search saved snippets. |
 | `show-menu` | `menu`, `菜单栏` | Temporarily reveal the macOS menu bar. |
 | `lock-screen` | `lock`, `lock screen`, `锁屏` | Lock the Mac without closing applications. |
@@ -20,7 +21,7 @@ The picker closes before a system command executes. These commands do not change
 ## Add a command
 
 1. Add a stable `CommandId` variant and a `Command` entry in `src/commands.rs`. Supply its name, English and Chinese labels, SF Symbol, and search keywords.
-2. For a system action, handle the new ID in `PreparedCommand::prepare` and its execution in `src/system_commands.rs`. Commands that navigate within the picker, such as `snippet` and `clipboard`, are handled in `src/app.rs` before system dispatch. Keep specialized native operations in separate modules where needed. Preparation must not perform the action. The shared handler in `src/app.rs` dismisses the picker only after preparation succeeds and reports errors through `selection_failed`.
+2. For a system action, handle the new ID in `PreparedCommand::prepare` and its execution in `src/system_commands.rs`. Commands that navigate within the picker, such as `snippet`, `clipboard`, and `quicklink`, are handled in `src/app.rs` before system dispatch. Keep specialized native operations in separate modules where needed. Preparation must not perform the action. The shared handler in `src/app.rs` dismisses the picker only after preparation succeeds and reports errors through `selection_failed`.
 3. Add matching tests in `tests/commands.rs` and interaction coverage alongside `tests/support/commands.rs`. Tests should not change the user's desktop unless explicitly invoked for that purpose.
 
 Result rendering, keyboard selection, mouse selection, and selection preservation are shared across commands. Adding a new command does not require a new result layout.

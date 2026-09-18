@@ -43,7 +43,7 @@ impl PreparedCommand {
         mtm: MainThreadMarker,
     ) -> Result<Self, String> {
         let operation = match command {
-            CommandId::Snippets | CommandId::Clipboard => {
+            CommandId::Snippets | CommandId::Clipboard | CommandId::Quicklinks => {
                 return Err(tr!(
                     "请在搜索面板中打开此命令。",
                     "Open this command in the search panel."

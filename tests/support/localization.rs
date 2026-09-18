@@ -6,13 +6,14 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
             "Winlane Settings",
             [
                 "Shortcuts",
-                "Appearance & Language",
+                "Appearance",
                 "Input",
-                "Window List",
-                "Startup & Updates",
+                "Windows",
+                "Startup",
                 "Aliases",
                 "Snippets",
                 "Clipboard",
+                "Quicklinks",
             ],
         ),
         (
@@ -27,6 +28,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
                 "Alias 规则",
                 "文本片段",
                 "剪贴板",
+                "快捷链接",
             ],
         ),
     ] {
@@ -232,7 +234,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
         crate::app_shortcuts::verify_hidden_settings(target, mtm);
     }
     println!(
-        "English and Chinese settings: eight tabs, input and language choices, layout bounds, configuration round trips passed."
+        "English and Chinese settings: nine tabs, input and language choices, layout bounds, configuration round trips passed."
     );
 }
 

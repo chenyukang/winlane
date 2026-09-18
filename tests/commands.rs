@@ -117,3 +117,17 @@ fn clipboard_command_has_an_explicit_search_entry() {
         assert!(matching_commands(query).is_empty());
     }
 }
+
+#[test]
+fn quicklinks_have_an_explicit_search_entry() {
+    for query in [
+        "quicklink",
+        "quicklinks",
+        "Quick",
+        "links",
+        "快捷链接",
+        "链接",
+    ] {
+        assert_eq!(matching_commands(query), [CommandId::Quicklinks]);
+    }
+}

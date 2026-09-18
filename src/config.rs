@@ -315,6 +315,7 @@ pub struct Config {
     pub app_shortcuts: Vec<AppShortcut>,
     pub alias_rules: Vec<AliasRule>,
     pub snippets: Vec<crate::snippets::Snippet>,
+    pub quicklinks: Vec<crate::quicklinks::Quicklink>,
     pub clipboard: crate::clipboard::ClipboardSettings,
     pub sort: SortOrder,
     pub appearance: Appearance,
@@ -336,6 +337,7 @@ impl Default for Config {
             app_shortcuts: Vec::new(),
             alias_rules: Vec::new(),
             snippets: Vec::new(),
+            quicklinks: Vec::new(),
             clipboard: Default::default(),
             sort: SortOrder::Recent,
             appearance: Appearance::System,
@@ -354,6 +356,7 @@ impl Default for Config {
 impl Config {
     pub fn validate(&self) -> Result<(), String> {
         crate::snippets::validate(&self.snippets)?;
+        crate::quicklinks::validate(&self.quicklinks)?;
         self.clipboard.validate()?;
         if self.alias_rules.len() > 64 {
             return Err(tr!(

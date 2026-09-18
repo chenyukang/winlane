@@ -25,6 +25,10 @@ mod main_wake;
 #[cfg(target_os = "macos")]
 mod menu_bar;
 #[cfg(target_os = "macos")]
+mod quicklink_input;
+#[cfg(target_os = "macos")]
+mod quicklink_ui;
+#[cfg(target_os = "macos")]
 mod settings;
 #[cfg(target_os = "macos")]
 mod shortcut_tap;

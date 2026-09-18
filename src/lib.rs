@@ -12,3 +12,5 @@ pub mod input_method;
 pub mod search;
 pub mod shortcuts;
 pub mod snippets;
+
+pub mod quicklinks;

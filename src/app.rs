@@ -45,6 +45,7 @@ const APP_CATALOG_TTL: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SearchScope {
+    Quicklinks,
     Snippets,
     Clipboard,
 }
@@ -64,6 +65,7 @@ struct PanelUi {
     settings_button: Retained<NSButton>,
     scope_back: Retained<NSButton>,
     clipboard_actions: Retained<NSPopUpButton>,
+    quicklink_bar: RefCell<crate::quicklink_input::Bar>,
     mode_label: Retained<NSTextField>,
     rows: RefCell<Vec<RowUi>>,
     empty_labels: RefCell<Vec<Retained<NSTextField>>>,
@@ -84,6 +86,7 @@ struct RowUi {
 enum RowContent {
     Command(CommandId),
     Snippet(winlane::snippets::Snippet),
+    Quicklink(winlane::quicklinks::Quicklink),
     Clipboard(u64, String, String, String),
     Window(WindowInfo, Option<String>),
     Application(ApplicationTarget),
@@ -92,6 +95,7 @@ enum RowContent {
 enum SelectedResult {
     Command(CommandId),
     Snippet(String),
+    Quicklink(String),
     Clipboard(u64),
     Window(u64),
     Application(String),
@@ -132,6 +136,7 @@ impl RowUi {
                 RowContent::Application(_)
                     | RowContent::Command(_)
                     | RowContent::Snippet(_)
+                    | RowContent::Quicklink(_)
                     | RowContent::Clipboard(..)
             )
         );
@@ -206,6 +211,9 @@ struct AppState {
     launch_matches: RefCell<Vec<usize>>,
     command_matches: RefCell<Vec<CommandId>>,
     snippet_matches: RefCell<Vec<winlane::snippets::Snippet>>,
+    quicklink_matches: RefCell<Vec<winlane::quicklinks::Quicklink>>,
+    quicklink_input: RefCell<Option<crate::quicklink_input::Input>>,
+    quicklink_editor: RefCell<Option<Retained<crate::quicklink_ui::QuicklinkEditor>>>,
     clipboard_matches: RefCell<Vec<u64>>,
     clipboard: RefCell<Option<crate::clipboard_runtime::ClipboardRuntime>>,
     clipboard_timer: RefCell<Option<Retained<NSTimer>>>,
@@ -266,13 +274,23 @@ define_class!(
                     // SAFETY: build_ui installs our retained Delegate as this panel's sole delegate.
                     let delegate: Option<Retained<Delegate>> = unsafe { msg_send![self, delegate] };
                     if let Some(delegate) = delegate {
-                        match command {
-                            PanelCommand::Next => delegate.move_selection(1),
-                            PanelCommand::Previous => delegate.move_selection(-1),
-                            PanelCommand::Accept => delegate.activate_selected(),
-                            PanelCommand::Cancel => delegate.cancel_search(),
+                        if delegate.editing_quicklink() {
+                            match command {
+                                PanelCommand::Accept => { delegate.activate_selected(); return; }
+                                PanelCommand::Cancel => { delegate.cancel_search(); return; }
+                                PanelCommand::Next | PanelCommand::Previous if i64::from(event.keyCode()) == winlane::shortcuts::TAB => { delegate.step_quicklink_argument(if command == PanelCommand::Next { 1 } else { -1 }); return; }
+                                _ => {}
+                            }
+                        } else {
+                            if command == PanelCommand::Next && i64::from(event.keyCode()) == winlane::shortcuts::TAB && delegate.begin_selected_quicklink() { return; }
+                            match command {
+                                PanelCommand::Next => delegate.move_selection(1),
+                                PanelCommand::Previous => delegate.move_selection(-1),
+                                PanelCommand::Accept => delegate.activate_selected(),
+                                PanelCommand::Cancel => delegate.cancel_search(),
+                            }
+                            return;
                         }
-                        return;
                     }
                 }
                 if !composing && event.modifierFlags().contains(NSEventModifierFlags::Command)
@@ -497,14 +515,21 @@ define_class!(
         #[unsafe(method(controlTextDidChange:))]
         fn text_changed(&self, notification: &NSNotification) {
             if self.ivars().syncing_controls.get() { return; }
+            if let Some(control) = notification.object().and_then(|object| object.downcast::<NSControl>().ok()) && self.update_quicklink_argument(&control) { return; }
             if let Some(input) = notification.object().and_then(|object| object.downcast::<NSSearchField>().ok()) {
                 self.ivars().query.replace(input.stringValue().to_string());
                 self.filter();
             }
         }
+        #[unsafe(method(controlTextDidBeginEditing:))]
+        fn text_began(&self, notification: &NSNotification) {
+            if let Some(control) = notification.object().and_then(|object| object.downcast::<NSControl>().ok()) { self.remember_quicklink_field(&control); }
+        }
         #[unsafe(method(control:textView:doCommandBySelector:))]
-        fn text_command(&self, _: &NSControl, editor: &NSTextView, command: Sel) -> bool {
+        fn text_command(&self, control: &NSControl, editor: &NSTextView, command: Sel) -> bool {
             if NSTextInputClient::hasMarkedText(editor) { false }
+            else if self.editing_quicklink() { self.quicklink_text_command(control, command) }
+            else if command == sel!(insertTab:) && self.begin_selected_quicklink() { true }
             else if command == sel!(moveDown:) || command == sel!(insertTab:) {
                 self.move_selection(1); true
             } else if command == sel!(moveUp:) || command == sel!(insertBacktab:) {
@@ -598,7 +623,7 @@ define_class!(
         fn reset_settings(&self, _: Option<&AnyObject>) {
             if let Some(settings) = self.settings_window() {
                 if self.ivars().saving_settings.replace(true) { return; }
-                let defaults = Config { snippets: self.ivars().config.borrow().snippets.clone(), ..Config::default() };
+                let defaults = Config { snippets: self.ivars().config.borrow().snippets.clone(), quicklinks: self.ivars().config.borrow().quicklinks.clone(), ..Config::default() };
                 let result = self.apply_config(defaults);
                 self.ivars().saving_settings.set(false);
                 match result {
@@ -684,6 +709,8 @@ define_class!(
         }
         #[unsafe(method(manageLogin:))]
         fn manage_login(&self, _: Option<&AnyObject>) { settings::manage_login(); }
+        #[unsafe(method(quicklinkArgumentChanged:))]
+        fn quicklink_argument_changed(&self, control: &NSControl) { self.update_quicklink_argument(control); }
         #[unsafe(method(leaveScopedSearch:))]
         fn scope_back(&self, _: Option<&AnyObject>) { self.leave_scoped_search(); }
         #[unsafe(method(toggleScope:))]
@@ -1078,6 +1105,7 @@ impl Delegate {
             .setDelegate(Some(ProtocolObject::from_ref(self)));
         self.ivars().settings.replace(Some(window.clone()));
         window.embed_snippets(self.ensure_snippet_editor().view());
+        window.embed_quicklinks(self.ensure_quicklink_editor().view());
         self.update_update_settings();
         window
     }
@@ -1169,6 +1197,7 @@ impl Delegate {
         if visible {
             self.present_panels();
         }
+        let old_quicklink_editor = state.quicklink_editor.take();
         let old_snippet_editor = state.snippet_editor.take();
         let old_settings = state.settings.take();
         if let Some(old) = old_settings {
@@ -1186,6 +1215,9 @@ impl Delegate {
                 window.window.setFrameOrigin(frame.origin);
                 self.report_shortcut_status();
             }
+        }
+        if let Some(old) = old_quicklink_editor {
+            self.ensure_quicklink_editor().copy_draft_from(&old);
         }
         if let Some(old) = old_snippet_editor {
             self.ensure_snippet_editor().copy_draft_from(&old);
@@ -1415,6 +1447,8 @@ impl Delegate {
         }
         clipboard_actions.setHidden(true);
         root.addSubview(&clipboard_actions);
+        let quicklink_bar = crate::quicklink_input::Bar::new(self, mtm);
+        root.addSubview(&quicklink_bar.view);
         let mode_label = label("", 11.0, rect(16.0, LIST_BOTTOM, WIDTH - 32.0, 20.0), mtm);
         mode_label.setTextColor(Some(&NSColor::labelColor()));
         mode_label.setAlphaValue(0.65);
@@ -1485,6 +1519,7 @@ impl Delegate {
             settings_button,
             scope_back,
             clipboard_actions,
+            quicklink_bar: RefCell::new(quicklink_bar),
             shortcut_label: shortcut,
             mode_label,
             rows: RefCell::new(Vec::new()),
@@ -1733,6 +1768,7 @@ impl Delegate {
             settings.set_app_shortcuts(&candidate.app_shortcuts);
             settings.set_alias_rules(&candidate.alias_rules);
             settings.set_snippets(&candidate.snippets);
+            settings.set_quicklinks(&candidate.quicklinks);
             settings.fill_clipboard(&candidate.clipboard);
         }
         let language_changed =
@@ -1952,6 +1988,7 @@ impl Delegate {
     }
 
     fn show_mode(&self, mode: PanelMode, session: u64, direction: i8) {
+        self.clear_quicklink_input();
         self.ivars().search_scope.set(None);
         if let Some(timer) = self.ivars().snippet_paste_timer.take() {
             timer.invalidate();
@@ -2052,12 +2089,21 @@ impl Delegate {
         {
             match self.ivars().mode.get() {
                 Some(PanelMode::Search) => {
-                    let new_editor = ui.input.currentEditor().is_none();
+                    let bar = ui.quicklink_bar.borrow();
+                    let active = self
+                        .ivars()
+                        .quicklink_input
+                        .borrow()
+                        .as_ref()
+                        .map(|input| input.active);
+                    let control: &NSControl = active
+                        .and_then(|index| bar.control(index))
+                        .unwrap_or(&ui.input);
+                    let new_editor = control.currentEditor().is_none();
                     if new_editor {
-                        ui.panel.makeFirstResponder(Some(&ui.input));
+                        ui.panel.makeFirstResponder(Some(control));
                     }
-                    let editor = ui
-                        .input
+                    let editor = control
                         .currentEditor()
                         .and_then(|editor| editor.downcast::<NSTextView>().ok());
                     if let Some(editor) = editor
@@ -2144,8 +2190,11 @@ impl Delegate {
     }
 
     fn scoped_search(&self) -> bool {
-        self.ivars().search_scope.get().is_some()
+        (self.ivars().search_scope.get().is_some() || self.editing_quicklink())
             && self.ivars().mode.get() == Some(PanelMode::Search)
+    }
+    fn searching_quicklinks(&self) -> bool {
+        self.scoped_search() && self.ivars().search_scope.get() == Some(SearchScope::Quicklinks)
     }
     fn searching_snippets(&self) -> bool {
         self.scoped_search() && self.ivars().search_scope.get() == Some(SearchScope::Snippets)
@@ -2163,10 +2212,19 @@ impl Delegate {
         self.focus_search();
     }
     fn leave_scoped_search(&self) {
+        if let Some(input) = self.ivars().quicklink_input.take() {
+            let id = input.link.id;
+            self.clear_quicklink_input();
+            self.filter_preserving(Some(SelectedResult::Quicklink(id)));
+            self.focus_search();
+            return;
+        }
         if !self.scoped_search() {
             return;
         }
-        let command = if self.searching_clipboard() {
+        let command = if self.searching_quicklinks() {
+            CommandId::Quicklinks
+        } else if self.searching_clipboard() {
             CommandId::Clipboard
         } else {
             CommandId::Snippets
@@ -2207,6 +2265,7 @@ impl Delegate {
     }
 
     fn end_session(&self) {
+        self.clear_quicklink_input();
         let clipboard = self.searching_clipboard();
         self.ivars().search_scope.set(None);
         if clipboard {
@@ -2268,6 +2327,7 @@ impl Delegate {
     }
 
     fn display_search(&self, session: u64) {
+        self.clear_quicklink_input();
         if self.ivars().search_scope.replace(None).is_some() {
             self.ivars().query.borrow_mut().clear();
         }
@@ -2528,6 +2588,14 @@ impl Delegate {
     }
 
     fn filter_preserving(&self, selected_id: Option<SelectedResult>) {
+        if self.editing_quicklink() {
+            self.filter_quicklink_input();
+            return;
+        }
+        if self.searching_quicklinks() {
+            self.filter_quicklinks(selected_id);
+            return;
+        }
         if self.searching_clipboard() {
             self.filter_clipboard(selected_id);
             return;
@@ -2598,6 +2666,19 @@ impl Delegate {
         } else {
             Vec::new()
         };
+        let quicklink_matches = if self.ivars().mode.get() == Some(PanelMode::Search)
+            && !self.ivars().demo.get()
+            && scope_pid.is_none()
+            && !query.trim().is_empty()
+        {
+            let config = self.ivars().config.borrow();
+            winlane::quicklinks::matching(&config.quicklinks, &query)
+                .into_iter()
+                .map(|i| config.quicklinks[i].clone())
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         let snippet_matches: Vec<winlane::snippets::Snippet> = Vec::new();
         let extra_count = command_matches.len() + snippet_matches.len();
         let apps = self.ivars().installed_apps.borrow();
@@ -2630,6 +2711,10 @@ impl Delegate {
                 .iter()
                 .position(|snippet| snippet.id == id)
                 .map(|index| command_matches.len() + index),
+            Some(SelectedResult::Quicklink(id)) => quicklink_matches
+                .iter()
+                .position(|q| q.id == id)
+                .map(|i| extra_count + matched.len() + i),
             Some(SelectedResult::Window(id)) => matched
                 .iter()
                 .position(|&index| windows[index].id == id)
@@ -2637,7 +2722,7 @@ impl Delegate {
             Some(SelectedResult::Application(id)) => launch_matches
                 .iter()
                 .position(|&index| apps[index].target.bundle_id == id)
-                .map(|index| extra_count + matched.len() + index)
+                .map(|index| extra_count + matched.len() + quicklink_matches.len() + index)
                 .or_else(|| {
                     let identities = self.ivars().identities.borrow();
                     matched
@@ -2666,6 +2751,7 @@ impl Delegate {
         self.ivars().launch_matches.replace(launch_matches);
         self.ivars().command_matches.replace(command_matches);
         self.ivars().snippet_matches.replace(snippet_matches);
+        self.ivars().quicklink_matches.replace(quicklink_matches);
         self.ivars().clipboard_matches.borrow_mut().clear();
         self.ivars().selected.set(selected);
         self.render();
@@ -2718,6 +2804,7 @@ impl Delegate {
         state.launch_matches.borrow_mut().clear();
         state.command_matches.borrow_mut().clear();
         state.snippet_matches.borrow_mut().clear();
+        state.quicklink_matches.borrow_mut().clear();
         state.application_icons.borrow_mut().clear();
         state.clipboard_matches.replace(matches);
         state.selected.set(selected);
@@ -2858,12 +2945,16 @@ impl Delegate {
         state.command_matches.borrow_mut().clear();
         state.application_icons.borrow_mut().clear();
         state.snippet_matches.replace(snippets);
+        state.quicklink_matches.borrow_mut().clear();
         state.clipboard_matches.borrow_mut().clear();
         state.selected.set(selected);
         self.render();
     }
 
     fn move_selection(&self, direction: isize) {
+        if self.editing_quicklink() {
+            return;
+        }
         if self.ivars().mode.get() == Some(PanelMode::Switch) {
             self.ivars().alias_input.borrow_mut().clear();
             if let Some(selection) = self.ivars().switch_selection.borrow_mut().as_mut() {
@@ -2914,10 +3005,13 @@ impl Delegate {
         let command_matches = state.command_matches.borrow();
         let apps = state.installed_apps.borrow();
         let snippet_matches = state.snippet_matches.borrow();
+        let quicklink_matches = state.quicklink_matches.borrow();
         let clipboard_matches = state.clipboard_matches.borrow();
         let clipboard = state.clipboard.borrow();
         let extra_count = command_matches.len() + snippet_matches.len() + clipboard_matches.len();
-        let count = extra_count + matched.len() + launch_matches.len();
+        let count = extra_count + matched.len() + quicklink_matches.len() + launch_matches.len();
+        let quicklink_input = state.quicklink_input.borrow();
+        let inline = quicklink_input.is_some();
         let trusted = accessibility::is_trusted();
         let demo = state.demo.get();
         let switching = state.mode.get() == Some(PanelMode::Switch);
@@ -2933,7 +3027,11 @@ impl Delegate {
         let mut frame = ui.panel.frame();
         let chrome_height = frame.size.height - previous_height;
         let visible = ui.panel.screen().map(|screen| screen.visibleFrame());
-        let mut height = panel_height(count, switching, !trusted || demo, show_mode_label, density);
+        let argument_height = quicklink_input
+            .as_ref()
+            .map_or(0.0, |input| input.extra_height(density));
+        let mut height = panel_height(count, switching, !trusted || demo, show_mode_label, density)
+            + argument_height;
         if let Some(visible) = visible {
             height = height.min((visible.size.height - chrome_height).max(1.0));
         }
@@ -2991,15 +3089,33 @@ impl Delegate {
         let alias_match = self.alias_match();
         let unmatched_alias =
             switching && !alias_query.is_empty() && alias_match.position().is_none();
-        ui.input.setHidden(switching);
-        ui.scope_back.setHidden(!self.scoped_search());
+        if let Some(input) = quicklink_input.as_ref() {
+            ui.quicklink_bar.borrow_mut().render(
+                input,
+                rect(
+                    0.0,
+                    height - 64.0 - argument_height,
+                    WIDTH,
+                    64.0 + argument_height,
+                ),
+                density,
+                ProtocolObject::from_ref(self),
+                self.mtm(),
+            );
+        } else {
+            ui.quicklink_bar.borrow().view.setHidden(true);
+        }
+        ui.input.setHidden(switching || inline);
+        ui.scope_back.setHidden(!self.scoped_search() || inline);
         ui.scope_back.setTitle(&NSString::from_str(if in_clipboard {
             tr!("‹ 剪贴板", "‹ Clipboard")
+        } else if self.searching_quicklinks() {
+            tr!("‹ 链接", "‹ Links")
         } else {
             tr!("‹ 片段", "‹ Snippets")
         }));
         ui.clipboard_actions.setHidden(!in_clipboard);
-        ui.shortcut_label.setHidden(in_clipboard);
+        ui.shortcut_label.setHidden(in_clipboard || inline);
         if let Some(item) = ui.clipboard_actions.itemAtIndex(3) {
             item.setTitle(&NSString::from_str(
                 if state.config.borrow().clipboard.enabled {
@@ -3069,7 +3185,7 @@ impl Delegate {
             } else {
                 0.0
             };
-        let list_top = height - if switching { 36.0 } else { HEIGHT - LIST_TOP };
+        let list_top = height - if switching { 36.0 } else { HEIGHT - LIST_TOP } - argument_height;
         let list_height = list_top - list_bottom;
         let scroll_frame = rect(10.0, list_bottom, LIST_WIDTH, list_height);
         if ui.scroll.frame() != scroll_frame {
@@ -3138,6 +3254,14 @@ impl Delegate {
                         ),
                     )
                 }
+            } else if self.searching_quicklinks() {
+                (
+                    tr!("没有匹配的快捷链接", "No matching quicklinks"),
+                    tr!(
+                        "在设置 → 快捷链接中添加或导入链接，或按 Esc 返回。",
+                        "Add or import links in Settings → Quicklinks, or press Esc to go back."
+                    ),
+                )
             } else if snippets {
                 if state.config.borrow().snippets.is_empty() {
                     (
@@ -3235,11 +3359,15 @@ impl Delegate {
             } else if let Some(&index) = matched.get(position - extra_count) {
                 let item = &windows[index];
                 RowContent::Window(item.clone(), aliases.for_window(item.id).map(str::to_owned))
+            } else if let Some(link) = quicklink_matches.get(position - extra_count - matched.len())
+            {
+                RowContent::Quicklink(link.clone())
             } else {
                 RowContent::Application(
-                    apps[launch_matches[position - extra_count - matched.len()]]
-                        .target
-                        .clone(),
+                    apps[launch_matches
+                        [position - extra_count - matched.len() - quicklink_matches.len()]]
+                    .target
+                    .clone(),
                 )
             };
             let selected = position == state.selected.get() && !unmatched_alias;
@@ -3267,6 +3395,22 @@ impl Delegate {
                             command.title(),
                             command.category()
                         )
+                    }
+                    RowContent::Quicklink(link) => {
+                        set_label(&row.app, &link.name);
+                        set_label(
+                            &row.title,
+                            &trf!("打开链接 · {}", "Open link · {}", link.link),
+                        );
+                        set_label(&row.alias, "↗");
+                        row.icon.setImage(
+                            NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                                &NSString::from_str("link"),
+                                Some(&NSString::from_str(tr!("快捷链接", "Quicklink"))),
+                            )
+                            .as_deref(),
+                        );
+                        trf!("打开链接：{}", "Open link: {}", link.link)
                     }
                     RowContent::Snippet(snippet) => {
                         set_label(&row.app, &snippet.name);
@@ -3355,6 +3499,20 @@ impl Delegate {
                 row.content = Some(content);
                 row.selected = None;
             }
+            if let Some(input) = quicklink_input.as_ref() {
+                let preview = input.error.clone().unwrap_or_else(|| {
+                    input
+                        .destination()
+                        .unwrap_or_else(|_| input.link.link.clone())
+                });
+                set_label(&row.title, &preview);
+                row.button.setToolTip(Some(&NSString::from_str(&preview)));
+                row.button
+                    .setAccessibilityLabel(Some(&NSString::from_str(&format!(
+                        "{} — {}",
+                        input.link.name, preview
+                    ))));
+            }
             row.select(selected);
             if !row.attached {
                 list.addSubview(&row.button);
@@ -3368,7 +3526,13 @@ impl Delegate {
         let clipboard_error = clipboard
             .as_ref()
             .and_then(|clipboard| clipboard.error.as_ref());
-        let status = if in_clipboard && let Some(error) = clipboard_error {
+        let status = if inline {
+            tr!(
+                "Tab 切换参数 · ↵ 打开 · Esc 返回",
+                "Tab next field · ↵ open · Esc back"
+            )
+            .into()
+        } else if in_clipboard && let Some(error) = clipboard_error {
             error.clone()
         } else if demo {
             trf!(
@@ -3394,6 +3558,12 @@ impl Delegate {
                     clipboard_matches.len(),
                     !state.config.borrow().clipboard.enabled
                 )
+            )
+        } else if self.searching_quicklinks() {
+            trf!(
+                "{} 个链接 · ↑↓ 选择 · ↵ 打开 · Esc 返回",
+                "{} links · ↑↓ select · ↵ open · Esc back",
+                quicklink_matches.len()
             )
         } else if snippets {
             trf!(
@@ -3651,6 +3821,17 @@ impl Delegate {
     }
 
     fn activate_selected(&self) {
+        if self.editing_quicklink() {
+            self.submit_quicklink_input();
+            return;
+        }
+        if self.selected_command() == Some(CommandId::Quicklinks) {
+            self.enter_scoped_search(SearchScope::Quicklinks);
+            return;
+        }
+        if self.searching_quicklinks() && self.match_count() == 0 {
+            return;
+        }
         if self.selected_command() == Some(CommandId::Clipboard) {
             self.enter_scoped_search(SearchScope::Clipboard);
             return;
@@ -3664,6 +3845,10 @@ impl Delegate {
             return;
         }
         if self.searching_snippets() && self.match_count() == 0 {
+            return;
+        }
+        if let Some(link) = self.selected_quicklink() {
+            self.use_quicklink(&link);
             return;
         }
         if let Some(tap) = self.ivars().shortcut_tap.borrow().as_ref() {
@@ -3813,6 +3998,273 @@ impl Delegate {
                 "无法隐藏应用，它可能已经退出。",
                 "Could not hide the app. It may have quit."
             )),
+        }
+    }
+
+    fn ensure_quicklink_editor(&self) -> Retained<crate::quicklink_ui::QuicklinkEditor> {
+        if let Some(editor) = self.ivars().quicklink_editor.borrow().as_ref() {
+            return editor.clone();
+        }
+        let weak = Weak::new(self);
+        let editor = crate::quicklink_ui::QuicklinkEditor::new(
+            self.ivars().config.borrow().quicklinks.clone(),
+            Box::new(move |links| {
+                let Some(delegate) = weak.load() else {
+                    return Err("Winlane closed".into());
+                };
+                let mut config = delegate.ivars().config.borrow().clone();
+                config.quicklinks = links;
+                delegate.apply_config(config)
+            }),
+            self.mtm(),
+        );
+        self.ivars().quicklink_editor.replace(Some(editor.clone()));
+        editor
+    }
+    fn filter_quicklinks(&self, selected: Option<SelectedResult>) {
+        let state = self.ivars();
+        let config = state.config.borrow();
+        let links: Vec<_> =
+            winlane::quicklinks::matching(&config.quicklinks, &state.query.borrow())
+                .into_iter()
+                .map(|i| config.quicklinks[i].clone())
+                .collect();
+        let selected = if let Some(SelectedResult::Quicklink(id)) = selected {
+            links.iter().position(|q| q.id == id).unwrap_or(0)
+        } else {
+            0
+        };
+        drop(config);
+        state.matches.borrow_mut().clear();
+        state.launch_matches.borrow_mut().clear();
+        state.command_matches.borrow_mut().clear();
+        state.snippet_matches.borrow_mut().clear();
+        state.clipboard_matches.borrow_mut().clear();
+        state.application_icons.borrow_mut().clear();
+        state.quicklink_matches.replace(links);
+        state.selected.set(selected);
+        self.render();
+    }
+    fn selected_quicklink(&self) -> Option<winlane::quicklinks::Quicklink> {
+        let state = self.ivars();
+        let index = state.selected.get().checked_sub(
+            state.command_matches.borrow().len()
+                + state.snippet_matches.borrow().len()
+                + state.clipboard_matches.borrow().len()
+                + state.matches.borrow().len(),
+        )?;
+        state.quicklink_matches.borrow().get(index).cloned()
+    }
+    fn editing_quicklink(&self) -> bool {
+        self.ivars().quicklink_input.borrow().is_some()
+    }
+    fn clear_quicklink_input(&self) {
+        self.ivars().quicklink_input.take();
+        for ui in self.panels() {
+            ui.quicklink_bar.borrow_mut().clear();
+            for row in ui.rows.borrow_mut().iter_mut() {
+                if matches!(row.content, Some(RowContent::Quicklink(_))) {
+                    row.content = None;
+                }
+            }
+        }
+    }
+    fn begin_selected_quicklink(&self) -> bool {
+        if self.ivars().mode.get() != Some(PanelMode::Search) {
+            return false;
+        }
+        let Some(link) = self.selected_quicklink() else {
+            return false;
+        };
+        let Ok(template) = winlane::quicklinks::Template::parse(&link.link) else {
+            return false;
+        };
+        if template.arguments.is_empty() {
+            return false;
+        }
+        self.begin_quicklink_input(link, template);
+        true
+    }
+    fn begin_quicklink_input(
+        &self,
+        link: winlane::quicklinks::Quicklink,
+        template: winlane::quicklinks::Template,
+    ) {
+        let clipboard = if template.uses_clipboard() {
+            crate::snippet_ui::clipboard()
+        } else {
+            String::new()
+        };
+        self.ivars()
+            .quicklink_input
+            .replace(Some(crate::quicklink_input::Input::new(
+                link, template, clipboard,
+            )));
+        self.filter();
+        self.focus_search();
+    }
+    fn filter_quicklink_input(&self) {
+        let state = self.ivars();
+        let link = state
+            .quicklink_input
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .link
+            .clone();
+        state.matches.borrow_mut().clear();
+        state.launch_matches.borrow_mut().clear();
+        state.command_matches.borrow_mut().clear();
+        state.snippet_matches.borrow_mut().clear();
+        state.clipboard_matches.borrow_mut().clear();
+        state.application_icons.borrow_mut().clear();
+        state.quicklink_matches.replace(vec![link]);
+        state.selected.set(0);
+        self.render();
+    }
+    fn remember_quicklink_field(&self, control: &NSControl) {
+        for ui in self.panels() {
+            let index = ui.quicklink_bar.borrow().index(control);
+            if let Some(index) = index {
+                if let Some(input) = self.ivars().quicklink_input.borrow_mut().as_mut() {
+                    input.active = index;
+                }
+                break;
+            }
+        }
+    }
+    fn update_quicklink_argument(&self, control: &NSControl) -> bool {
+        if self.ivars().syncing_controls.get() || !self.editing_quicklink() {
+            return false;
+        }
+        for ui in self.panels() {
+            let changed = {
+                let bar = ui.quicklink_bar.borrow();
+                bar.index(control)
+                    .map(|i| (i, bar.value(i).unwrap_or_default()))
+            };
+            if let Some((index, value)) = changed {
+                if let Some(input) = self.ivars().quicklink_input.borrow_mut().as_mut() {
+                    input.active = index;
+                    input
+                        .values
+                        .insert(input.template.arguments[index].name.clone(), value);
+                    input.error = None;
+                }
+                self.render();
+                return true;
+            }
+        }
+        false
+    }
+    fn step_quicklink_argument(&self, direction: isize) {
+        if let Some(input) = self.ivars().quicklink_input.borrow_mut().as_mut() {
+            input.active = (input.active as isize + direction)
+                .rem_euclid(input.template.arguments.len() as isize)
+                as usize;
+        }
+        self.focus_search();
+    }
+    fn quicklink_text_command(&self, control: &NSControl, command: Sel) -> bool {
+        self.remember_quicklink_field(control);
+        if command == sel!(insertTab:) {
+            self.step_quicklink_argument(1);
+        } else if command == sel!(insertBacktab:) {
+            self.step_quicklink_argument(-1);
+        } else if command == sel!(insertNewline:) {
+            self.submit_quicklink_input();
+        } else if command == sel!(cancelOperation:) {
+            self.leave_scoped_search();
+        } else if command == sel!(deleteBackward:) {
+            let empty = self
+                .ivars()
+                .quicklink_input
+                .borrow()
+                .as_ref()
+                .is_some_and(|input| {
+                    input
+                        .values
+                        .get(&input.template.arguments[input.active].name)
+                        .is_none_or(String::is_empty)
+                });
+            if !empty {
+                return false;
+            }
+            let first = self
+                .ivars()
+                .quicklink_input
+                .borrow()
+                .as_ref()
+                .is_some_and(|input| input.active == 0);
+            if first {
+                self.leave_scoped_search();
+            } else {
+                self.step_quicklink_argument(-1);
+            }
+        } else {
+            return false;
+        }
+        true
+    }
+    fn submit_quicklink_input(&self) {
+        let result = {
+            let input = self.ivars().quicklink_input.borrow();
+            let Some(input) = input.as_ref() else {
+                return;
+            };
+            input
+                .destination()
+                .map(|url| (url, input.link.open_with.clone()))
+        };
+        match result {
+            Ok((url, application)) => match crate::quicklink_ui::open(&url, &application) {
+                Ok(()) => {
+                    self.cancel_routing();
+                    self.end_session();
+                }
+                Err(error) => {
+                    if let Some(input) = self.ivars().quicklink_input.borrow_mut().as_mut() {
+                        input.error = Some(error);
+                    }
+                    self.render();
+                }
+            },
+            Err(error) => {
+                if let Some(input) = self.ivars().quicklink_input.borrow_mut().as_mut() {
+                    input.error = Some(error);
+                }
+                self.render();
+                self.focus_search();
+            }
+        }
+    }
+    fn use_quicklink(&self, link: &winlane::quicklinks::Quicklink) {
+        let template = match winlane::quicklinks::Template::parse(&link.link) {
+            Ok(template) => template,
+            Err(error) => {
+                self.selection_failed(&error);
+                return;
+            }
+        };
+        if !template.arguments.is_empty() {
+            self.begin_quicklink_input(link.clone(), template);
+            return;
+        }
+        let clipboard = if template.uses_clipboard() {
+            crate::snippet_ui::clipboard()
+        } else {
+            String::new()
+        };
+        let result = crate::quicklink_ui::render(&template, &clipboard, &HashMap::new());
+        match result {
+            Ok(url) => {
+                self.cancel_routing();
+                self.end_session();
+                if let Err(error) = crate::quicklink_ui::open(&url, &link.open_with) {
+                    self.selection_failed(&error);
+                }
+            }
+            Err(error) => self.selection_failed(&error),
         }
     }
 
@@ -3982,7 +4434,8 @@ impl Delegate {
             state.command_matches.borrow().len()
                 + state.snippet_matches.borrow().len()
                 + state.clipboard_matches.borrow().len()
-                + state.matches.borrow().len(),
+                + state.matches.borrow().len()
+                + state.quicklink_matches.borrow().len(),
         )?;
         state.launch_matches.borrow().get(index).and_then(|&index| {
             state
@@ -3994,6 +4447,9 @@ impl Delegate {
     }
 
     fn selected_result(&self) -> Option<SelectedResult> {
+        if let Some(link) = self.selected_quicklink() {
+            return Some(SelectedResult::Quicklink(link.id));
+        }
         if let Some(entry) = self.selected_clipboard() {
             return Some(SelectedResult::Clipboard(entry.id));
         }
@@ -4017,6 +4473,7 @@ impl Delegate {
             + self.ivars().clipboard_matches.borrow().len()
             + self.ivars().matches.borrow().len()
             + self.ivars().launch_matches.borrow().len()
+            + self.ivars().quicklink_matches.borrow().len()
     }
 }
 

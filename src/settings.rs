@@ -221,6 +221,7 @@ pub struct SettingsWindow {
     switch_shortcut: ShortcutControls,
     tabs: Retained<NSTabView>,
     snippets_tab: Retained<NSView>,
+    quicklinks_tab: Retained<NSView>,
     clipboard: crate::clipboard_settings::ClipboardControls,
     language: Retained<NSPopUpButton>,
     input_method: Retained<NSPopUpButton>,
@@ -243,6 +244,7 @@ pub struct SettingsWindow {
     app_shortcuts: RefCell<Vec<AppShortcut>>,
     alias_rules: RefCell<Vec<AliasRule>>,
     snippets: RefCell<Vec<winlane::snippets::Snippet>>,
+    quicklinks: RefCell<Vec<winlane::quicklinks::Quicklink>>,
 }
 
 impl SettingsWindow {
@@ -273,13 +275,14 @@ impl SettingsWindow {
         }
         view.addSubview(&tabs);
         let shortcuts = settings_tab(&tabs, tr!("快捷键", "Shortcuts"), mtm);
-        let appearance_tab = settings_tab(&tabs, tr!("外观与语言", "Appearance & Language"), mtm);
+        let appearance_tab = settings_tab(&tabs, tr!("外观与语言", "Appearance"), mtm);
         let input_tab = settings_tab(&tabs, tr!("输入", "Input"), mtm);
-        let windows = settings_tab(&tabs, tr!("窗口列表", "Window List"), mtm);
-        let startup = settings_tab(&tabs, tr!("启动与更新", "Startup & Updates"), mtm);
+        let windows = settings_tab(&tabs, tr!("窗口列表", "Windows"), mtm);
+        let startup = settings_tab(&tabs, tr!("启动与更新", "Startup"), mtm);
         let aliases = settings_tab(&tabs, tr!("Alias 规则", "Aliases"), mtm);
         let snippets_tab = settings_tab(&tabs, tr!("文本片段", "Snippets"), mtm);
         let clipboard_tab = settings_tab(&tabs, tr!("剪贴板", "Clipboard"), mtm);
+        let quicklinks_tab = settings_tab(&tabs, tr!("快捷链接", "Quicklinks"), mtm);
         let clipboard =
             crate::clipboard_settings::ClipboardControls::new(&clipboard_tab, target, mtm);
         aliases.addSubview(&label(
@@ -688,6 +691,7 @@ impl SettingsWindow {
             window,
             tabs,
             snippets_tab,
+            quicklinks_tab,
             clipboard,
             language,
             input_method,
@@ -712,11 +716,13 @@ impl SettingsWindow {
             app_shortcuts: RefCell::default(),
             alias_rules: RefCell::default(),
             snippets: RefCell::default(),
+            quicklinks: RefCell::default(),
         }
     }
 
     pub fn fill(&self, config: &Config) {
         self.set_snippets(&config.snippets);
+        self.set_quicklinks(&config.quicklinks);
         self.fill_clipboard(&config.clipboard);
         self.input_method
             .selectItemAtIndex(match config.input_method {
@@ -774,6 +780,7 @@ impl SettingsWindow {
             app_shortcuts: self.app_shortcuts.borrow().clone(),
             alias_rules: self.alias_rules.borrow().clone(),
             snippets: self.snippets.borrow().clone(),
+            quicklinks: self.quicklinks.borrow().clone(),
             clipboard: self.clipboard.read()?,
             sort: match self.sort.indexOfSelectedItem() {
                 1 => SortOrder::Application,
@@ -869,6 +876,14 @@ impl SettingsWindow {
             self.tabs.selectTabViewItemAtIndex(index);
             self.layout_selected_tab();
         }
+    }
+
+    pub fn embed_quicklinks(&self, view: &NSView) {
+        view.setFrame(self.quicklinks_tab.bounds());
+        self.quicklinks_tab.addSubview(view);
+    }
+    pub fn set_quicklinks(&self, links: &[winlane::quicklinks::Quicklink]) {
+        self.quicklinks.replace(links.to_vec());
     }
 
     pub fn embed_snippets(&self, view: &NSView) {

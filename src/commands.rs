@@ -2,6 +2,7 @@ use crate::{i18n::Locale, tr};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CommandId {
+    Quicklinks,
     Snippets,
     Clipboard,
     ShowMenu,
@@ -33,6 +34,14 @@ impl Command {
 }
 
 pub const COMMANDS: &[Command] = &[
+    Command {
+        id: CommandId::Quicklinks,
+        name: "quicklink",
+        title_en: "Search quicklinks",
+        title_zh: "搜索快捷链接",
+        symbol: "link",
+        keywords: &["quicklinks", "links", "快捷链接", "链接"],
+    },
     Command {
         id: CommandId::Clipboard,
         name: "clipboard",
