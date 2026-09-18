@@ -1,6 +1,6 @@
 [package]
 name = "winlane"
-version = "0.8.7"
+version = "0.9.0"
 edition = "2024"
 description = "A native macOS window search and switcher"
 license = "MIT"

@@ -172,14 +172,19 @@ jobs:
           SIGNING_MODE: ${{ steps.signing.outputs.mode }}
         run: |
           notes="$RUNNER_TEMP/release-notes.md"
-          cat > "$notes" <<'NOTES'
+          : > "$notes"
+          if [[ -f "docs/releases/$TAG.md" ]]; then
+            cat "docs/releases/$TAG.md" >> "$notes"
+            printf '\n\n' >> "$notes"
+          fi
+          cat >> "$notes" <<'NOTES'
           Requires macOS 14 or later. Choose **arm64** for Apple Silicon or **x86_64** for Intel.
 
           Open the DMG and drag Winlane to Applications, or extract the ZIP and move Winlane.app to Applications. Quit the old copy before replacing it; keep the same installation location when updating.
 
           Enable Winlane in System Settings → Privacy & Security → Accessibility (Device Control and Data Access on macOS 27).
 
-          This version includes Sparkle updates. Choose **Check for Updates…** from Winlane's menu, or enable daily checks in **Settings → Startup & Updates**. Downloading, installation, and relaunch require confirmation. Versions without Sparkle need one manual installation to receive future in-app updates.
+          This version includes Sparkle updates. Choose **Check for Updates…** from Winlane's menu, or enable daily checks in **Settings → General**. Downloading, installation, and relaunch require confirmation. Versions without Sparkle need one manual installation to receive future in-app updates.
 
           `SHA256SUMS` contains download checksums. `build-info.json` records the source commit, compiler, and signing status.
           NOTES
