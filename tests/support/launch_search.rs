@@ -420,6 +420,7 @@ fn verify_typo_search(mtm: MainThreadMarker) {
             let _: () = msg_send![&*delegate, controlTextDidChange: &*notification];
         }
         match expected {
+            SelectedResult::Snippet(_) => panic!("unexpected snippet in launch test"),
             SelectedResult::Command(id) => assert_eq!(delegate.selected_command(), Some(id)),
             SelectedResult::Window(id) => {
                 assert_eq!(delegate.selected_window().map(|window| window.id), Some(id));

@@ -314,6 +314,7 @@ pub struct Config {
     pub switch_shortcut: Shortcut,
     pub app_shortcuts: Vec<AppShortcut>,
     pub alias_rules: Vec<AliasRule>,
+    pub snippets: Vec<crate::snippets::Snippet>,
     pub sort: SortOrder,
     pub appearance: Appearance,
     pub display_density: DisplayDensity,
@@ -333,6 +334,7 @@ impl Default for Config {
             switch_shortcut: Shortcut::switch_default(),
             app_shortcuts: Vec::new(),
             alias_rules: Vec::new(),
+            snippets: Vec::new(),
             sort: SortOrder::Recent,
             appearance: Appearance::System,
             display_density: DisplayDensity::default(),
@@ -349,6 +351,7 @@ impl Default for Config {
 
 impl Config {
     pub fn validate(&self) -> Result<(), String> {
+        crate::snippets::validate(&self.snippets)?;
         if self.alias_rules.len() > 64 {
             return Err(tr!(
                 "最多设置 64 条 alias 规则。",

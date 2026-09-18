@@ -56,6 +56,7 @@ struct PanelUi {
     demo_button: Retained<NSButton>,
     refresh_button: Retained<NSButton>,
     settings_button: Retained<NSButton>,
+    snippet_back: Retained<NSButton>,
     mode_label: Retained<NSTextField>,
     rows: RefCell<Vec<RowUi>>,
     empty_labels: RefCell<Vec<Retained<NSTextField>>>,
@@ -75,12 +76,14 @@ struct RowUi {
 #[derive(Clone, PartialEq, Eq)]
 enum RowContent {
     Command(CommandId),
+    Snippet(winlane::snippets::Snippet),
     Window(WindowInfo, Option<String>),
     Application(ApplicationTarget),
 }
 
 enum SelectedResult {
     Command(CommandId),
+    Snippet(String),
     Window(u64),
     Application(String),
 }
@@ -116,7 +119,7 @@ impl RowUi {
         };
         let launching = matches!(
             self.content,
-            Some(RowContent::Application(_) | RowContent::Command(_))
+            Some(RowContent::Application(_) | RowContent::Command(_) | RowContent::Snippet(_))
         );
         let detail = if launching && !selected {
             NSColor::secondaryLabelColor()
@@ -141,6 +144,7 @@ impl RowUi {
 struct AppState {
     panels: RefCell<Vec<Rc<PanelUi>>>,
     query: RefCell<String>,
+    snippet_scope: Cell<bool>,
     current_app_only: Cell<bool>,
     keyboard_display: Cell<Option<u32>>,
     changing_displays: Cell<bool>,
@@ -187,6 +191,10 @@ struct AppState {
     matches: RefCell<Vec<usize>>,
     launch_matches: RefCell<Vec<usize>>,
     command_matches: RefCell<Vec<CommandId>>,
+    snippet_matches: RefCell<Vec<winlane::snippets::Snippet>>,
+    snippet_editor: RefCell<Option<Retained<crate::snippet_ui::SnippetEditor>>>,
+    snippet_arguments: RefCell<Option<Retained<crate::snippet_ui::SnippetArguments>>>,
+    snippet_paste_timer: RefCell<Option<Retained<NSTimer>>>,
     selected: Cell<usize>,
     previous_pid: Cell<i32>,
     previous_window: Cell<Option<u64>>,
@@ -221,7 +229,7 @@ define_class!(
                     if let Some(delegate) = delegate {
                         let mode = delegate.ivars().mode.get().unwrap_or(PanelMode::Search);
                         let empty = delegate.ivars().query.borrow().is_empty();
-                        if space_changes_mode(mode, empty, composing) {
+                        if !delegate.searching_snippets() && space_changes_mode(mode, empty, composing) {
                             if !event.isARepeat() { delegate.toggle_mode(event.modifierFlags().bits() as u64); }
                             return;
                         }
@@ -235,7 +243,7 @@ define_class!(
                             PanelCommand::Next => delegate.move_selection(1),
                             PanelCommand::Previous => delegate.move_selection(-1),
                             PanelCommand::Accept => delegate.activate_selected(),
-                            PanelCommand::Cancel => delegate.dismiss(),
+                            PanelCommand::Cancel => delegate.cancel_search(),
                         }
                         return;
                     }
@@ -448,6 +456,12 @@ define_class!(
             self.ivars().wake.get().unwrap().signal();
         }
     }
+    unsafe impl NSTabViewDelegate for Delegate {
+        #[unsafe(method(tabView:didSelectTabViewItem:))]
+        fn settings_tab_changed(&self, _: &NSTabView, _: Option<&NSTabViewItem>) {
+            if let Some(settings) = self.settings_window() { settings.layout_selected_tab(); }
+        }
+    }
     unsafe impl NSControlTextEditingDelegate for Delegate {
         #[unsafe(method(controlTextDidChange:))]
         fn text_changed(&self, notification: &NSNotification) {
@@ -467,7 +481,9 @@ define_class!(
             } else if command == sel!(insertNewline:) {
                 self.activate_selected(); true
             } else if command == sel!(cancelOperation:) {
-                self.dismiss(); true
+                self.cancel_search(); true
+            } else if command == sel!(deleteBackward:) && self.searching_snippets() && self.ivars().query.borrow().is_empty() {
+                self.leave_snippet_search(); true
             } else { false }
         }
     }
@@ -482,7 +498,7 @@ define_class!(
                     || self.ivars().updater_error.borrow().is_some()
             } else if action == Some(sel!(toggleScope:)) {
                 item.setState(if self.ivars().current_app_only.get() { NSControlStateValueOn } else { NSControlStateValueOff });
-                self.any_panel_visible() && self.ivars().mode.get() == Some(PanelMode::Search)
+                self.any_panel_visible() && self.ivars().mode.get() == Some(PanelMode::Search) && !self.searching_snippets()
             } else if [sel!(minimizeChosen:), sel!(hideChosen:), sel!(copyTitle:), sel!(quickSelect:)].into_iter().any(|sel| action == Some(sel)) {
                 let visible = self.any_panel_visible();
                 visible && if action == Some(sel!(quickSelect:)) {
@@ -551,7 +567,8 @@ define_class!(
         fn reset_settings(&self, _: Option<&AnyObject>) {
             if let Some(settings) = self.settings_window() {
                 if self.ivars().saving_settings.replace(true) { return; }
-                let result = self.apply_config(Config::default());
+                let defaults = Config { snippets: self.ivars().config.borrow().snippets.clone(), ..Config::default() };
+                let result = self.apply_config(defaults);
                 self.ivars().saving_settings.set(false);
                 match result {
                     Ok(()) => {
@@ -636,8 +653,11 @@ define_class!(
         }
         #[unsafe(method(manageLogin:))]
         fn manage_login(&self, _: Option<&AnyObject>) { settings::manage_login(); }
+        #[unsafe(method(leaveSnippetSearch:))]
+        fn snippet_back(&self, _: Option<&AnyObject>) { self.leave_snippet_search(); }
         #[unsafe(method(toggleScope:))]
         fn toggle_scope(&self, _: Option<&AnyObject>) {
+            if self.searching_snippets() { return; }
             self.ivars().current_app_only.set(!self.ivars().current_app_only.get());
             self.filter();
         }
@@ -671,6 +691,7 @@ define_class!(
         fn switch_action(&self, _: Option<&AnyObject>) { self.open_switcher(); }
         #[unsafe(method(closeWindow:))]
         fn close_window(&self, _: Option<&AnyObject>) {
+            if let Some(form) = self.ivars().snippet_arguments.borrow().as_ref() && form.window().isKeyWindow() { form.window().close(); return; }
             let alias_rules = self.ivars().alias_rules.borrow().clone();
             if let Some(window) = alias_rules && window.window.isKeyWindow() {
                 window.window.makeFirstResponder(None); window.window.close();
@@ -1010,6 +1031,7 @@ impl Delegate {
             .window
             .setDelegate(Some(ProtocolObject::from_ref(self)));
         self.ivars().settings.replace(Some(window.clone()));
+        window.embed_snippets(self.ensure_snippet_editor().view());
         self.update_update_settings();
         window
     }
@@ -1101,6 +1123,7 @@ impl Delegate {
         if visible {
             self.present_panels();
         }
+        let old_snippet_editor = state.snippet_editor.take();
         let old_settings = state.settings.take();
         if let Some(old) = old_settings {
             let showing = old.window.isVisible();
@@ -1117,6 +1140,9 @@ impl Delegate {
                 window.window.setFrameOrigin(frame.origin);
                 self.report_shortcut_status();
             }
+        }
+        if let Some(old) = old_snippet_editor {
+            self.ensure_snippet_editor().copy_draft_from(&old);
         }
         let old_alias_rules = state.alias_rules.take();
         if let Some(old) = old_alias_rules {
@@ -1311,6 +1337,18 @@ impl Delegate {
             input.setDelegate(Some(ProtocolObject::from_ref(self)));
             root.addSubview(&input);
         }
+        let snippet_back = self.button(
+            tr!("‹ 片段", "‹ Snippets"),
+            sel!(leaveSnippetSearch:),
+            rect(10.0, 538.0, 110.0, 34.0),
+        );
+        snippet_back.setBordered(false);
+        snippet_back.setHidden(true);
+        snippet_back.setAccessibilityLabel(Some(&NSString::from_str(tr!(
+            "返回窗口搜索",
+            "Back to window search"
+        ))));
+        root.addSubview(&snippet_back);
         let mode_label = label("", 11.0, rect(16.0, LIST_BOTTOM, WIDTH - 32.0, 20.0), mtm);
         mode_label.setTextColor(Some(&NSColor::labelColor()));
         mode_label.setAlphaValue(0.65);
@@ -1379,6 +1417,7 @@ impl Delegate {
             demo_button,
             refresh_button: refresh,
             settings_button,
+            snippet_back,
             shortcut_label: shortcut,
             mode_label,
             rows: RefCell::new(Vec::new()),
@@ -1626,6 +1665,7 @@ impl Delegate {
         if let Some(settings) = self.settings_window() {
             settings.set_app_shortcuts(&candidate.app_shortcuts);
             settings.set_alias_rules(&candidate.alias_rules);
+            settings.set_snippets(&candidate.snippets);
         }
         let language_changed =
             candidate.language != previous.language && settings::apply_language(candidate.language);
@@ -1840,6 +1880,13 @@ impl Delegate {
     }
 
     fn show_mode(&self, mode: PanelMode, session: u64, direction: i8) {
+        self.ivars().snippet_scope.set(false);
+        if let Some(timer) = self.ivars().snippet_paste_timer.take() {
+            timer.invalidate();
+        }
+        if let Some(form) = self.ivars().snippet_arguments.take() {
+            form.window().close();
+        }
         let already_visible = self.any_panel_visible();
         self.cancel_switch_timer();
         self.finish_search_input();
@@ -2024,6 +2071,35 @@ impl Delegate {
         }
     }
 
+    fn searching_snippets(&self) -> bool {
+        self.ivars().snippet_scope.get() && self.ivars().mode.get() == Some(PanelMode::Search)
+    }
+
+    fn enter_snippet_search(&self) {
+        self.ivars().snippet_scope.set(true);
+        self.ivars().query.borrow_mut().clear();
+        self.filter();
+        self.focus_search();
+    }
+
+    fn leave_snippet_search(&self) {
+        if !self.searching_snippets() {
+            return;
+        }
+        self.ivars().snippet_scope.set(false);
+        self.ivars().query.replace("snippet".into());
+        self.filter_preserving(Some(SelectedResult::Command(CommandId::Snippets)));
+        self.focus_search();
+    }
+
+    fn cancel_search(&self) {
+        if self.searching_snippets() {
+            self.leave_snippet_search();
+        } else {
+            self.dismiss();
+        }
+    }
+
     fn dismiss(&self) {
         self.cancel_routing();
         self.end_session();
@@ -2035,6 +2111,9 @@ impl Delegate {
     }
 
     fn cancel_routing(&self) {
+        if let Some(timer) = self.ivars().snippet_paste_timer.take() {
+            timer.invalidate();
+        }
         if let Some(tap) = self.ivars().shortcut_tap.borrow().as_ref() {
             tap.cancel();
         }
@@ -2044,6 +2123,7 @@ impl Delegate {
     }
 
     fn end_session(&self) {
+        self.ivars().snippet_scope.set(false);
         self.cancel_switch_timer();
         self.finish_search_input();
         let state = self.ivars();
@@ -2066,6 +2146,9 @@ impl Delegate {
     }
 
     fn toggle_mode(&self, flags: u64) {
+        if self.searching_snippets() {
+            return;
+        }
         if self.ivars().mode.get() == Some(PanelMode::Switch) {
             self.switch_to_search();
         } else {
@@ -2092,6 +2175,9 @@ impl Delegate {
     }
 
     fn display_search(&self, session: u64) {
+        if self.ivars().snippet_scope.replace(false) {
+            self.ivars().query.borrow_mut().clear();
+        }
         let was_delayed = self.cancel_switch_timer();
         if self.ivars().mode.get() != Some(PanelMode::Search) {
             self.prepare_search_input();
@@ -2299,6 +2385,7 @@ impl Delegate {
     fn ensure_app_catalog(&self) {
         let state = self.ivars();
         if state.demo.get()
+            || self.searching_snippets()
             || state.mode.get() != Some(PanelMode::Search)
             || state.current_app_only.get()
             || state.query.borrow().trim().is_empty()
@@ -2348,6 +2435,10 @@ impl Delegate {
     }
 
     fn filter_preserving(&self, selected_id: Option<SelectedResult>) {
+        if self.searching_snippets() {
+            self.filter_snippets(selected_id);
+            return;
+        }
         self.ensure_app_catalog();
         let query = self.ivars().query.borrow().clone();
         let preferred = self
@@ -2410,6 +2501,8 @@ impl Delegate {
         } else {
             Vec::new()
         };
+        let snippet_matches: Vec<winlane::snippets::Snippet> = Vec::new();
+        let extra_count = command_matches.len() + snippet_matches.len();
         let apps = self.ivars().installed_apps.borrow();
         let launch_matches = if self.ivars().mode.get() == Some(PanelMode::Search)
             && !self.ivars().demo.get()
@@ -2436,14 +2529,18 @@ impl Delegate {
             Some(SelectedResult::Command(id)) => {
                 command_matches.iter().position(|item| *item == id)
             }
+            Some(SelectedResult::Snippet(id)) => snippet_matches
+                .iter()
+                .position(|snippet| snippet.id == id)
+                .map(|index| command_matches.len() + index),
             Some(SelectedResult::Window(id)) => matched
                 .iter()
                 .position(|&index| windows[index].id == id)
-                .map(|index| command_matches.len() + index),
+                .map(|index| extra_count + index),
             Some(SelectedResult::Application(id)) => launch_matches
                 .iter()
                 .position(|&index| apps[index].target.bundle_id == id)
-                .map(|index| command_matches.len() + matched.len() + index)
+                .map(|index| extra_count + matched.len() + index)
                 .or_else(|| {
                     let identities = self.ivars().identities.borrow();
                     matched
@@ -2453,7 +2550,7 @@ impl Delegate {
                                 .get(&windows[index].pid)
                                 .is_some_and(|app| app.id == id)
                         })
-                        .map(|index| command_matches.len() + index)
+                        .map(|index| extra_count + index)
                 }),
             None => None,
         }
@@ -2471,7 +2568,39 @@ impl Delegate {
         self.ivars().matches.replace(matched);
         self.ivars().launch_matches.replace(launch_matches);
         self.ivars().command_matches.replace(command_matches);
+        self.ivars().snippet_matches.replace(snippet_matches);
         self.ivars().selected.set(selected);
+        self.render();
+    }
+
+    fn filter_snippets(&self, selected_id: Option<SelectedResult>) {
+        let state = self.ivars();
+        let query = state.query.borrow();
+        let config = state.config.borrow();
+        let snippets = if query.trim().is_empty() {
+            config.snippets.clone()
+        } else {
+            winlane::snippets::matching(&config.snippets, &query)
+                .into_iter()
+                .map(|index| config.snippets[index].clone())
+                .collect()
+        };
+        let selected = if let Some(SelectedResult::Snippet(id)) = selected_id {
+            snippets
+                .iter()
+                .position(|snippet| snippet.id == id)
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        drop(config);
+        drop(query);
+        state.matches.borrow_mut().clear();
+        state.launch_matches.borrow_mut().clear();
+        state.command_matches.borrow_mut().clear();
+        state.application_icons.borrow_mut().clear();
+        state.snippet_matches.replace(snippets);
+        state.selected.set(selected);
         self.render();
     }
 
@@ -2525,10 +2654,13 @@ impl Delegate {
         let launch_matches = state.launch_matches.borrow();
         let command_matches = state.command_matches.borrow();
         let apps = state.installed_apps.borrow();
-        let count = command_matches.len() + matched.len() + launch_matches.len();
+        let snippet_matches = state.snippet_matches.borrow();
+        let extra_count = command_matches.len() + snippet_matches.len();
+        let count = extra_count + matched.len() + launch_matches.len();
         let trusted = accessibility::is_trusted();
         let demo = state.demo.get();
         let switching = state.mode.get() == Some(PanelMode::Switch);
+        let snippets = self.searching_snippets();
         let show_hints = state.config.borrow().show_usage_hints;
         let density = state.config.borrow().display_density;
         let row_height = row_height(density);
@@ -2576,8 +2708,9 @@ impl Delegate {
             ui.input
                 .setFont(Some(&NSFont::systemFontOfSize(input_font_size)));
         }
-        let header: [(&NSView, f64); 2] = [
+        let header: [(&NSView, f64); 3] = [
             (&ui.input, height - 35.0 - input_height / 2.0),
+            (&ui.snippet_back, height - 52.0),
             (
                 &ui.shortcut_label,
                 height - if switching { 26.0 } else { 44.0 },
@@ -2596,6 +2729,7 @@ impl Delegate {
         let unmatched_alias =
             switching && !alias_query.is_empty() && alias_match.position().is_none();
         ui.input.setHidden(switching);
+        ui.snippet_back.setHidden(!snippets);
         ui.mode_label.setHidden(!show_mode_label);
         ui.settings_button.setHidden(!show_hints);
         let config = state.config.borrow();
@@ -2686,7 +2820,25 @@ impl Delegate {
             label.removeFromSuperview();
         }
         if count == 0 {
-            let (title, detail) = if state.loading.get() {
+            let (title, detail) = if snippets {
+                if state.config.borrow().snippets.is_empty() {
+                    (
+                        tr!("还没有片段", "No snippets yet"),
+                        tr!(
+                            "在设置 → 片段中新建，或按 Esc 返回窗口搜索。",
+                            "Create one in Settings → Snippets, or press Esc to return to window search."
+                        ),
+                    )
+                } else {
+                    (
+                        tr!("没有匹配的片段", "No matching snippets"),
+                        tr!(
+                            "按名称或正文搜索，或按 Esc 返回窗口搜索。",
+                            "Search by name or content, or press Esc to return to window search."
+                        ),
+                    )
+                }
+            } else if state.loading.get() {
                 (
                     tr!("正在读取窗口…", "Reading windows…"),
                     tr!(
@@ -2751,12 +2903,14 @@ impl Delegate {
         for position in 0..count {
             let content = if let Some(&command) = command_matches.get(position) {
                 RowContent::Command(command)
-            } else if let Some(&index) = matched.get(position - command_matches.len()) {
+            } else if let Some(snippet) = snippet_matches.get(position - command_matches.len()) {
+                RowContent::Snippet(snippet.clone())
+            } else if let Some(&index) = matched.get(position - extra_count) {
                 let item = &windows[index];
                 RowContent::Window(item.clone(), aliases.for_window(item.id).map(str::to_owned))
             } else {
                 RowContent::Application(
-                    apps[launch_matches[position - command_matches.len() - matched.len()]]
+                    apps[launch_matches[position - extra_count - matched.len()]]
                         .target
                         .clone(),
                 )
@@ -2786,6 +2940,23 @@ impl Delegate {
                             command.title(),
                             command.category()
                         )
+                    }
+                    RowContent::Snippet(snippet) => {
+                        set_label(&row.app, &snippet.name);
+                        let preview = snippet.body.lines().next().unwrap_or("");
+                        set_label(
+                            &row.title,
+                            &trf!("粘贴片段 · {}", "Paste snippet · {}", preview),
+                        );
+                        set_label(&row.alias, "{}");
+                        row.icon.setImage(
+                            NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                                ns_string!("text.quote"),
+                                Some(&NSString::from_str(tr!("文本片段", "Snippet"))),
+                            )
+                            .as_deref(),
+                        );
+                        trf!("粘贴片段：{}", "Paste snippet: {}", snippet.name)
                     }
                     RowContent::Window(item, alias) => {
                         let title = if item.title.trim().is_empty() {
@@ -2857,6 +3028,12 @@ impl Delegate {
                 "Accessibility access required. You can also try the demo."
             )
             .into()
+        } else if snippets {
+            trf!(
+                "{} 个片段 · ↑↓ 选择 · ↵ 粘贴 · Esc 返回",
+                "{} snippets · ↑↓ select · ↵ paste · Esc back",
+                snippet_matches.len()
+            )
         } else if state.loading.get() {
             tr!("正在刷新窗口…", "Refreshing windows…").into()
         } else if switching {
@@ -3106,12 +3283,23 @@ impl Delegate {
     }
 
     fn activate_selected(&self) {
+        if self.selected_command() == Some(CommandId::Snippets) {
+            self.enter_snippet_search();
+            return;
+        }
+        if self.searching_snippets() && self.match_count() == 0 {
+            return;
+        }
         if let Some(tap) = self.ivars().shortcut_tap.borrow().as_ref() {
             tap.finish(self.ivars().session.get());
         }
         self.ivars().switch_selection.replace(None);
         if let Some(command) = self.selected_command() {
             self.execute_command(command);
+            return;
+        }
+        if let Some(snippet) = self.selected_snippet() {
+            self.use_snippet(&snippet);
             return;
         }
         if let Some(application) = self.selected_application() {
@@ -3252,6 +3440,113 @@ impl Delegate {
         }
     }
 
+    fn ensure_snippet_editor(&self) -> Retained<crate::snippet_ui::SnippetEditor> {
+        if let Some(editor) = self.ivars().snippet_editor.borrow().as_ref() {
+            return editor.clone();
+        }
+        let weak = Weak::new(self);
+        let editor = crate::snippet_ui::SnippetEditor::new(
+            self.ivars().config.borrow().snippets.clone(),
+            Box::new(move |snippets| {
+                let Some(delegate) = weak.load() else {
+                    return Err("Winlane closed".into());
+                };
+                let mut config = delegate.ivars().config.borrow().clone();
+                config.snippets = snippets;
+                delegate.apply_config(config)
+            }),
+            self.mtm(),
+        );
+        self.ivars().snippet_editor.replace(Some(editor.clone()));
+        editor
+    }
+
+    fn selected_snippet(&self) -> Option<winlane::snippets::Snippet> {
+        let index = self
+            .ivars()
+            .selected
+            .get()
+            .checked_sub(self.ivars().command_matches.borrow().len())?;
+        self.ivars().snippet_matches.borrow().get(index).cloned()
+    }
+
+    fn use_snippet(&self, snippet: &winlane::snippets::Snippet) {
+        let Some(target) = NSRunningApplication::runningApplicationWithProcessIdentifier(
+            self.ivars().previous_pid.get(),
+        ) else {
+            self.report_switch_error(tr!(
+                "目标应用已退出，请重新打开搜索。",
+                "The target app has quit. Reopen search."
+            ));
+            return;
+        };
+        let template = match winlane::snippets::Template::parse(&snippet.body) {
+            Ok(template) => template,
+            Err(error) => {
+                self.report_switch_error(&error);
+                return;
+            }
+        };
+        let clipboard = if template.uses_clipboard() {
+            crate::snippet_ui::clipboard()
+        } else {
+            String::new()
+        };
+        if clipboard.len() > winlane::snippets::MAX_RENDERED_BYTES {
+            self.report_switch_error(tr!(
+                "剪贴板文字超过 1 MB，请先复制较短的内容。",
+                "Clipboard text exceeds 1 MB. Copy a shorter selection first."
+            ));
+            return;
+        }
+        self.cancel_routing();
+        self.end_session();
+        if let Some(previous) = self.ivars().snippet_arguments.take() {
+            previous.window().close();
+        }
+        if template.arguments.is_empty() {
+            let result = crate::snippet_ui::render(&template, &clipboard, &HashMap::new())
+                .and_then(|text| self.paste_snippet(target, text));
+            if let Err(error) = result {
+                self.selection_failed(&error);
+            }
+        } else {
+            let weak = Weak::new(self);
+            let form = crate::snippet_ui::SnippetArguments::new(
+                &snippet.name,
+                template,
+                clipboard,
+                Box::new(move |text| {
+                    let Some(delegate) = weak.load() else {
+                        return Err("Winlane closed".into());
+                    };
+                    delegate.paste_snippet(target.clone(), text)
+                }),
+                self.mtm(),
+            );
+            form.show();
+            self.ivars().snippet_arguments.replace(Some(form));
+        }
+    }
+
+    fn paste_snippet(
+        &self,
+        target: Retained<NSRunningApplication>,
+        text: String,
+    ) -> Result<(), String> {
+        if let Some(timer) = self.ivars().snippet_paste_timer.take() {
+            timer.invalidate();
+        }
+        let weak = Weak::new(self);
+        let timer = crate::snippet_paste::start(target, text, self.mtm(), move |error| {
+            if let Some(delegate) = weak.load() {
+                delegate.selection_failed(&error);
+            }
+        })?;
+        self.ivars().snippet_paste_timer.replace(Some(timer));
+        Ok(())
+    }
+
     fn selected_command(&self) -> Option<CommandId> {
         self.ivars()
             .command_matches
@@ -3293,10 +3588,9 @@ impl Delegate {
 
     fn selected_window(&self) -> Option<WindowInfo> {
         let state = self.ivars();
-        let index = state
-            .selected
-            .get()
-            .checked_sub(state.command_matches.borrow().len())?;
+        let index = state.selected.get().checked_sub(
+            state.command_matches.borrow().len() + state.snippet_matches.borrow().len(),
+        )?;
         state
             .matches
             .borrow()
@@ -3306,10 +3600,11 @@ impl Delegate {
 
     fn selected_application(&self) -> Option<ApplicationTarget> {
         let state = self.ivars();
-        let index = state
-            .selected
-            .get()
-            .checked_sub(state.command_matches.borrow().len() + state.matches.borrow().len())?;
+        let index = state.selected.get().checked_sub(
+            state.command_matches.borrow().len()
+                + state.snippet_matches.borrow().len()
+                + state.matches.borrow().len(),
+        )?;
         state.launch_matches.borrow().get(index).and_then(|&index| {
             state
                 .installed_apps
@@ -3320,6 +3615,9 @@ impl Delegate {
     }
 
     fn selected_result(&self) -> Option<SelectedResult> {
+        if let Some(snippet) = self.selected_snippet() {
+            return Some(SelectedResult::Snippet(snippet.id));
+        }
         if let Some(command) = self.selected_command() {
             return Some(SelectedResult::Command(command));
         }
@@ -3333,6 +3631,7 @@ impl Delegate {
 
     fn match_count(&self) -> usize {
         self.ivars().command_matches.borrow().len()
+            + self.ivars().snippet_matches.borrow().len()
             + self.ivars().matches.borrow().len()
             + self.ivars().launch_matches.borrow().len()
     }

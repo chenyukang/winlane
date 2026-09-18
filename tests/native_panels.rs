@@ -1,6 +1,15 @@
 #![allow(dead_code)]
 
 #[cfg(target_os = "macos")]
+#[path = "../src/snippet_paste.rs"]
+mod snippet_paste;
+#[cfg(target_os = "macos")]
+mod snippet_ui {
+    include!("../src/snippet_ui.rs");
+    include!("support/snippet_ui.rs");
+}
+
+#[cfg(target_os = "macos")]
 mod updater {
     include!("../src/updater.rs");
     include!("support/updater.rs");
@@ -139,6 +148,7 @@ mod app {
     include!("../src/app.rs");
     include!("support/launch_search.rs");
     include!("support/commands.rs");
+    include!("support/snippet_search.rs");
 
     pub fn inspect_window_discovery(bundle: &str) {
         assert!(
@@ -319,6 +329,8 @@ mod app {
         verify_catalog_refresh(mtm);
         verify_launch_search(mtm);
         verify_command_search(mtm);
+        verify_snippet_search(mtm);
+        crate::snippet_ui::verify_editor(&delegate, mtm);
         crate::system_commands::verify_prepared_commands(mtm);
         crate::menu_bar::verify_reveal_positions();
         verify_typo_search(mtm);
@@ -1561,4 +1573,10 @@ fn main() {
     });
     #[cfg(not(target_os = "macos"))]
     println!("Native panel checks require macOS.");
+}
+
+#[cfg(target_os = "macos")]
+mod snippet_placeholder {
+    include!("../src/snippet_placeholder.rs");
+    include!("support/snippet_placeholder.rs");
 }

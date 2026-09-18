@@ -42,6 +42,7 @@ pub fn verify_prepared_commands(mtm: MainThreadMarker) {
     assert!(load_function("/System/Library/PrivateFrameworks/login.framework", "WinlaneMissingSymbol").is_none());
     assert!(load_function("/System/Library/Frameworks/WinlaneMissing.framework", "Missing").is_none());
     assert!(PreparedCommand::prepare(CommandId::ShowMenu, None, mtm).is_err());
+    assert!(PreparedCommand::prepare(CommandId::Snippets, None, mtm).is_err());
     for command in [CommandId::Sleep, CommandId::MissionControl] {
         assert!(check_status(command, 0).is_ok());
         let error = check_status(command, -1).unwrap_err();

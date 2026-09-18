@@ -43,6 +43,13 @@ impl PreparedCommand {
         mtm: MainThreadMarker,
     ) -> Result<Self, String> {
         let operation = match command {
+            CommandId::Snippets => {
+                return Err(tr!(
+                    "请在搜索面板中打开片段搜索。",
+                    "Open snippet search in the search panel."
+                )
+                .into());
+            }
             CommandId::ShowMenu => {
                 let display = display.ok_or_else(|| {
                     tr!(

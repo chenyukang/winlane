@@ -11,6 +11,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
                 "Window List",
                 "Startup & Updates",
                 "Aliases",
+                "Snippets",
             ],
         ),
         (
@@ -23,6 +24,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
                 "窗口列表",
                 "启动与更新",
                 "Alias 规则",
+                "文本片段",
             ],
         ),
     ] {
@@ -195,7 +197,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
             background.setBorderWidth(0.0);
             background.setFillColor(&NSColor::windowBackgroundColor());
             view.addSubview_positioned_relativeTo(&background, NSWindowOrderingMode::Below, None);
-            for (tab, name) in [(1, "opacity"), (2, "input"), (3, "windows")] {
+            for (tab, name) in [(1, "opacity"), (2, "input"), (3, "windows"), (6, "snippets")] {
                 settings.select_tab(tab);
                 view.layoutSubtreeIfNeeded();
                 let bitmap = view
@@ -218,7 +220,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
         crate::app_shortcuts::verify_hidden_settings(target, mtm);
     }
     println!(
-        "English and Chinese settings: six tabs, input and language choices, layout bounds, configuration round trips passed."
+        "English and Chinese settings: seven tabs, input and language choices, layout bounds, configuration round trips passed."
     );
 }
 

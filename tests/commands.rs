@@ -83,3 +83,21 @@ fn registered_commands_have_unique_names_and_ids() {
         }
     }
 }
+
+#[test]
+fn snippet_command_has_an_explicit_search_entry() {
+    for query in [
+        "snippet",
+        "snippets",
+        " SNIPPET ",
+        "snip",
+        "text snippets",
+        "片段",
+        "文本片段",
+    ] {
+        assert_eq!(matching_commands(query), [CommandId::Snippets]);
+    }
+    for query in ["r", "rust", "greeting"] {
+        assert!(matching_commands(query).is_empty());
+    }
+}

@@ -23,6 +23,12 @@ mod settings;
 #[cfg(target_os = "macos")]
 mod shortcut_tap;
 #[cfg(target_os = "macos")]
+mod snippet_paste;
+#[cfg(target_os = "macos")]
+mod snippet_placeholder;
+#[cfg(target_os = "macos")]
+mod snippet_ui;
+#[cfg(target_os = "macos")]
 mod system_commands;
 #[cfg(target_os = "macos")]
 mod updater;

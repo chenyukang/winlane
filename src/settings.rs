@@ -220,6 +220,7 @@ pub struct SettingsWindow {
     search_shortcut: ShortcutControls,
     switch_shortcut: ShortcutControls,
     tabs: Retained<NSTabView>,
+    snippets_tab: Retained<NSView>,
     language: Retained<NSPopUpButton>,
     input_method: Retained<NSPopUpButton>,
     sort: Retained<NSPopUpButton>,
@@ -240,6 +241,7 @@ pub struct SettingsWindow {
     message: Retained<NSTextField>,
     app_shortcuts: RefCell<Vec<AppShortcut>>,
     alias_rules: RefCell<Vec<AliasRule>>,
+    snippets: RefCell<Vec<winlane::snippets::Snippet>>,
 }
 
 impl SettingsWindow {
@@ -264,6 +266,10 @@ impl SettingsWindow {
         ));
         let tabs = NSTabView::initWithFrame(NSTabView::alloc(mtm), rect(20.0, 112.0, 680.0, 404.0));
         tabs.setTabViewType(NSTabViewType::TopTabsBezelBorder);
+        tabs.setAutoresizingMask(NSAutoresizingMaskOptions::ViewHeightSizable);
+        for child in view.subviews() {
+            child.setAutoresizingMask(NSAutoresizingMaskOptions::ViewMinYMargin);
+        }
         view.addSubview(&tabs);
         let shortcuts = settings_tab(&tabs, tr!("快捷键", "Shortcuts"), mtm);
         let appearance_tab = settings_tab(&tabs, tr!("外观与语言", "Appearance & Language"), mtm);
@@ -271,6 +277,7 @@ impl SettingsWindow {
         let windows = settings_tab(&tabs, tr!("窗口列表", "Window List"), mtm);
         let startup = settings_tab(&tabs, tr!("启动与更新", "Startup & Updates"), mtm);
         let aliases = settings_tab(&tabs, tr!("Alias 规则", "Aliases"), mtm);
+        let snippets_tab = settings_tab(&tabs, tr!("文本片段", "Snippets"), mtm);
         aliases.addSubview(&label(
             tr!(
                 "固定应用与项目的字母",
@@ -669,9 +676,14 @@ impl SettingsWindow {
             rect(28.0, 20.0, 190.0, 30.0),
             mtm,
         ));
+        // SAFETY: The application delegate outlives the settings window and handles tab changes.
+        unsafe {
+            let _: () = msg_send![&tabs, setDelegate: target];
+        }
         Self {
             window,
             tabs,
+            snippets_tab,
             language,
             input_method,
             search_shortcut,
@@ -694,10 +706,12 @@ impl SettingsWindow {
             message,
             app_shortcuts: RefCell::default(),
             alias_rules: RefCell::default(),
+            snippets: RefCell::default(),
         }
     }
 
     pub fn fill(&self, config: &Config) {
+        self.set_snippets(&config.snippets);
         self.input_method
             .selectItemAtIndex(match config.input_method {
                 InputMethod::Current => 0,
@@ -753,6 +767,7 @@ impl SettingsWindow {
             switch_shortcut: self.switch_shortcut.read()?,
             app_shortcuts: self.app_shortcuts.borrow().clone(),
             alias_rules: self.alias_rules.borrow().clone(),
+            snippets: self.snippets.borrow().clone(),
             sort: match self.sort.indexOfSelectedItem() {
                 1 => SortOrder::Application,
                 2 => SortOrder::Title,
@@ -841,7 +856,43 @@ impl SettingsWindow {
     pub fn select_tab(&self, index: isize) {
         if (0..self.tabs.numberOfTabViewItems()).contains(&index) {
             self.tabs.selectTabViewItemAtIndex(index);
+            self.layout_selected_tab();
         }
+    }
+
+    pub fn embed_snippets(&self, view: &NSView) {
+        view.setFrame(self.snippets_tab.bounds());
+        self.snippets_tab.addSubview(view);
+    }
+
+    pub fn layout_selected_tab(&self) {
+        let height = if self.selected_tab() == 6 {
+            800.0
+        } else {
+            620.0
+        };
+        let Some(view) = self.window.contentView() else {
+            return;
+        };
+        if (view.frame().size.height - height).abs() < 0.5 {
+            return;
+        }
+        self.window.makeFirstResponder(None);
+        let old_frame = self.window.frame();
+        self.window.setContentSize(NSSize::new(720.0, height));
+        let frame = self.window.frame();
+        let mut origin = NSPoint::new(
+            old_frame.origin.x,
+            old_frame.origin.y + old_frame.size.height - frame.size.height,
+        );
+        if let Some(screen) = self.window.screen() {
+            origin.y = origin.y.max(screen.visibleFrame().origin.y);
+        }
+        self.window.setFrameOrigin(origin);
+    }
+
+    pub fn set_snippets(&self, snippets: &[winlane::snippets::Snippet]) {
+        self.snippets.replace(snippets.to_vec());
     }
 
     pub fn set_alias_rules(&self, rules: &[AliasRule]) {
