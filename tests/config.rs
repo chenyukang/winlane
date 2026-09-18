@@ -517,3 +517,71 @@ fn switch_delay_migrates_and_bounds_the_hold_interval() {
         .is_err()
     );
 }
+
+#[test]
+fn additional_search_shortcuts_migrate_persist_and_validate_every_conflict() {
+    use winlane::config::{AppShortcut, ApplicationTarget, MAX_SEARCH_SHORTCUTS};
+    let mut config =
+        Config::from_json(r#"{"shortcut":{"control":false,"command":true,"key":"Space"}}"#)
+            .unwrap();
+    assert!(config.additional_search_shortcuts.is_empty());
+    config.additional_search_shortcuts.push(Shortcut::default());
+    assert_eq!(
+        Config::from_json(&config.to_json().unwrap()).unwrap(),
+        config
+    );
+    assert_eq!(config.search_shortcuts_display(), "⌘Space / ⌃I");
+    assert_eq!(config.search_bindings().unwrap().len(), 2);
+    let mut bad = config.clone();
+    bad.additional_search_shortcuts
+        .push(config.shortcut.clone());
+    assert!(bad.validate().is_err());
+    bad = config.clone();
+    bad.additional_search_shortcuts.push(Shortcut::default());
+    assert!(bad.validate().is_err());
+    for shift in [false, true] {
+        bad = config.clone();
+        bad.switch_shortcut = Shortcut {
+            key: "Tab".into(),
+            ..Shortcut::default()
+        };
+        bad.additional_search_shortcuts.push(Shortcut {
+            key: "Tab".into(),
+            shift,
+            ..Shortcut::default()
+        });
+        assert!(bad.validate().is_err());
+    }
+    bad = config.clone();
+    bad.app_shortcuts.push(AppShortcut {
+        application: ApplicationTarget {
+            name: "Example".into(),
+            path: "/Applications/Example.app".into(),
+            bundle_id: "com.example.app".into(),
+        },
+        shortcut: Shortcut::default(),
+    });
+    assert!(bad.validate().is_err());
+    bad = config.clone();
+    bad.additional_search_shortcuts[0].key = "Invalid".into();
+    assert!(bad.validate().is_err());
+    config.additional_search_shortcuts = (0..MAX_SEARCH_SHORTCUTS - 1)
+        .map(|n| Shortcut {
+            key: format!("F{}", n + 1),
+            ..Shortcut::default()
+        })
+        .collect();
+    assert!(config.validate().is_ok());
+    config.additional_search_shortcuts.push(Shortcut {
+        key: "F12".into(),
+        ..Shortcut::default()
+    });
+    assert!(config.validate().is_err());
+    assert!(Config::default().additional_search_shortcuts.is_empty());
+    assert!(
+        !Config::default()
+            .to_json()
+            .unwrap()
+            .contains("additional_search_shortcuts")
+    );
+}

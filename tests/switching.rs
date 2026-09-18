@@ -484,3 +484,45 @@ fn command_space_search_saves_and_routes_without_switching_modes() {
         "app shortcuts cannot reuse the search binding"
     );
 }
+
+#[test]
+fn multiple_search_bindings_share_a_session_and_take_priority_over_aliases() {
+    let primary = Binding {
+        key: SPACE,
+        modifiers: COMMAND,
+    };
+    let alternate = Binding {
+        key: 34,
+        modifiers: CONTROL,
+    };
+    let mut router = ShortcutRouter::new(
+        primary,
+        Binding {
+            key: TAB,
+            modifiers: CONTROL,
+        },
+    )
+    .with_additional_search_shortcuts(vec![alternate]);
+    let opened = action(&mut router, KEY_DOWN, SPACE, COMMAND);
+    assert_eq!(opened.kind, ActionKind::Search);
+    assert_eq!(router.handle(KEY_DOWN, SPACE, COMMAND, true), (true, None));
+    router.handle(KEY_UP, SPACE, COMMAND, false);
+    let closed = action(&mut router, KEY_DOWN, 34, CONTROL);
+    assert_eq!(closed.kind, ActionKind::Cancel);
+    assert_eq!(closed.session, opened.session);
+    router.handle(KEY_UP, 34, CONTROL, false);
+    let switched = action(&mut router, KEY_DOWN, TAB, CONTROL);
+    assert!(matches!(switched.kind, ActionKind::Switch { .. }));
+    let search = action(&mut router, KEY_DOWN, 34, CONTROL);
+    assert_eq!(
+        search.kind,
+        ActionKind::Search,
+        "alternate binding must not type an alias in switch mode"
+    );
+    assert_eq!(search.session, switched.session);
+    assert_eq!(router.handle(KEY_DOWN, 34, CONTROL, true), (true, None));
+    assert_eq!(router.handle(FLAGS_CHANGED, 0, 0, false), (false, None));
+    router.handle(KEY_UP, 34, 0, false);
+    assert_eq!(router.handle(KEY_DOWN, SPACE, 0, false), (false, None));
+    assert_eq!(router.handle(KEY_DOWN, 34, 0, false), (false, None));
+}

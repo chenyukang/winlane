@@ -49,6 +49,7 @@ impl ShortcutTap {
     pub fn new(
         mtm: MainThreadMarker,
         search: Binding,
+        additional_search: Vec<Binding>,
         switch: Binding,
         app_shortcuts: Vec<Binding>,
         wake: WakeHandle,
@@ -63,7 +64,9 @@ impl ShortcutTap {
         let (actions, receiver) = mpsc::channel();
         let mut state = Box::new(TapState {
             keys: RefCell::new(
-                ShortcutRouter::new(search, switch).with_app_shortcuts(app_shortcuts),
+                ShortcutRouter::new(search, switch)
+                    .with_additional_search_shortcuts(additional_search)
+                    .with_app_shortcuts(app_shortcuts),
             ),
             actions,
             wake,

@@ -215,9 +215,20 @@ impl ShortcutControls {
     }
 }
 
+struct SearchShortcutRow {
+    view: Retained<NSView>,
+    shortcut: ShortcutControls,
+    remove: Retained<NSButton>,
+}
+
 pub struct SettingsWindow {
     pub window: Retained<NSWindow>,
     search_shortcut: ShortcutControls,
+    search_rows: RefCell<Vec<SearchShortcutRow>>,
+    shortcuts_document: Retained<NSView>,
+    shortcuts_scroll: Retained<NSScrollView>,
+    search_header: Retained<NSView>,
+    add_search: Retained<NSButton>,
     switch_shortcut: ShortcutControls,
     tabs: Retained<NSTabView>,
     snippets_tab: Retained<NSView>,
@@ -274,7 +285,19 @@ impl SettingsWindow {
             child.setAutoresizingMask(NSAutoresizingMaskOptions::ViewMinYMargin);
         }
         view.addSubview(&tabs);
-        let shortcuts = settings_tab(&tabs, tr!("快捷键", "Shortcuts"), mtm);
+        let shortcuts_host = settings_tab(&tabs, tr!("快捷键", "Shortcuts"), mtm);
+        let shortcuts_scroll =
+            NSScrollView::initWithFrame(NSScrollView::alloc(mtm), shortcuts_host.bounds());
+        shortcuts_scroll.setAutoresizingMask(
+            NSAutoresizingMaskOptions::ViewWidthSizable
+                | NSAutoresizingMaskOptions::ViewHeightSizable,
+        );
+        shortcuts_scroll.setHasVerticalScroller(true);
+        shortcuts_scroll.setAutohidesScrollers(true);
+        shortcuts_scroll.setDrawsBackground(false);
+        let shortcuts = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 660.0, 350.0));
+        shortcuts_scroll.setDocumentView(Some(&shortcuts));
+        shortcuts_host.addSubview(&shortcuts_scroll);
         let appearance_tab = settings_tab(&tabs, tr!("外观与语言", "Appearance"), mtm);
         let input_tab = settings_tab(&tabs, tr!("输入", "Input"), mtm);
         let windows = settings_tab(&tabs, tr!("窗口列表", "Windows"), mtm);
@@ -303,19 +326,30 @@ impl SettingsWindow {
             mtm,
         ));
 
-        let search_shortcut = ShortcutControls::new(
-            &shortcuts,
-            tr!("搜索模式", "Search mode"),
-            315.0,
-            false,
+        let search_header =
+            NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 244.0, 660.0, 106.0));
+        shortcuts.addSubview(&search_header);
+        let add_search = button(
+            tr!("＋ 添加搜索快捷键", "＋ Add Search Shortcut"),
+            target,
+            sel!(addSearchShortcut:),
+            rect(435.0, 70.0, 200.0, 28.0),
             mtm,
         );
-        shortcuts.addSubview(&hint(
+        search_header.addSubview(&add_search);
+        search_header.addSubview(&label(
+            tr!("搜索模式", "Search mode"),
+            14.0,
+            rect(30.0, 71.0, 380.0, 24.0),
+            mtm,
+        ));
+        let search_shortcut = ShortcutControls::at(&search_header, 39.0, false, mtm);
+        search_header.addSubview(&hint(
             tr!(
-                "保持面板，Enter 确认；空搜索时 Space 切换模式。",
-                "Keep the panel open; Enter selects. Space switches modes when search is empty."
+                "可添加多个组合，均用于打开或关闭搜索；Enter 确认。",
+                "Add shortcuts to open or close the same search panel; Enter selects."
             ),
-            rect(30.0, 244.0, 600.0, 32.0),
+            rect(30.0, 0.0, 600.0, 32.0),
             mtm,
         ));
         let switch_shortcut =
@@ -696,6 +730,11 @@ impl SettingsWindow {
             language,
             input_method,
             search_shortcut,
+            search_rows: RefCell::default(),
+            shortcuts_document: shortcuts,
+            shortcuts_scroll,
+            search_header,
+            add_search,
             switch_shortcut,
             sort,
             appearance,
@@ -742,6 +781,15 @@ impl SettingsWindow {
         self.set_app_shortcuts(&config.app_shortcuts);
         self.set_alias_rules(&config.alias_rules);
         self.search_shortcut.fill(&config.shortcut);
+        for row in self.search_rows.borrow_mut().drain(..) {
+            row.view.removeFromSuperview();
+        }
+        for shortcut in &config.additional_search_shortcuts {
+            self.append_search_row(shortcut);
+        }
+        self.layout_search_shortcuts();
+        self.search_header
+            .scrollRectToVisible(self.search_header.bounds());
         self.switch_shortcut.fill(&config.switch_shortcut);
         self.sort.selectItemAtIndex(match config.sort {
             SortOrder::Recent => 0,
@@ -773,9 +821,101 @@ impl SettingsWindow {
         self.update_login_status();
     }
 
+    fn append_search_row(&self, value: &Shortcut) {
+        let mtm = self.window.mtm();
+        let target = self.search_shortcut.key.target().unwrap();
+        let view = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 660.0, 40.0));
+        let shortcut = ShortcutControls::at(&view, 8.0, false, mtm);
+        shortcut.key.setFrame(rect(480.0, 6.0, 115.0, 28.0));
+        shortcut.fill(value);
+        shortcut.on_change(&target, sel!(settingsChanged:));
+        let remove = button(
+            "−",
+            &target,
+            sel!(removeSearchShortcut:),
+            rect(605.0, 6.0, 32.0, 28.0),
+            mtm,
+        );
+        remove.setToolTip(Some(&NSString::from_str(tr!(
+            "移除搜索快捷键",
+            "Remove search shortcut"
+        ))));
+        remove.setAccessibilityLabel(Some(&NSString::from_str(tr!(
+            "移除搜索快捷键",
+            "Remove search shortcut"
+        ))));
+        view.addSubview(&remove);
+        self.shortcuts_document.addSubview(&view);
+        self.search_rows.borrow_mut().push(SearchShortcutRow {
+            view,
+            shortcut,
+            remove,
+        });
+    }
+
+    fn layout_search_shortcuts(&self) {
+        let rows = self.search_rows.borrow();
+        let height =
+            self.shortcuts_scroll.contentSize().height.max(350.0) + rows.len() as f64 * 40.0;
+        self.shortcuts_document
+            .setFrameSize(NSSize::new(660.0, height));
+        self.search_header
+            .setFrameOrigin(NSPoint::new(0.0, height - 106.0));
+        for (index, row) in rows.iter().enumerate() {
+            row.view.setFrameOrigin(NSPoint::new(
+                0.0,
+                height - 106.0 - (index + 1) as f64 * 40.0,
+            ));
+            row.remove.setTag(index as isize);
+        }
+        self.add_search
+            .setEnabled(rows.len() + 1 < winlane::config::MAX_SEARCH_SHORTCUTS);
+    }
+
+    pub fn add_search_shortcut(&self) {
+        if self.search_rows.borrow().len() + 1 >= winlane::config::MAX_SEARCH_SHORTCUTS {
+            return;
+        }
+        self.append_search_row(&Shortcut {
+            control: false,
+            option: false,
+            shift: false,
+            command: false,
+            key: "Space".into(),
+        });
+        self.layout_search_shortcuts();
+        if let Some(row) = self.search_rows.borrow().last() {
+            row.view.scrollRectToVisible(row.view.bounds());
+        }
+        self.report(
+            tr!(
+                "请选择新增快捷键的修饰键和按键。",
+                "Choose modifiers and a key for the new shortcut."
+            ),
+            false,
+        );
+    }
+
+    pub fn remove_search_shortcut(&self, index: usize) {
+        if index < self.search_rows.borrow().len() {
+            self.search_rows
+                .borrow_mut()
+                .remove(index)
+                .view
+                .removeFromSuperview();
+            self.layout_search_shortcuts();
+        }
+    }
+
     pub fn candidate(&self) -> Result<Config, String> {
         let config = Config {
             shortcut: self.search_shortcut.read()?,
+            additional_search_shortcuts: self
+                .search_rows
+                .borrow()
+                .iter()
+                .map(|row| row.shortcut.read())
+                .collect::<Result<_, _>>()?,
             switch_shortcut: self.switch_shortcut.read()?,
             app_shortcuts: self.app_shortcuts.borrow().clone(),
             alias_rules: self.alias_rules.borrow().clone(),

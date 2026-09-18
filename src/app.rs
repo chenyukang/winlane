@@ -626,6 +626,17 @@ define_class!(
         }
         #[unsafe(method(settingsChanged:))]
         fn settings_changed(&self, _: Option<&AnyObject>) { self.autosave_settings(); }
+        #[unsafe(method(addSearchShortcut:))]
+        fn add_search_shortcut(&self, _: Option<&AnyObject>) {
+            if let Some(settings) = self.settings_window() { settings.add_search_shortcut(); }
+        }
+        #[unsafe(method(removeSearchShortcut:))]
+        fn remove_search_shortcut(&self, sender: &NSButton) {
+            if let Some(settings) = self.settings_window() {
+                settings.remove_search_shortcut(sender.tag() as usize);
+                self.autosave_settings();
+            }
+        }
         #[unsafe(method(resetSettings:))]
         fn reset_settings(&self, _: Option<&AnyObject>) {
             if let Some(settings) = self.settings_window() {
@@ -1556,6 +1567,11 @@ impl Delegate {
                 ShortcutTap::new(
                     self.mtm(),
                     config.shortcut.binding()?,
+                    config
+                        .additional_search_shortcuts
+                        .iter()
+                        .map(winlane::config::Shortcut::binding)
+                        .collect::<Result<_, _>>()?,
                     config.switch_shortcut.binding()?,
                     config.app_bindings()?,
                     self.ivars().wake.get().unwrap().handle(),
@@ -1746,12 +1762,18 @@ impl Delegate {
             return Ok(());
         }
         let bindings_changed = candidate.shortcut != previous.shortcut
+            || candidate.additional_search_shortcuts != previous.additional_search_shortcuts
             || candidate.switch_shortcut != previous.switch_shortcut
             || candidate.app_bindings()? != previous.app_bindings()?;
         let registration = if bindings_changed {
             Some(ShortcutTap::new(
                 self.mtm(),
                 candidate.shortcut.binding()?,
+                candidate
+                    .additional_search_shortcuts
+                    .iter()
+                    .map(winlane::config::Shortcut::binding)
+                    .collect::<Result<_, _>>()?,
                 candidate.switch_shortcut.binding()?,
                 candidate.app_bindings()?,
                 self.ivars().wake.get().unwrap().handle(),
@@ -1911,19 +1933,16 @@ impl Delegate {
             (
                 &self.ivars().show_menu_item,
                 tr!("打开窗口搜索", "Open Window Search"),
-                &config.shortcut,
+                config.search_shortcuts_display(),
             ),
             (
                 &self.ivars().switch_menu_item,
                 tr!("打开窗口切换", "Open Window Switcher"),
-                &config.switch_shortcut,
+                config.switch_shortcut.display(),
             ),
         ] {
             if let Some(item) = item.borrow().as_ref() {
-                item.setTitle(&NSString::from_str(&format!(
-                    "{title}    {}",
-                    shortcut.display()
-                )));
+                item.setTitle(&NSString::from_str(&format!("{title}    {}", shortcut)));
             }
         }
     }
@@ -3198,6 +3217,12 @@ impl Delegate {
             } else {
                 config.shortcut.display()
             }));
+        ui.shortcut_label
+            .setToolTip(Some(&NSString::from_str(&if switching {
+                config.switch_shortcut.display()
+            } else {
+                config.search_shortcuts_display()
+            })));
         drop(config);
         ui.help.setHidden(trusted || demo);
         ui.refresh_button.setHidden(trusted || demo);

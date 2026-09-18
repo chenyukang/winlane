@@ -203,6 +203,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
         }
         settings.fill(&Config::default());
         assert_eq!(settings.opacity_preview.alphaValue(), 1.0);
+        verify_multiple_search_controls(&settings);
         if let Ok(directory) = std::env::var("WINLANE_PREVIEW_DIR") {
             settings.set_opacity(65);
             let view = settings.window.contentView().unwrap();
@@ -324,4 +325,70 @@ pub fn verify_autosave_controls(settings: &SettingsWindow, saved: impl Fn() -> C
         valid,
         "filling controls must not emit change actions"
     );
+}
+
+fn verify_multiple_search_controls(settings: &SettingsWindow) {
+    use objc2::AnyThread;
+    let before = NSApplication::sharedApplication(settings.window.mtm()).windows().len();
+    let mut config = Config {
+        shortcut: Shortcut { control: false, command: true, key: "Space".into(), ..Shortcut::default() },
+        additional_search_shortcuts: vec![Shortcut::default()],
+        ..Config::default()
+    };
+    settings.fill(&config);
+    assert_eq!(settings.candidate().unwrap(), config);
+    assert_eq!(settings.add_search.action(), Some(sel!(addSearchShortcut:)));
+    assert_eq!(settings.search_rows.borrow()[0].shortcut.key.action(), Some(sel!(settingsChanged:)));
+    assert_eq!(settings.search_rows.borrow()[0].remove.action(), Some(sel!(removeSearchShortcut:)));
+    let domain = NSString::from_str(&format!("com.example.winlane-search-bindings-{}", std::process::id()));
+    let store = NSUserDefaults::initWithSuiteName(NSUserDefaults::alloc(), Some(&domain)).unwrap();
+    store.removePersistentDomainForName(&domain);
+    save(&config, &store).unwrap();
+    let saved = || Config::from_json(&store.stringForKey(storage_key()).unwrap().to_string()).unwrap();
+    settings.add_search_shortcut();
+    assert_eq!(settings.search_rows.borrow().len(), 2);
+    assert!(settings.candidate().and_then(|candidate| save(&candidate, &store)).is_err());
+    assert_eq!(saved(), config, "unfinished rows must not replace saved bindings");
+    assert!(!settings.window.isVisible());
+    assert_eq!(NSApplication::sharedApplication(settings.window.mtm()).windows().len(), before);
+    settings.search_rows.borrow()[1].shortcut.fill(&config.shortcut);
+    assert!(settings.candidate().and_then(|candidate| save(&candidate, &store)).is_err());
+    assert_eq!(saved(), config, "duplicate draft must leave existing shortcuts active");
+    let extra = Shortcut { key: "KeyU".into(), ..Shortcut::default() };
+    settings.search_rows.borrow()[1].shortcut.fill(&extra);
+    let candidate = settings.candidate().unwrap();
+    save(&candidate, &store).unwrap();
+    config.additional_search_shortcuts.push(extra);
+    assert_eq!(saved(), config);
+    settings.remove_search_shortcut(0);
+    let candidate = settings.candidate().unwrap();
+    save(&candidate, &store).unwrap();
+    config.additional_search_shortcuts.remove(0);
+    assert_eq!(saved(), config);
+    assert_eq!(settings.search_rows.borrow()[0].remove.tag(), 0);
+    config.additional_search_shortcuts = (1..winlane::config::MAX_SEARCH_SHORTCUTS).map(|n| Shortcut { key: format!("F{n}"), ..Shortcut::default() }).collect();
+    settings.fill(&config);
+    assert_eq!(settings.candidate().unwrap(), config);
+    assert!(!settings.add_search.isEnabled());
+    settings.add_search_shortcut();
+    assert_eq!(settings.search_rows.borrow().len(), 7);
+    let mut previous = settings.search_header.frame().origin.y;
+    for row in settings.search_rows.borrow().iter() {
+        let frame = row.view.frame();
+        assert!(frame.origin.y >= 244.0);
+        assert!(frame.origin.y + frame.size.height <= previous);
+        previous = frame.origin.y;
+        for child in row.view.subviews() {
+            let frame = child.frame();
+            assert!(frame.origin.x >= 0.0 && frame.origin.y >= 0.0);
+            assert!(frame.origin.x + frame.size.width <= row.view.bounds().size.width);
+            assert!(frame.origin.y + frame.size.height <= row.view.bounds().size.height);
+        }
+    }
+    settings.remove_search_shortcut(6);
+    assert!(settings.add_search.isEnabled());
+    settings.fill(&Config::default());
+    assert!(settings.search_rows.borrow().is_empty());
+    assert_eq!(settings.candidate().unwrap(), Config::default());
+    store.removePersistentDomainForName(&domain);
 }

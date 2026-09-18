@@ -87,6 +87,8 @@ Press **Control + I** to open search. Type an app name, a window title, an alias
 
 **Command + Space** is also supported for search. If Spotlight or another launcher already uses it, reassign that application's shortcut to avoid a conflict. Press the search shortcut again to dismiss the picker; releasing Command leaves search open.
 
+To use several search shortcuts, choose **Add Search Shortcut** in **Settings → Shortcuts**, then select the modifiers and key in the new row. Up to eight combinations can open or close the same search panel. Use **−** to remove an additional binding; the first row remains editable. Valid changes save immediately, and duplicate or conflicting combinations leave the last saved bindings active. Existing installations keep their current shortcut.
+
 With Recent sorting, full app names come first, then partial app names, then direct title matches, and finally fuzzy matches. Direct-match groups keep their window recency. Fuzzy results favor fewer spelling errors and closer character matches, with recent use breaking ties. An exact window alias puts that window first, followed by other windows from the same app. Other text matches remain available, even when a saved alias has no open window.
 
 Search also tolerates misspelled words in app names and window titles: `chorme` finds Chrome and `fibre` finds a `fiber` project. Words of 4–7 characters allow one edit; longer words allow two, including adjacent letter swaps. Short inputs keep their usual alias, prefix, and abbreviation matching. The same spelling tolerance applies to installed apps you can launch.

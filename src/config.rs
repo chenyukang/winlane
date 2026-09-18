@@ -58,6 +58,8 @@ pub const KEYS: &[&str] = &[
     "F12",
 ];
 
+pub const MAX_SEARCH_SHORTCUTS: usize = 8;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Shortcut {
@@ -312,6 +314,8 @@ pub struct AliasRule {
 #[serde(default)]
 pub struct Config {
     pub shortcut: Shortcut,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub additional_search_shortcuts: Vec<Shortcut>,
     pub switch_shortcut: Shortcut,
     pub app_shortcuts: Vec<AppShortcut>,
     pub alias_rules: Vec<AliasRule>,
@@ -334,6 +338,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             shortcut: Shortcut::default(),
+            additional_search_shortcuts: Vec::new(),
             switch_shortcut: Shortcut::switch_default(),
             app_shortcuts: Vec::new(),
             alias_rules: Vec::new(),
@@ -420,7 +425,14 @@ impl Config {
             )
             .into());
         }
-        let search = self.shortcut.binding()?;
+        if self.additional_search_shortcuts.len() >= MAX_SEARCH_SHORTCUTS {
+            return Err(tr!(
+                "最多设置 8 个搜索快捷键。",
+                "You can configure up to 8 search shortcuts."
+            )
+            .into());
+        }
+        let searches = self.search_bindings()?;
         let switch = self.switch_shortcut.binding()?;
         if self.switch_shortcut.key == "Space" {
             return Err(tr!(
@@ -429,12 +441,24 @@ impl Config {
             )
             .into());
         }
-        if search.conflicts_with_switch(switch) {
+        if searches
+            .iter()
+            .any(|search| search.conflicts_with_switch(switch))
+        {
             return Err(tr!(
                 "搜索和切换快捷键不能相同，也不能占用切换模式的 Shift 反向组合。",
                 "Search and switch shortcuts must differ, including Shift for reverse switching."
             )
             .into());
+        }
+        for (index, binding) in searches.iter().enumerate() {
+            if searches[..index].contains(binding) {
+                return Err(trf!(
+                    "第 {} 个搜索快捷键重复，请选择不同的组合。",
+                    "Search shortcut {} is duplicated. Choose a different combination.",
+                    index + 1
+                ));
+            }
         }
         if self.app_shortcuts.len() > 32 {
             return Err(tr!(
@@ -447,7 +471,7 @@ impl Config {
         for (index, item) in self.app_shortcuts.iter().enumerate() {
             item.application.validate()?;
             let binding = item.shortcut.app_binding()?;
-            if binding == search || binding.conflicts_with_switch(switch) {
+            if searches.contains(&binding) || binding.conflicts_with_switch(switch) {
                 return Err(trf!(
                     "第 {} 个应用快捷键与搜索或切换快捷键冲突。",
                     "App shortcut {} conflicts with the search or switch shortcut.",
@@ -483,6 +507,21 @@ impl Config {
             .iter()
             .map(|item| item.shortcut.app_binding())
             .collect()
+    }
+
+    pub fn search_bindings(&self) -> Result<Vec<crate::shortcuts::Binding>, String> {
+        std::iter::once(&self.shortcut)
+            .chain(&self.additional_search_shortcuts)
+            .map(Shortcut::binding)
+            .collect()
+    }
+
+    pub fn search_shortcuts_display(&self) -> String {
+        std::iter::once(&self.shortcut)
+            .chain(&self.additional_search_shortcuts)
+            .map(Shortcut::display)
+            .collect::<Vec<_>>()
+            .join(" / ")
     }
 
     pub fn from_json(json: &str) -> Result<Self, String> {

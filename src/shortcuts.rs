@@ -119,7 +119,7 @@ pub struct Action {
 }
 
 pub struct ShortcutRouter {
-    search: Binding,
+    search: Vec<Binding>,
     switch: Binding,
     app_shortcuts: Vec<Binding>,
     session: u64,
@@ -131,7 +131,7 @@ pub struct ShortcutRouter {
 impl ShortcutRouter {
     pub fn new(search: Binding, switch: Binding) -> Self {
         Self {
-            search,
+            search: vec![search],
             switch,
             app_shortcuts: Vec::new(),
             session: 0,
@@ -144,6 +144,17 @@ impl ShortcutRouter {
     pub fn with_app_shortcuts(mut self, bindings: Vec<Binding>) -> Self {
         self.app_shortcuts = bindings;
         self
+    }
+
+    pub fn with_additional_search_shortcuts(mut self, bindings: Vec<Binding>) -> Self {
+        self.search.extend(bindings);
+        self
+    }
+
+    fn matches_search(&self, key: i64, flags: u64) -> bool {
+        self.search
+            .iter()
+            .any(|binding| binding.matches(key, flags, false))
     }
 
     fn action(&self, kind: ActionKind) -> Action {
@@ -234,7 +245,7 @@ impl ShortcutRouter {
             && self.consumed.contains(&key)
             && self.mode == Some(PanelMode::Switch)
             && app_shortcut.is_none()
-            && !self.search.matches(key, flags, false)
+            && !self.matches_search(key, flags)
             && (self.switch.matches(key, flags, true) || matches!(key, TAB | 125 | 126));
         if self.consumed.contains(&key) && !navigation_repeat {
             return (true, None);
@@ -245,7 +256,7 @@ impl ShortcutRouter {
             && (letter_for_key(key).is_some() || key == 51);
         if repeat && !navigation_repeat {
             let consume = app_shortcut.is_some()
-                || self.search.matches(key, flags, false)
+                || self.matches_search(key, flags)
                 || self.switch.matches(key, flags, true)
                 || (self.mode == Some(PanelMode::Switch)
                     && matches!(key, SPACE | ESCAPE | 36 | 76 | TAB | 125 | 126))
@@ -259,9 +270,12 @@ impl ShortcutRouter {
             self.finish(self.session);
             self.session = self.session.wrapping_add(1);
             self.action(ActionKind::LaunchApp(index))
-        } else if alias_key && !self.switch.matches(key, flags, true) {
+        } else if alias_key
+            && !self.switch.matches(key, flags, true)
+            && !self.matches_search(key, flags)
+        {
             self.action(letter_for_key(key).map_or(ActionKind::AliasBackspace, ActionKind::Alias))
-        } else if self.search.matches(key, flags, false) {
+        } else if self.matches_search(key, flags) {
             if self.mode == Some(PanelMode::Search) {
                 self.cancel()
             } else {
