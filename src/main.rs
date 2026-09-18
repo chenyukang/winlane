@@ -9,6 +9,8 @@ mod app;
 #[cfg(target_os = "macos")]
 mod app_shortcuts;
 #[cfg(target_os = "macos")]
+mod clipboard_image;
+#[cfg(target_os = "macos")]
 mod clipboard_runtime;
 #[cfg(target_os = "macos")]
 mod clipboard_settings;

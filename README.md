@@ -63,9 +63,9 @@ Use **Insert Placeholder** for clipboard text, date presets with live previews, 
 
 ### Find something you copied earlier
 
-Search for **clipboard** and select the command to browse your text history. Search its content or source app, then press Enter to paste into the previous app. **Command + C** copies only; **Command + Backspace** deletes an entry. History stays separate from ordinary window searches.
+Search for **clipboard** and select the command to browse your text and image history. Search its content or source app, then press Enter to paste into the previous app. **Command + C** copies only; **Command + Backspace** deletes an entry. History stays separate from ordinary window searches.
 
-By default, Winlane keeps up to **200 entries for 7 days**, saved locally across restarts. Adjust retention, pause recording, disable disk storage, or clear history in **Settings → Clipboard**. Text and links are supported; images and file copies are not. See [clipboard history](docs/clipboard.md) for controls, storage and privacy details.
+By default, Winlane keeps up to **200 entries for 7 days**, saved locally across restarts. Adjust retention, pause recording, disable disk storage, or clear history in **Settings → Clipboard**. Text, links and PNG/TIFF images are supported. Images show thumbnails and paste as images; file copies are not retained. See [clipboard history](docs/clipboard.md) for controls, storage and privacy details.
 
 ### Keep aliases for your apps and projects
 
@@ -122,7 +122,7 @@ The **Window** menu lets you limit searches to the current app, minimize or rest
 
 Winlane uses Accessibility access to read and control windows, and a keyboard event filter to handle its shortcuts. It does not log keystrokes, capture window screenshots, or send window data to a server.
 
-Settings, aliases and snippet templates are stored locally. Filled-in snippet arguments are not saved. Pasting a snippet writes its expanded plain text to the clipboard. Window titles, search terms, and selection history stay in memory and are discarded when Winlane quits. Copying a window title explicitly places it on the clipboard. Clipboard history records new text copies locally in plain text when enabled, with configurable retention. It skips standard sensitive-content markers and common password managers, but cannot detect every secret. See [clipboard privacy and storage](docs/clipboard.md#retention-and-privacy).
+Settings, aliases and snippet templates are stored locally. Filled-in snippet arguments are not saved. Pasting a snippet writes its expanded plain text to the clipboard. Window titles, search terms, and selection history stay in memory and are discarded when Winlane quits. Copying a window title explicitly places it on the clipboard. Clipboard history records new text and image copies locally without encryption when enabled, with configurable retention. It skips standard sensitive-content markers and common password managers, but cannot detect every secret. See [clipboard privacy and storage](docs/clipboard.md#retention-and-privacy).
 
 Update checks contact GitHub Releases for the update feed and packages. Sparkle system profiling is disabled; window titles and search terms are never included. Update feeds and downloads are verified with an embedded Ed25519 public key.
 

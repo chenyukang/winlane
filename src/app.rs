@@ -2746,8 +2746,15 @@ impl Delegate {
         let Some(entry) = self.selected_clipboard() else {
             return;
         };
+        let content = match crate::clipboard_runtime::PasteContent::from_entry(&entry) {
+            Ok(content) => content,
+            Err(error) => {
+                self.report_switch_error(&error);
+                return;
+            }
+        };
         if !paste {
-            match crate::clipboard_runtime::copy(&entry.text) {
+            match content.write(&NSPasteboard::generalPasteboard()) {
                 Ok(()) => self.dismiss(),
                 Err(error) => self.report_switch_error(&error),
             }
@@ -2764,8 +2771,19 @@ impl Delegate {
         };
         self.cancel_routing();
         self.end_session();
-        if let Err(error) = self.paste_snippet(target, entry.text.to_string()) {
-            self.selection_failed(&error);
+        if let Some(timer) = self.ivars().snippet_paste_timer.take() {
+            timer.invalidate();
+        }
+        let weak = Weak::new(self);
+        match crate::snippet_paste::start_content(target, content, self.mtm(), move |error| {
+            if let Some(delegate) = weak.load() {
+                delegate.selection_failed(&error);
+            }
+        }) {
+            Ok(timer) => {
+                self.ivars().snippet_paste_timer.replace(Some(timer));
+            }
+            Err(error) => self.selection_failed(&error),
         }
     }
 
@@ -3107,8 +3125,8 @@ impl Delegate {
                     (
                         tr!("还没有剪贴板历史", "No clipboard history yet"),
                         tr!(
-                            "复制一些文本后，它会出现在这里。可在设置 → 剪贴板中管理记录。",
-                            "Copy some text to see it here. Manage recording in Settings → Clipboard."
+                            "复制文本或图片后，它会出现在这里。可在设置 → 剪贴板中管理记录。",
+                            "Copy text or an image to see it here. Manage recording in Settings → Clipboard."
                         ),
                     )
                 } else {
@@ -3267,16 +3285,29 @@ impl Delegate {
                         );
                         trf!("粘贴片段：{}", "Paste snippet: {}", snippet.name)
                     }
-                    RowContent::Clipboard(_, source, preview, tooltip) => {
+                    RowContent::Clipboard(id, source, preview, tooltip) => {
                         set_label(&row.app, source);
                         set_label(&row.title, preview);
                         set_label(&row.alias, "↵");
+                        let thumbnail = clipboard.as_ref().and_then(|clipboard| {
+                            clipboard
+                                .history
+                                .get(*id)
+                                .and_then(|entry| entry.image.as_ref())
+                                .and_then(|image| clipboard.thumbnail(image))
+                        });
                         row.icon.setImage(
-                            NSImage::imageWithSystemSymbolName_accessibilityDescription(
-                                ns_string!("clipboard"),
-                                Some(&NSString::from_str(tr!("剪贴板历史", "Clipboard history"))),
-                            )
-                            .as_deref(),
+                            thumbnail
+                                .or_else(|| {
+                                    NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                                        ns_string!("clipboard"),
+                                        Some(&NSString::from_str(tr!(
+                                            "剪贴板历史",
+                                            "Clipboard history"
+                                        ))),
+                                    )
+                                })
+                                .as_deref(),
                         );
                         tooltip.clone()
                     }

@@ -15,10 +15,7 @@ pub struct ClipboardControls {
 }
 impl ClipboardControls {
     pub fn new(view: &NSView, target: &AnyObject, mtm: MainThreadMarker) -> Self {
-        let enabled = checkbox(
-            tr!("记录剪贴板文本历史", "Record clipboard text history"),
-            mtm,
-        );
+        let enabled = checkbox(tr!("记录剪贴板历史", "Record clipboard history"), mtm);
         enabled.setFrame(rect(30.0, 294.0, 620.0, 28.0));
         let persistent = checkbox(
             tr!(
@@ -55,8 +52,8 @@ impl ClipboardControls {
         }
         let description = hint(
             tr!(
-                "搜索 clipboard 打开历史；关闭记录会暂停采集，已有历史仍可使用。\n跳过密码标记和临时数据。当前支持文本及链接，不记录图片或文件。\n历史以明文保存在当前用户目录，不上传；取消保存会删除磁盘历史。",
-                "Search clipboard to open history. Pausing keeps existing entries available.\nPassword markers and transient data are skipped. Text and links only.\nHistory is local plain text, never uploaded. Disabling save removes its disk file."
+                "搜索 clipboard 打开历史；关闭记录会暂停采集，已有历史仍可使用。\n跳过密码标记和临时数据。支持文本、链接及 PNG/TIFF 图片。\n历史仅保存在本机；取消保存会删除持久副本，图片使用退出时清理的临时文件。",
+                "Search clipboard to open history. Pausing keeps existing entries available.\nPassword markers and transient data are skipped. Text, links and PNG/TIFF images.\nLocal only. With saving off, images use temporary files removed on quit."
             ),
             rect(30.0, 65.0, 650.0, 72.0),
             mtm,

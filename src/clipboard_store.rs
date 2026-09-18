@@ -1,4 +1,5 @@
 use crate::clipboard::{ClipboardSettings, History};
+use crate::clipboard_assets::{self, SessionFiles};
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -16,16 +17,32 @@ pub struct Store {
     worker: Option<JoinHandle<()>>,
     pub loaded: mpsc::Receiver<Result<History, String>>,
     pub errors: mpsc::Receiver<String>,
+    pub files: Arc<SessionFiles>,
 }
 impl Store {
     pub fn new(path: PathBuf, now: u64, settings: ClipboardSettings) -> Self {
+        let files = SessionFiles::new();
+        let worker_files = files.clone();
         let pending = Arc::new((Mutex::new(Pending::default()), Condvar::new()));
         let work = pending.clone();
         let (loaded_tx, loaded) = mpsc::channel();
         let (error_tx, errors) = mpsc::channel();
         let worker = std::thread::spawn(move || {
+            #[cfg(unix)]
+            clipboard_assets::cleanup_stale_sessions(&std::env::temp_dir());
             let initial = if settings.persistent {
-                read(&path, now, &settings)
+                read(&path, now, &settings).map(|mut history| {
+                    let root = path.with_file_name("images");
+                    history.entries.retain_mut(|entry| {
+                        if let Some(image) = &mut entry.image {
+                            image.asset = worker_files.restore(&root, image).ok();
+                            image.asset.is_some()
+                        } else {
+                            true
+                        }
+                    });
+                    history
+                })
             } else {
                 write(&path, None).map(|_| History::default())
             };
@@ -68,6 +85,7 @@ impl Store {
             worker: Some(worker),
             loaded,
             errors,
+            files,
         }
     }
     pub fn save(&self, history: Option<History>) {
@@ -105,12 +123,24 @@ fn read(path: &Path, now: u64, settings: &ClipboardSettings) -> Result<History, 
     History::from_json(&bytes, now, settings).map_err(std::io::Error::other)
 }
 fn write(path: &Path, history: Option<&History>) -> Result<(), std::io::Error> {
+    let images = path.with_file_name("images");
     let Some(history) = history else {
-        return match fs::remove_file(path) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            result => result,
-        };
+        match fs::remove_file(path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            result => result?,
+        }
+        return clipboard_assets::prune(&images, &Default::default());
     };
+    let mut keep = std::collections::HashSet::new();
+    for image in history
+        .entries
+        .iter()
+        .filter_map(|entry| entry.image.as_ref())
+    {
+        clipboard_assets::persist(&images, image)?;
+        keep.insert(image.filename());
+        keep.insert(image.thumbnail_filename());
+    }
     let parent = path
         .parent()
         .ok_or_else(|| std::io::Error::other("Missing history directory"))?;
@@ -142,5 +172,6 @@ fn write(path: &Path, history: Option<&History>) -> Result<(), std::io::Error> {
     if result.is_err() {
         let _ = fs::remove_file(temp);
     }
-    result
+    result?;
+    clipboard_assets::prune(&images, &keep)
 }

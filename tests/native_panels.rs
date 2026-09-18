@@ -332,6 +332,7 @@ mod app {
         verify_command_search(mtm);
         verify_snippet_search(mtm);
         verify_clipboard_search(mtm);
+        verify_clipboard_images(mtm);
         crate::snippet_ui::verify_editor(&delegate, mtm);
         crate::system_commands::verify_prepared_commands(mtm);
         crate::menu_bar::verify_reveal_positions();
@@ -1590,3 +1591,7 @@ mod clipboard_runtime;
 #[cfg(target_os = "macos")]
 #[path = "../src/clipboard_settings.rs"]
 mod clipboard_settings;
+
+#[cfg(target_os = "macos")]
+#[path = "../src/clipboard_image.rs"]
+mod clipboard_image;

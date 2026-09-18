@@ -1,6 +1,7 @@
 pub mod aliases;
 pub mod app_catalog;
 pub mod clipboard;
+pub mod clipboard_assets;
 pub mod clipboard_store;
 pub mod commands;
 pub mod config;

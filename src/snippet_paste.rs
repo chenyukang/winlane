@@ -2,11 +2,10 @@ use block2::RcBlock;
 use core_foundation::base::{CFType, CFTypeRef, TCFType};
 use objc2::rc::Retained;
 use objc2_app_kit::{
-    NSEvent, NSEventModifierFlags, NSPasteboard, NSPasteboardTypeString, NSRunningApplication,
-    NSWorkspace,
+    NSEvent, NSEventModifierFlags, NSPasteboard, NSRunningApplication, NSWorkspace,
 };
-use objc2_foundation::{MainThreadMarker, NSString, NSTimer};
-use std::cell::Cell;
+use objc2_foundation::{MainThreadMarker, NSTimer};
+use std::cell::{Cell, RefCell};
 use std::time::Instant;
 use winlane::tr;
 
@@ -23,6 +22,21 @@ pub fn start(
     mtm: MainThreadMarker,
     report: impl Fn(String) + 'static,
 ) -> Result<Retained<NSTimer>, String> {
+    start_content(
+        target,
+        crate::clipboard_runtime::PasteContent::Text(text),
+        mtm,
+        report,
+    )
+}
+
+pub fn start_content(
+    target: Retained<NSRunningApplication>,
+    content: crate::clipboard_runtime::PasteContent,
+    mtm: MainThreadMarker,
+    report: impl Fn(String) + 'static,
+) -> Result<Retained<NSTimer>, String> {
+    let content = RefCell::new(Some(content));
     if target.isTerminated() || target.processIdentifier() == std::process::id() as i32 {
         return Err(tr!(
             "目标应用已退出。请从要粘贴的应用重新打开搜索。",
@@ -72,6 +86,7 @@ pub fn start(
             || front.is_some_and(|front| front != pid && front != std::process::id() as i32)
         {
             timer.invalidate();
+            content.borrow_mut().take();
             report(
                 tr!(
                     "未粘贴：目标应用没有聚焦，或焦点已改变。",
@@ -103,14 +118,13 @@ pub fn start(
         }
         timer.invalidate();
         let pasteboard = NSPasteboard::generalPasteboard();
-        pasteboard.clearContents();
-        if !pasteboard.setString_forType(&NSString::from_str(&text), unsafe {
-            NSPasteboardTypeString
-        }) {
-            report(tr!("无法写入剪贴板。", "Could not write to the clipboard.").into());
+        let Some(value) = content.borrow_mut().take() else {
+            return;
+        };
+        if let Err(error) = value.write(&pasteboard) {
+            report(error);
             return;
         }
-        crate::clipboard_runtime::mark_generated(&pasteboard);
         // Target the captured process, never whichever app happens to receive global keys.
         unsafe {
             CGEventPostToPid(pid, down.as_CFTypeRef());

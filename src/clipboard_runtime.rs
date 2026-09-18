@@ -1,10 +1,13 @@
+use objc2::AnyThread;
 use objc2::rc::Retained;
-use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString, NSWorkspace};
+use objc2_app_kit::{NSImage, NSPasteboard, NSPasteboardTypeString, NSWorkspace};
 use objc2_foundation::{
     NSData, NSDate, NSDateFormatter, NSDateFormatterStyle, NSHomeDirectory, NSString, ns_string,
 };
 use std::path::PathBuf;
-use winlane::clipboard::{ClipboardSettings, Entry, History, ignored};
+use winlane::clipboard::{
+    ClipboardSettings, Entry, History, ImageFormat, ImageInfo, MAX_IMAGE_BYTES, ignored,
+};
 use winlane::clipboard_store::Store;
 use winlane::tr;
 
@@ -34,44 +37,59 @@ impl Observer {
     pub fn reset(&mut self, board: &NSPasteboard) {
         self.count = board.changeCount();
     }
-    pub fn capture(
+    pub fn read(
         &mut self,
         board: &NSPasteboard,
-        history: &mut History,
         settings: &ClipboardSettings,
         source_id: &str,
-        source_name: &str,
-        time: u64,
-    ) -> bool {
+    ) -> Option<Capture> {
         let count = board.changeCount();
         if count == self.count {
-            return false;
+            return None;
         }
         self.count = count;
         if !settings.enabled {
-            return false;
+            return None;
         }
         let types: Vec<_> = board
             .types()
             .map(|types| types.iter().map(|kind| kind.to_string()).collect())
             .unwrap_or_default();
-        if ignored(&types, source_id) || !types.iter().any(|kind| kind == "public.utf8-plain-text")
-        {
-            return false;
+        if ignored(&types, source_id) {
+            return None;
         }
-        let Some(text) = board.stringForType(unsafe { NSPasteboardTypeString }) else {
-            return false;
-        };
-        if text.length() > winlane::clipboard::MAX_ITEM_BYTES {
-            return false;
+        for format in [ImageFormat::Png, ImageFormat::Tiff] {
+            if types.iter().any(|kind| kind == format.pasteboard_type())
+                && let Some(data) = board.dataForType(&NSString::from_str(format.pasteboard_type()))
+            {
+                if data.length() > MAX_IMAGE_BYTES || data.length() == 0 {
+                    return None;
+                }
+                let bytes = data.to_vec();
+                return (board.changeCount() == count).then_some(Capture::Image(bytes, format));
+            }
         }
-        if board.changeCount() != count {
-            return false;
+        if types.iter().any(|kind| kind == "public.file-url") {
+            return None;
         }
-        history.record(&text.to_string(), source_name, time, settings)
+        let text = board.stringForType(unsafe { NSPasteboardTypeString })?;
+        if text.length() > winlane::clipboard::MAX_ITEM_BYTES || board.changeCount() != count {
+            return None;
+        }
+        Some(Capture::Text(text.to_string()))
     }
 }
 
+pub enum Capture {
+    Text(String),
+    Image(Vec<u8>, ImageFormat),
+}
+struct PendingImage {
+    receiver: std::sync::mpsc::Receiver<Result<ImageInfo, String>>,
+    source: String,
+    time: u64,
+    generation: u64,
+}
 pub struct ClipboardRuntime {
     pub history: History,
     pub error: Option<String>,
@@ -81,6 +99,9 @@ pub struct ClipboardRuntime {
     store: Store,
     pub loading: bool,
     ignore_loaded: bool,
+    image: Option<PendingImage>,
+    generation: u64,
+    thumbnails: std::cell::RefCell<std::collections::HashMap<String, Retained<NSImage>>>,
 }
 impl ClipboardRuntime {
     pub fn new(settings: ClipboardSettings) -> Self {
@@ -100,6 +121,9 @@ impl ClipboardRuntime {
             settings,
             loading: true,
             ignore_loaded: false,
+            image: None,
+            generation: 0,
+            thumbnails: Default::default(),
         }
     }
     pub fn poll_storage(&mut self) -> bool {
@@ -123,12 +147,42 @@ impl ClipboardRuntime {
         while self.store.errors.try_recv().is_ok() {
             self.error = Some(
                 tr!(
-                    "历史无法保存到本机，当前记录仅保留在内存。",
-                    "History could not be saved. Current entries remain in memory only."
+                    "历史无法持久保存，当前记录仅在本次运行期间保留。",
+                    "History could not be saved. Current entries remain available for this session."
                 )
                 .into(),
             );
             changed = true;
+        }
+        if let Some(result) =
+            self.image
+                .as_ref()
+                .and_then(|pending| match pending.receiver.try_recv() {
+                    Ok(result) => Some(result),
+                    Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(Err(tr!(
+                        "图片处理未完成，请重新复制。",
+                        "Image processing did not finish. Copy it again."
+                    )
+                    .into())),
+                })
+        {
+            let pending = self.image.take().unwrap();
+            if pending.generation == self.generation {
+                match result {
+                    Ok(image) => {
+                        self.history.record_image(
+                            image,
+                            &pending.source,
+                            pending.time,
+                            &self.settings,
+                        );
+                        self.persist();
+                    }
+                    Err(error) => self.error = Some(error),
+                }
+                changed = true;
+            }
         }
         if self.history.prune(now(), &self.settings) {
             self.persist();
@@ -138,7 +192,11 @@ impl ClipboardRuntime {
     }
     pub fn poll_clipboard(&mut self) -> bool {
         let mut changed = self.poll_storage();
-        if self.loading || !self.settings.enabled || !self.observer.changed(&self.board) {
+        if self.loading
+            || self.image.is_some()
+            || !self.settings.enabled
+            || !self.observer.changed(&self.board)
+        {
             return changed;
         }
         let app = NSWorkspace::sharedWorkspace().frontmostApplication();
@@ -151,26 +209,64 @@ impl ClipboardRuntime {
             .and_then(|app| app.localizedName())
             .map(|name| name.to_string())
             .unwrap_or_default();
-        let captured = self.observer.capture(
-            &self.board,
-            &mut self.history,
-            &self.settings,
-            &id,
-            &name,
-            now(),
-        );
-        let pruned = self.history.prune(now(), &self.settings);
-        if captured || pruned {
-            self.persist();
-            changed = true;
+        if let Some(capture) = self.observer.read(&self.board, &self.settings, &id) {
+            changed |= self.accept(capture, &name, now());
         }
         changed
+    }
+    pub fn accept(&mut self, capture: Capture, source: &str, time: u64) -> bool {
+        if !self.settings.enabled || self.image.is_some() {
+            return false;
+        }
+        match capture {
+            Capture::Text(text) => {
+                let changed = self.history.record(&text, source, time, &self.settings);
+                if changed {
+                    self.persist();
+                }
+                changed
+            }
+            Capture::Image(bytes, format) => {
+                let (sender, receiver) = std::sync::mpsc::channel();
+                let files = self.store.files.clone();
+                std::thread::spawn(move || {
+                    let _ = sender.send(crate::clipboard_image::prepare(bytes, format, &files));
+                });
+                self.image = Some(PendingImage {
+                    receiver,
+                    source: source.into(),
+                    time,
+                    generation: self.generation,
+                });
+                false
+            }
+        }
+    }
+    pub fn thumbnail(&self, image: &ImageInfo) -> Option<Retained<NSImage>> {
+        if let Some(value) = self.thumbnails.borrow().get(&image.key) {
+            return Some(value.clone());
+        }
+        let path = &image.asset.as_ref()?.thumbnail;
+        let data = std::fs::read(path).ok()?;
+        if data.len() > 128 * 1024 {
+            return None;
+        }
+        let value = NSImage::initWithData(NSImage::alloc(), &NSData::from_vec(data))?;
+        let mut cache = self.thumbnails.borrow_mut();
+        if cache.len() >= 32 {
+            cache.clear();
+        }
+        cache.insert(image.key.clone(), value.clone());
+        Some(value)
     }
     pub fn configure(&mut self, settings: ClipboardSettings) {
         if self.settings == settings {
             return;
         }
         self.observer.reset(&self.board);
+        if self.settings.enabled && !settings.enabled {
+            self.generation = self.generation.wrapping_add(1);
+        }
         self.settings = settings;
         self.history.prune(now(), &self.settings);
         if !self.loading || !self.settings.persistent {
@@ -188,6 +284,8 @@ impl ClipboardRuntime {
     }
     pub fn clear(&mut self) {
         self.ignore_loaded = true;
+        self.generation = self.generation.wrapping_add(1);
+        self.thumbnails.borrow_mut().clear();
         self.history.entries.clear();
         self.error = None;
         self.observer.reset(&self.board);
@@ -216,7 +314,11 @@ pub fn summary(entry: &Entry) -> (String, String, String) {
         entry.preview(),
         format!(
             "{source} · {time}\n{}",
-            entry.text.chars().take(1200).collect::<String>()
+            if entry.image.is_some() {
+                entry.preview()
+            } else {
+                entry.text.chars().take(1200).collect::<String>()
+            }
         ),
     )
 }
@@ -227,12 +329,38 @@ pub fn mark_generated(board: &NSPasteboard) {
         ns_string!("org.nspasteboard.AutoGeneratedType"),
     );
 }
-pub fn copy(text: &str) -> Result<(), String> {
-    let board = NSPasteboard::generalPasteboard();
-    board.clearContents();
-    if !board.setString_forType(&NSString::from_str(text), unsafe { NSPasteboardTypeString }) {
-        return Err(tr!("无法写入剪贴板。", "Could not write to the clipboard.").into());
+pub enum PasteContent {
+    Text(String),
+    Image(ImageFormat, Vec<u8>),
+}
+impl PasteContent {
+    pub fn from_entry(entry: &Entry) -> Result<Self, String> {
+        if let Some(image) = &entry.image {
+            let bytes = winlane::clipboard_assets::image_bytes(image).map_err(|_| {
+                tr!(
+                    "图片文件无法读取，请重新复制。",
+                    "The image file could not be read. Copy the image again."
+                )
+            })?;
+            Ok(Self::Image(image.format, bytes))
+        } else {
+            Ok(Self::Text(entry.text.to_string()))
+        }
     }
-    mark_generated(&board);
-    Ok(())
+    pub fn write(&self, board: &NSPasteboard) -> Result<(), String> {
+        board.clearContents();
+        let written = match self {
+            Self::Text(text) => board
+                .setString_forType(&NSString::from_str(text), unsafe { NSPasteboardTypeString }),
+            Self::Image(format, bytes) => board.setData_forType(
+                Some(&NSData::with_bytes(bytes)),
+                &NSString::from_str(format.pasteboard_type()),
+            ),
+        };
+        if !written {
+            return Err(tr!("无法写入剪贴板。", "Could not write to the clipboard.").into());
+        }
+        mark_generated(board);
+        Ok(())
+    }
 }
