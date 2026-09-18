@@ -330,8 +330,7 @@ pub fn ignored(types: &[String], bundle_id: &str) -> bool {
         )
     }) || matches!(
         bundle_id,
-        "app.windowlane.desktop"
-            | "com.apple.Passwords"
+        "com.apple.Passwords"
             | "com.apple.keychainaccess"
             | "com.agilebits.onepassword7"
             | "com.1password.1password"

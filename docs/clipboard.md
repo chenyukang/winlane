@@ -4,6 +4,8 @@ Search for **clipboard** (or **剪贴板**) and select the command. The picker t
 
 History starts recording new text and image copies while Winlane is running. It does not import whatever was on the clipboard before startup or collect copies made while recording was paused. Text, URLs, screenshots and copied PNG/TIFF images are supported. File copies and rich-text formatting are not retained. An image takes priority when the clipboard also includes an image caption or URL.
 
+System screenshots sent to the clipboard are recorded even when Winlane is in front, including screenshots of its own panels and settings. Screenshots saved only to a file do not enter clipboard history.
+
 ## Find and reuse a copy
 
 - Type words from the copied text or its source app. Use `image`, `screenshot`, `图片` or `截图` to find images. Results stay in most-recently-copied order. Copying identical text again moves its existing entry to the top.
