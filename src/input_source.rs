@@ -14,7 +14,10 @@ unsafe extern "C" {
     fn TISGetInputSourceProperty(source: CFTypeRef, key: CFStringRef) -> CFTypeRef;
     fn TISSelectInputSource(source: CFTypeRef) -> i32;
     static kTISPropertyInputSourceID: CFStringRef;
+    static kTISPropertyInputSourceLanguages: CFStringRef;
     static kTISPropertyInputSourceIsSelectCapable: CFStringRef;
+    static kTISPropertyInputSourceType: CFStringRef;
+    static kTISTypeKeyboardLayout: CFStringRef;
 }
 
 #[derive(Clone)]
@@ -78,6 +81,27 @@ impl Source {
         self.property(unsafe { kTISPropertyInputSourceID })
             .and_then(|value| value.downcast_into::<CFString>())
             .map(|value| value.to_string())
+    }
+
+    pub fn primary_language(&self) -> Option<String> {
+        let languages = self
+            .property(unsafe { kTISPropertyInputSourceLanguages })?
+            .downcast_into::<CFArray>()?;
+        // SAFETY: TIS owns an array of CF strings; retain the entry before
+        // releasing the array and check its concrete type before using it.
+        let language = unsafe { CFType::wrap_under_get_rule(*languages.get(0)?) }
+            .downcast_into::<CFString>()?
+            .to_string();
+        (!language.is_empty()).then_some(language)
+    }
+
+    pub fn is_keyboard_layout(&self) -> bool {
+        self.property(unsafe { kTISPropertyInputSourceType })
+            .and_then(|value| value.downcast_into::<CFString>())
+            .is_some_and(|kind| {
+                // SAFETY: This immutable Carbon constant is a live CFString.
+                kind == unsafe { CFString::wrap_under_get_rule(kTISTypeKeyboardLayout) }
+            })
     }
 
     pub fn select(&self, mtm: MainThreadMarker) -> bool {

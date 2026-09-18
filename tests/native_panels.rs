@@ -67,6 +67,9 @@ mod focus_observer;
 #[cfg(target_os = "macos")]
 #[path = "../src/input_source.rs"]
 mod input_source;
+#[cfg(target_os = "macos")]
+#[path = "../src/input_trace.rs"]
+mod input_trace;
 
 #[cfg(target_os = "macos")]
 mod accessibility {
@@ -376,6 +379,8 @@ mod app {
         verify_switch_delay(mtm);
         verify_responsive_panels(mtm);
         verify_search_composition_survives_refresh(mtm);
+        verify_input_language_is_prepared_before_focus(mtm);
+        verify_direct_layout_input(mtm);
         verify_async_focus_order(mtm);
         verify_async_window_snapshot(mtm);
         verify_project_rule_search(mtm);

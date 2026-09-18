@@ -33,7 +33,7 @@ use crate::input_source::{self, Source};
 use crate::installed_apps;
 use crate::settings::{self, SettingsWindow};
 use crate::shortcut_tap::ShortcutTap;
-use winlane::input_method::{InputGate, InputSession};
+use winlane::input_method::{InputGate, InputMethod, InputSession};
 
 const WIDTH: f64 = 700.0;
 const HEIGHT: f64 = 590.0;
@@ -184,6 +184,8 @@ struct AppState {
     saving_settings: Cell<bool>,
     input_session: RefCell<InputSession>,
     input_target: RefCell<Option<Source>>,
+    input_layout_source: RefCell<Option<String>>,
+    input_start_locales: RefCell<Option<Retained<NSArray<NSString>>>>,
     input_gate: RefCell<InputGate<Retained<NSEvent>>>,
     input_start_timer: RefCell<Option<Retained<NSTimer>>>,
     input_start_deadline: Cell<Option<Instant>>,
@@ -273,6 +275,8 @@ define_class!(
         #[unsafe(method(sendEvent:))]
         fn send_event(&self, event: &NSEvent) {
             if event.r#type() == NSEventType::KeyDown {
+                let delegate: Option<Retained<Delegate>> = unsafe { msg_send![self, delegate] };
+                if let Some(delegate) = delegate { delegate.trace_input("panel-key"); }
                 if i64::from(event.keyCode()) != winlane::shortcuts::ESCAPE {
                     let delegate: Option<Retained<Delegate>> = unsafe { msg_send![self, delegate] };
                     if let Some(delegate) = delegate && delegate.buffer_search_key(event) { return; }
@@ -328,10 +332,30 @@ define_class!(
                     && NSApplication::sharedApplication(self.mtm()).mainMenu()
                         .is_some_and(|menu| menu.performKeyEquivalent(event))
                 { return; }
+                let delegate: Option<Retained<Delegate>> = unsafe { msg_send![self, delegate] };
+                if let Some(delegate) = delegate && delegate.insert_layout_key(self, event) { return; }
             }
             // SAFETY: Unhandled events, including IME composition, follow NSPanel's normal dispatch.
             unsafe { let _: () = msg_send![super(self), sendEvent: event]; }
+            if event.r#type() == NSEventType::KeyDown {
+                let delegate: Option<Retained<Delegate>> = unsafe { msg_send![self, delegate] };
+                if let Some(delegate) = delegate { delegate.trace_input("panel-key-done"); }
+            }
         }
+    }
+);
+
+define_class!(
+    // SAFETY: This main-thread content view receives focus without activating
+    // an input context, until the configured source is selected for the editor.
+    #[unsafe(super = NSView)]
+    #[thread_kind = MainThreadOnly]
+    #[derive(Debug)]
+    struct PanelContentView;
+    unsafe impl NSObjectProtocol for PanelContentView {}
+    impl PanelContentView {
+        #[unsafe(method(acceptsFirstResponder))]
+        fn accepts_first_responder(&self) -> bool { true }
     }
 );
 
@@ -525,6 +549,7 @@ define_class!(
             let Some(panel) = notification.object().and_then(|object| object.downcast::<SearchPanel>().ok()) else { return; };
             self.remember_panel_display(&panel);
             self.ivars().check_panel_focus.set(false);
+            self.trace_input("became-key");
             self.focus_search();
         }
         #[unsafe(method(windowShouldClose:))]
@@ -624,6 +649,7 @@ define_class!(
         }
         #[unsafe(method(inputSourceChanged:))]
         fn input_source_changed(&self, _: &NSNotification) {
+            self.trace_input("source-notification");
             if !self.ivars().changing_input_source.get() {
                 self.complete_input_start();
                 self.remember_search_input();
@@ -1401,6 +1427,7 @@ impl Delegate {
     }
 
     fn present_panels(&self) {
+        self.trace_input("present-begin");
         self.cancel_switch_timer();
         let state = self.ivars();
         state.changing_displays.set(true);
@@ -1420,6 +1447,8 @@ impl Delegate {
             }
         }
         state.changing_displays.set(false);
+        self.trace_input("present-end");
+        self.complete_input_start();
     }
 
     fn create_panel(&self, display_id: u32) -> Rc<PanelUi> {
@@ -1459,8 +1488,12 @@ impl Delegate {
         panel.setMovableByWindowBackground(true);
         panel.setOpaque(false);
         panel.setBackgroundColor(Some(&NSColor::clearColor()));
-        let root = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, WIDTH, HEIGHT));
+        let root: Retained<PanelContentView> = unsafe {
+            msg_send![super(PanelContentView::alloc(mtm).set_ivars(())),
+                initWithFrame: rect(0.0, 0.0, WIDTH, HEIGHT)]
+        };
         panel.setContentView(Some(&root));
+        panel.setInitialFirstResponder(Some(&root));
         let backdrop = panel_backdrop(root.bounds(), mtm);
         root.addSubview(&backdrop);
 
@@ -1485,7 +1518,7 @@ impl Delegate {
         input.setPlaceholderString(Some(ns_string!("")));
         input.setSendsSearchStringImmediately(true);
         input.setMaximumRecents(0);
-        panel.setInitialFirstResponder(Some(&input));
+        self.configure_input_start(&input);
         unsafe {
             input.setDelegate(Some(ProtocolObject::from_ref(self)));
             root.addSubview(&input);
@@ -2098,6 +2131,11 @@ impl Delegate {
         // ordinary result refreshes must preserve its uncommitted composition.
         for ui in self.panels() {
             ui.input.abortEditing();
+            // A reused window remembers its last field editor. Keep it from
+            // activating the previous IME before windowDidBecomeKey runs.
+            if let Some(root) = ui.panel.contentView() {
+                ui.panel.makeFirstResponder(Some(&root));
+            }
         }
         if mode == PanelMode::Search {
             self.prepare_search_input();
@@ -2181,6 +2219,7 @@ impl Delegate {
     }
 
     fn focus_search(&self) {
+        self.trace_input("focus-begin");
         if self.ivars().changing_input_source.replace(true) {
             return;
         }
@@ -2203,25 +2242,28 @@ impl Delegate {
                         .unwrap_or(&ui.input);
                     let new_editor = control.currentEditor().is_none();
                     let first_focus = !self.ivars().input_session.borrow().focused;
-                    let source = if first_focus {
-                        self.ivars().input_target.borrow().clone()
-                    } else if new_editor {
-                        self.ivars()
-                            .input_session
-                            .borrow()
-                            .selected
-                            .as_deref()
-                            .and_then(|id| Source::by_id(id, self.mtm()))
-                    } else {
-                        None
-                    };
-                    // Select before AppKit activates the field editor's input
-                    // context, so the first key cannot start an old IME session.
+                    let source =
+                        if first_focus || self.ivars().input_gate.borrow().target().is_some() {
+                            self.ivars().input_target.borrow().clone()
+                        } else if new_editor {
+                            self.ivars()
+                                .input_session
+                                .borrow()
+                                .selected
+                                .as_deref()
+                                .and_then(|id| Source::by_id(id, self.mtm()))
+                        } else {
+                            None
+                        };
+                    // The panel initially focuses its non-text content view;
+                    // only activate a field editor after choosing its source.
                     if let Some(source) = &source {
                         source.select(self.mtm());
                     }
                     if new_editor {
+                        self.trace_input("source-selected-before-editor");
                         ui.panel.makeFirstResponder(Some(control));
+                        self.trace_input("editor-focused");
                     }
                     let editor = control
                         .currentEditor()
@@ -2252,13 +2294,70 @@ impl Delegate {
             }
         }
         self.ivars().changing_input_source.set(false);
+        self.trace_input("focus-end");
         self.complete_input_start();
     }
 
+    fn trace_input(&self, event: &'static str) {
+        if !crate::input_trace::active() {
+            return;
+        }
+        let state = self.ivars();
+        let editor = self
+            .panels()
+            .into_iter()
+            .find(|ui| ui.panel.isKeyWindow())
+            .and_then(|ui| ui.panel.firstResponder())
+            .and_then(|responder| responder.downcast::<NSTextView>().ok());
+        let context = editor.as_ref().and_then(|editor| editor.inputContext());
+        let current_context = NSTextInputContext::currentInputContext(self.mtm());
+        let active = context
+            .as_ref()
+            .zip(current_context.as_ref())
+            .is_some_and(|(a, b)| std::ptr::eq(&**a, &**b));
+        let marked = editor
+            .as_ref()
+            .is_some_and(|editor| NSTextInputClient::hasMarkedText(&**editor));
+        crate::input_trace::record(
+            event,
+            format_args!(
+                "source={:?} editor_source={:?} context_active={active} marked={marked} key={} presenting={} selecting={} gate={:?}",
+                Source::current(self.mtm()).and_then(|source| source.id()),
+                context
+                    .and_then(|context| context.selectedKeyboardInputSource())
+                    .map(|id| id.to_string()),
+                self.any_panel_key(),
+                state.changing_displays.get(),
+                state.changing_input_source.get(),
+                state.input_gate.borrow().target(),
+            ),
+        );
+    }
+
     fn prepare_search_input(&self) {
+        self.trace_input("prepare-input");
         self.cancel_input_start();
         let current = Source::current(self.mtm()).and_then(|source| source.id());
-        let target = input_source::preferred(self.ivars().config.borrow().input_method, self.mtm());
+        let policy = self.ivars().config.borrow().input_method;
+        let target = input_source::preferred(policy, self.mtm());
+        self.ivars().input_layout_source.replace(
+            target
+                .as_ref()
+                .filter(|source| {
+                    matches!(policy, InputMethod::English | InputMethod::LastUsed)
+                        && source.is_keyboard_layout()
+                })
+                .and_then(Source::id),
+        );
+        let language = target.as_ref().and_then(|source| match policy {
+            InputMethod::English => Some("en".to_owned()),
+            InputMethod::Chinese => Some("zh".to_owned()),
+            InputMethod::LastUsed => source.primary_language(),
+            InputMethod::Current => None,
+        });
+        self.ivars().input_start_locales.replace(
+            language.map(|language| NSArray::from_slice(&[&*NSString::from_str(&language)])),
+        );
         self.ivars()
             .input_gate
             .borrow_mut()
@@ -2267,7 +2366,21 @@ impl Delegate {
         self.ivars()
             .input_session
             .borrow_mut()
-            .prepare(current, self.ivars().config.borrow().input_method);
+            .prepare(current, policy);
+        for ui in self.panels() {
+            self.configure_input_start(&ui.input);
+        }
+    }
+
+    fn configure_input_start(&self, input: &NSSearchField) {
+        if let Some(cell) = input
+            .cell()
+            .and_then(|cell| cell.downcast::<NSTextFieldCell>().ok())
+        {
+            // Hint the requested language when AppKit configures the editor.
+            // Source selection itself happens before giving the editor focus.
+            cell.setAllowedInputSourceLocales(self.ivars().input_start_locales.borrow().as_deref());
+        }
     }
 
     fn start_input_gate_timer(&self) {
@@ -2302,6 +2415,25 @@ impl Delegate {
         state.input_start_deadline.set(None);
         state.input_gate.borrow_mut().begin(None);
         state.input_target.replace(None);
+        self.clear_input_start_locales();
+    }
+
+    fn clear_input_start_locales(&self) {
+        let state = self.ivars();
+        if state.input_start_locales.take().is_some() {
+            let changing = state.changing_input_source.replace(true);
+            for ui in self.panels() {
+                self.configure_input_start(&ui.input);
+                if let Some(editor) = ui
+                    .input
+                    .currentEditor()
+                    .and_then(|editor| editor.downcast::<NSTextView>().ok())
+                {
+                    editor.setAllowedInputSourceLocales(None);
+                }
+            }
+            state.changing_input_source.set(changing);
+        }
     }
 
     fn buffer_search_key(&self, event: &NSEvent) -> bool {
@@ -2319,28 +2451,83 @@ impl Delegate {
         true
     }
 
+    fn insert_layout_key(&self, panel: &SearchPanel, event: &NSEvent) -> bool {
+        let state = self.ivars();
+        if state.mode.get() != Some(PanelMode::Search)
+            || state.input_gate.borrow().target().is_some()
+        {
+            return false;
+        }
+        let Some(expected) = state.input_layout_source.borrow().clone() else {
+            return false;
+        };
+        if Source::current(self.mtm())
+            .and_then(|source| source.id())
+            .as_deref()
+            != Some(expected.as_str())
+        {
+            return false;
+        }
+        let Some(editor) = panel
+            .firstResponder()
+            .and_then(|responder| responder.downcast::<NSTextView>().ok())
+        else {
+            return false;
+        };
+        let inserted = insert_keyboard_layout_text(&editor, event);
+        if inserted {
+            self.trace_input("layout-key-inserted");
+        }
+        inserted
+    }
+
     fn complete_input_start(&self) {
         let state = self.ivars();
-        if state.changing_input_source.get() || state.input_gate.borrow().target().is_none() {
+        if state.changing_input_source.get()
+            || state.changing_displays.get()
+            || state.input_gate.borrow().target().is_none()
+        {
             return;
         }
-        if state.mode.get() != Some(PanelMode::Search) || !self.any_panel_key() {
+        if state.mode.get() != Some(PanelMode::Search) {
+            self.cancel_input_start();
+            return;
+        }
+        if !self.any_panel_key() {
             self.cancel_input_start();
             return;
         }
         let current = Source::current(self.mtm()).and_then(|source| source.id());
-        let editor_source = self
+        let context = self
             .panels()
             .into_iter()
             .find(|ui| ui.panel.isKeyWindow())
             .and_then(|ui| ui.panel.firstResponder())
             .and_then(|responder| responder.downcast::<NSTextView>().ok())
-            .and_then(|editor| editor.inputContext())
+            .and_then(|editor| editor.inputContext());
+        let active_context = NSTextInputContext::currentInputContext(self.mtm());
+        let editor_active = context
+            .as_ref()
+            .zip(active_context.as_ref())
+            .is_some_and(|(editor, active)| std::ptr::eq(&**editor, &**active));
+        let editor_source = context
             .and_then(|context| context.selectedKeyboardInputSource())
             .map(|id| id.to_string());
         let ready = current.as_deref().filter(|id| {
-            state.input_session.borrow().focused && Some(*id) == editor_source.as_deref()
+            state.input_session.borrow().focused
+                && editor_active
+                && Some(*id) == editor_source.as_deref()
         });
+        if ready.is_some()
+            && ready == state.input_gate.borrow().target()
+            && state.input_start_locales.borrow().is_some()
+        {
+            // Removing the temporary constraint can change the input context.
+            // Reconfirm the source without restrictions before releasing keys.
+            self.clear_input_start_locales();
+            self.focus_search();
+            return;
+        }
         let expired = state
             .input_start_deadline
             .get()
@@ -2348,6 +2535,11 @@ impl Delegate {
         let Some(events) = state.input_gate.borrow_mut().finish(ready, expired) else {
             return;
         };
+        self.trace_input("gate-release");
+        crate::input_trace::record(
+            "gate-events",
+            format_args!("count={} expired={expired}", events.len()),
+        );
         self.cancel_input_start();
         self.remember_search_input();
         let session = state.session.get();
@@ -2388,6 +2580,7 @@ impl Delegate {
     }
 
     fn finish_search_input(&self) {
+        self.ivars().input_layout_source.take();
         self.remember_search_input();
         self.cancel_input_start();
         if !self.ivars().input_session.borrow().focused {
@@ -5186,6 +5379,41 @@ fn window_display_title<'a>(window: &'a WindowInfo, app_id: Option<&str>) -> Cow
         return Cow::Borrowed(&window.title);
     }
     Cow::Owned(format!("{}: {}", project.trim(), detail.trim()))
+}
+
+fn insert_keyboard_layout_text(editor: &NSTextView, event: &NSEvent) -> bool {
+    if event.r#type() != NSEventType::KeyDown
+        || NSTextInputClient::hasMarkedText(editor)
+        || event.modifierFlags().intersects(
+            NSEventModifierFlags::Command
+                | NSEventModifierFlags::Control
+                | NSEventModifierFlags::Option
+                | NSEventModifierFlags::Function,
+        )
+        || event.characters().is_none_or(|text| text.is_empty())
+    {
+        return false;
+    }
+    // A third-party IME can still consume keyDown after TIS and the input
+    // context both report ABC. Translate with the selected layout, then use
+    // the editor's normal insertion path without dispatching to that old IME.
+    let Some(text) = event.charactersByApplyingModifiers(event.modifierFlags()) else {
+        return false;
+    };
+    let value = text.to_string();
+    if value.is_empty() || !value.bytes().all(|byte| (b' '..=b'~').contains(&byte)) {
+        return false;
+    }
+    // SAFETY: NSString is a supported text-input value; NSNotFound asks the
+    // editor to replace its selection and preserves notifications and undo.
+    unsafe {
+        NSTextInputClient::insertText_replacementRange(
+            editor,
+            &text,
+            objc2_foundation::NSRange::new(objc2_foundation::NSNotFound as usize, 0),
+        );
+    }
+    true
 }
 
 fn rect(x: f64, y: f64, width: f64, height: f64) -> NSRect {
