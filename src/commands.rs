@@ -2,6 +2,7 @@ use crate::{i18n::Locale, tr};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CommandId {
+    Projects,
     Quicklinks,
     Snippets,
     Clipboard,
@@ -34,6 +35,21 @@ impl Command {
 }
 
 pub const COMMANDS: &[Command] = &[
+    Command {
+        id: CommandId::Projects,
+        name: "projects",
+        title_en: "Open recent VS Code projects",
+        title_zh: "打开 VS Code 最近项目",
+        symbol: "folder",
+        keywords: &[
+            "project",
+            "vscode",
+            "vs code",
+            "recent projects",
+            "最近项目",
+            "项目",
+        ],
+    },
     Command {
         id: CommandId::Quicklinks,
         name: "quicklink",

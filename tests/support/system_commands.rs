@@ -45,6 +45,7 @@ pub fn verify_prepared_commands(mtm: MainThreadMarker) {
     assert!(PreparedCommand::prepare(CommandId::Snippets, None, mtm).is_err());
     assert!(PreparedCommand::prepare(CommandId::Clipboard, None, mtm).is_err());
     assert!(PreparedCommand::prepare(CommandId::Quicklinks, None, mtm).is_err());
+    assert!(PreparedCommand::prepare(CommandId::Projects, None, mtm).is_err());
     for command in [CommandId::Sleep, CommandId::MissionControl] {
         assert!(check_status(command, 0).is_ok());
         let error = check_status(command, -1).unwrap_err();

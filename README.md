@@ -55,6 +55,10 @@ Each row represents an independent window. Separate editor projects appear separ
 
 The letters beside each window are its **alias**. Type those letters while holding Command, then release Command to jump directly to that window. Aliases are assigned automatically from English app names, stay unique across windows, and are remembered when Winlane restarts. Additional window aliases may change when the target app closes and creates new windows.
 
+### Reopen a VS Code project
+
+Search for **projects** or **vscode** and select **Open recent VS Code projects**. Browse recent folders and workspaces, filter by project name or path, then press Enter to open one in VS Code. This also works when the project has no open window or VS Code is not running. Press Esc to return to window search, or **Command + R** to refresh the projects. See [recent projects](docs/projects.md) for supported locations and caching.
+
 ### Open saved links
 
 Save websites, app links, and folders in **Settings → Quicklinks**, or import a Raycast Quicklinks JSON export. Find them by name in search, or select **quicklink** to browse only links. Matching windows retain priority. Templates such as `https://example.com/search?q={Query}` show parameter fields inside the search panel; `{clipboard}` uses copied text. See [Quicklinks](docs/quicklinks.md) for placeholders and import details.

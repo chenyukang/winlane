@@ -45,6 +45,7 @@ const APP_CATALOG_TTL: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SearchScope {
+    Projects,
     Quicklinks,
     Snippets,
     Clipboard,
@@ -84,6 +85,7 @@ struct RowUi {
 
 #[derive(Clone, PartialEq, Eq)]
 enum RowContent {
+    Project(winlane::projects::Project),
     Command(CommandId),
     Snippet(winlane::snippets::Snippet),
     Quicklink(winlane::quicklinks::Quicklink),
@@ -93,6 +95,7 @@ enum RowContent {
 }
 
 enum SelectedResult {
+    Project(std::path::PathBuf),
     Command(CommandId),
     Snippet(String),
     Quicklink(String),
@@ -137,6 +140,7 @@ impl RowUi {
                     | RowContent::Command(_)
                     | RowContent::Snippet(_)
                     | RowContent::Quicklink(_)
+                    | RowContent::Project(_)
                     | RowContent::Clipboard(..)
             )
         );
@@ -211,6 +215,9 @@ struct AppState {
     launch_matches: RefCell<Vec<usize>>,
     command_matches: RefCell<Vec<CommandId>>,
     snippet_matches: RefCell<Vec<winlane::snippets::Snippet>>,
+    project_matches: RefCell<Vec<winlane::projects::Project>>,
+    project_cache: RefCell<winlane::projects::Cache>,
+    project_receiver: RefCell<Option<Receiver<winlane::projects::Cache>>>,
     quicklink_matches: RefCell<Vec<winlane::quicklinks::Quicklink>>,
     quicklink_input: RefCell<Option<crate::quicklink_input::Input>>,
     quicklink_editor: RefCell<Option<Retained<crate::quicklink_ui::QuicklinkEditor>>>,
@@ -760,6 +767,7 @@ define_class!(
         }
         #[unsafe(method(refreshWindows:))]
         fn refresh_action(&self, _: Option<&AnyObject>) {
+            if self.searching_projects() { self.refresh_projects(true); self.render(); return; }
             if self.ivars().demo.get() { self.filter(); } else {
                 self.ivars().catalog_checked.set(None);
                 self.ensure_app_catalog();
@@ -822,6 +830,7 @@ define_class!(
             self.drain_shortcut_actions();
             self.poll_app_launch();
             self.poll_app_catalog();
+            self.poll_projects();
             let clipboard_changed = self.ivars().clipboard.borrow_mut().as_mut().is_some_and(|clipboard| clipboard.poll_storage());
             if clipboard_changed && self.searching_clipboard() { self.filter_preserving(self.selected_result()); }
             let result = self.ivars().receiver.borrow().as_ref().map(|rx| rx.try_recv());
@@ -2193,6 +2202,9 @@ impl Delegate {
         (self.ivars().search_scope.get().is_some() || self.editing_quicklink())
             && self.ivars().mode.get() == Some(PanelMode::Search)
     }
+    fn searching_projects(&self) -> bool {
+        self.scoped_search() && self.ivars().search_scope.get() == Some(SearchScope::Projects)
+    }
     fn searching_quicklinks(&self) -> bool {
         self.scoped_search() && self.ivars().search_scope.get() == Some(SearchScope::Quicklinks)
     }
@@ -2208,6 +2220,9 @@ impl Delegate {
     fn enter_scoped_search(&self, scope: SearchScope) {
         self.ivars().search_scope.set(Some(scope));
         self.ivars().query.borrow_mut().clear();
+        if scope == SearchScope::Projects {
+            self.refresh_projects(false);
+        }
         self.filter();
         self.focus_search();
     }
@@ -2222,7 +2237,9 @@ impl Delegate {
         if !self.scoped_search() {
             return;
         }
-        let command = if self.searching_quicklinks() {
+        let command = if self.searching_projects() {
+            CommandId::Projects
+        } else if self.searching_quicklinks() {
             CommandId::Quicklinks
         } else if self.searching_clipboard() {
             CommandId::Clipboard
@@ -2267,9 +2284,11 @@ impl Delegate {
     fn end_session(&self) {
         self.clear_quicklink_input();
         let clipboard = self.searching_clipboard();
+        let projects = self.searching_projects();
         self.ivars().search_scope.set(None);
-        if clipboard {
+        if clipboard || projects {
             self.ivars().clipboard_matches.borrow_mut().clear();
+            self.ivars().project_matches.borrow_mut().clear();
             for ui in self.panels() {
                 for row in ui.rows.borrow_mut().drain(..) {
                     row.button.removeFromSuperview();
@@ -2588,6 +2607,11 @@ impl Delegate {
     }
 
     fn filter_preserving(&self, selected_id: Option<SelectedResult>) {
+        if self.searching_projects() {
+            self.filter_projects(selected_id);
+            return;
+        }
+        self.ivars().project_matches.borrow_mut().clear();
         if self.editing_quicklink() {
             self.filter_quicklink_input();
             return;
@@ -2734,7 +2758,7 @@ impl Delegate {
                         })
                         .map(|index| extra_count + index)
                 }),
-            Some(SelectedResult::Clipboard(_)) | None => None,
+            Some(SelectedResult::Clipboard(_) | SelectedResult::Project(_)) | None => None,
         }
         .unwrap_or(0);
         let visible_paths: HashSet<_> = launch_matches
@@ -3006,10 +3030,17 @@ impl Delegate {
         let apps = state.installed_apps.borrow();
         let snippet_matches = state.snippet_matches.borrow();
         let quicklink_matches = state.quicklink_matches.borrow();
+        let project_matches = state.project_matches.borrow();
+        let project_cache = state.project_cache.borrow();
+        let in_projects = self.searching_projects();
         let clipboard_matches = state.clipboard_matches.borrow();
         let clipboard = state.clipboard.borrow();
         let extra_count = command_matches.len() + snippet_matches.len() + clipboard_matches.len();
-        let count = extra_count + matched.len() + quicklink_matches.len() + launch_matches.len();
+        let count = extra_count
+            + matched.len()
+            + quicklink_matches.len()
+            + launch_matches.len()
+            + project_matches.len();
         let quicklink_input = state.quicklink_input.borrow();
         let inline = quicklink_input.is_some();
         let trusted = accessibility::is_trusted();
@@ -3109,6 +3140,8 @@ impl Delegate {
         ui.scope_back.setHidden(!self.scoped_search() || inline);
         ui.scope_back.setTitle(&NSString::from_str(if in_clipboard {
             tr!("‹ 剪贴板", "‹ Clipboard")
+        } else if in_projects {
+            tr!("‹ 项目", "‹ Projects")
         } else if self.searching_quicklinks() {
             tr!("‹ 链接", "‹ Links")
         } else {
@@ -3254,6 +3287,37 @@ impl Delegate {
                         ),
                     )
                 }
+            } else if in_projects {
+                if state.project_receiver.borrow().is_some() {
+                    (
+                        tr!("正在读取项目…", "Loading projects…"),
+                        tr!("可以继续输入搜索。", "You can keep typing."),
+                    )
+                } else if project_cache.error.is_some() {
+                    (
+                        tr!("无法读取最近项目", "Could not load recent projects"),
+                        tr!(
+                            "按 ⌘R 重试，或按 Esc 返回。",
+                            "Press ⌘R to retry, or Esc to go back."
+                        ),
+                    )
+                } else if project_cache.projects.is_empty() {
+                    (
+                        tr!("还没有本地最近项目", "No recent local projects"),
+                        tr!(
+                            "先在 VS Code 打开文件夹或工作区，再按 ⌘R 刷新。",
+                            "Open a folder or workspace in VS Code, then press ⌘R to refresh."
+                        ),
+                    )
+                } else {
+                    (
+                        tr!("没有匹配的项目", "No matching projects"),
+                        tr!(
+                            "按项目名或路径搜索，或按 Esc 返回。",
+                            "Search by project name or path, or press Esc to go back."
+                        ),
+                    )
+                }
             } else if self.searching_quicklinks() {
                 (
                     tr!("没有匹配的快捷链接", "No matching quicklinks"),
@@ -3343,7 +3407,9 @@ impl Delegate {
             ui.empty_labels.replace(vec![heading, detail]);
         }
         for position in 0..count {
-            let content = if let Some(&command) = command_matches.get(position) {
+            let content = if let Some(project) = project_matches.get(position) {
+                RowContent::Project(project.clone())
+            } else if let Some(&command) = command_matches.get(position) {
                 RowContent::Command(command)
             } else if let Some(snippet) = snippet_matches.get(position - command_matches.len()) {
                 RowContent::Snippet(snippet.clone())
@@ -3395,6 +3461,25 @@ impl Delegate {
                             command.title(),
                             command.category()
                         )
+                    }
+                    RowContent::Project(project) => {
+                        let path = project.path.to_string_lossy();
+                        set_label(&row.app, &project.name);
+                        set_label(&row.title, &path);
+                        set_label(&row.alias, "↗");
+                        let symbol = if project.kind == winlane::projects::Kind::Workspace {
+                            "rectangle.stack"
+                        } else {
+                            "folder"
+                        };
+                        row.icon.setImage(
+                            NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                                &NSString::from_str(symbol),
+                                Some(&NSString::from_str(tr!("VS Code 项目", "VS Code project"))),
+                            )
+                            .as_deref(),
+                        );
+                        format!("{} — {}", project.name, path)
                     }
                     RowContent::Quicklink(link) => {
                         set_label(&row.app, &link.name);
@@ -3532,6 +3617,18 @@ impl Delegate {
                 "Tab next field · ↵ open · Esc back"
             )
             .into()
+        } else if in_projects {
+            project_cache.error.clone().unwrap_or_else(|| {
+                if state.project_receiver.borrow().is_some() {
+                    tr!("正在更新项目…", "Updating projects…").into()
+                } else {
+                    trf!(
+                        "{} 个项目 · ↵ 用 VS Code 打开 · ⌘R 刷新 · Esc 返回",
+                        "{} projects · ↵ open in VS Code · ⌘R refresh · Esc back",
+                        project_matches.len()
+                    )
+                }
+            })
         } else if in_clipboard && let Some(error) = clipboard_error {
             error.clone()
         } else if demo {
@@ -3604,7 +3701,8 @@ impl Delegate {
             && (state.hotkey_error.borrow().is_some()
                 || state.alias_error.borrow().is_some()
                 || !trusted
-                || (in_clipboard && clipboard_error.is_some()));
+                || (in_clipboard && clipboard_error.is_some())
+                || (in_projects && project_cache.error.is_some()));
         ui.footer.setHidden(!show_hints && !has_error);
     }
 
@@ -3821,6 +3919,14 @@ impl Delegate {
     }
 
     fn activate_selected(&self) {
+        if self.selected_command() == Some(CommandId::Projects) {
+            self.enter_scoped_search(SearchScope::Projects);
+            return;
+        }
+        if self.searching_projects() {
+            self.open_selected_project();
+            return;
+        }
         if self.editing_quicklink() {
             self.submit_quicklink_input();
             return;
@@ -3998,6 +4104,123 @@ impl Delegate {
                 "无法隐藏应用，它可能已经退出。",
                 "Could not hide the app. It may have quit."
             )),
+        }
+    }
+
+    fn refresh_projects(&self, force: bool) {
+        let state = self.ivars();
+        if !self.searching_projects() || state.project_receiver.borrow().is_some() {
+            return;
+        }
+        let Some(home) = std::env::var_os("HOME") else {
+            state.project_cache.borrow_mut().error =
+                Some(tr!("找不到用户主目录。", "Home directory unavailable.").into());
+            return;
+        };
+        let application = crate::project_open::application_path();
+        let mut cache = state.project_cache.borrow().clone();
+        let (tx, rx) = mpsc::channel();
+        state.project_receiver.replace(Some(rx));
+        let wake = state.wake.get().unwrap().handle();
+        std::thread::spawn(move || {
+            let sources = winlane::projects::Sources::vscode(
+                std::path::Path::new(&home),
+                application.as_deref(),
+            );
+            cache.refresh(&sources, force);
+            let _ = tx.send(cache);
+            wake.signal();
+        });
+    }
+
+    fn poll_projects(&self) {
+        let result = self
+            .ivars()
+            .project_receiver
+            .borrow()
+            .as_ref()
+            .map(|rx| rx.try_recv());
+        match result {
+            Some(Ok(cache)) => {
+                let selected = self.selected_result();
+                self.ivars().project_receiver.take();
+                self.ivars().project_cache.replace(cache);
+                if self.searching_projects() {
+                    self.filter_preserving(selected);
+                }
+            }
+            Some(Err(TryRecvError::Disconnected)) => {
+                self.ivars().project_receiver.take();
+                self.ivars().project_cache.borrow_mut().error = Some(
+                    tr!(
+                        "项目读取中断，按 ⌘R 重试。",
+                        "Project loading stopped. Press ⌘R to retry."
+                    )
+                    .into(),
+                );
+                if self.searching_projects() {
+                    self.render();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn filter_projects(&self, selected: Option<SelectedResult>) {
+        let state = self.ivars();
+        let projects = winlane::projects::matching(
+            &state.project_cache.borrow().projects,
+            &state.query.borrow(),
+        );
+        let selected = if let Some(SelectedResult::Project(path)) = selected {
+            projects
+                .iter()
+                .position(|project| project.path == path)
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        state.matches.borrow_mut().clear();
+        state.launch_matches.borrow_mut().clear();
+        state.command_matches.borrow_mut().clear();
+        state.snippet_matches.borrow_mut().clear();
+        state.clipboard_matches.borrow_mut().clear();
+        state.quicklink_matches.borrow_mut().clear();
+        state.application_icons.borrow_mut().clear();
+        state.project_matches.replace(projects);
+        state.selected.set(selected);
+        self.render();
+    }
+
+    fn selected_project(&self) -> Option<winlane::projects::Project> {
+        if !self.searching_projects() {
+            return None;
+        }
+        self.ivars()
+            .project_matches
+            .borrow()
+            .get(self.ivars().selected.get())
+            .cloned()
+    }
+
+    fn open_selected_project(&self) {
+        let Some(project) = self.selected_project() else {
+            return;
+        };
+        match crate::project_open::PreparedProject::new(&project) {
+            Ok(prepared) => {
+                self.cancel_routing();
+                self.end_session();
+                let receiver = prepared.open(self.ivars().wake.get().unwrap().handle());
+                self.ivars().launch_receiver.replace(Some(PendingLaunch {
+                    receiver,
+                    origin: LaunchOrigin::Search,
+                }));
+            }
+            Err(error) => {
+                self.ivars().project_cache.borrow_mut().error = Some(error);
+                self.render();
+            }
         }
     }
 
@@ -4447,6 +4670,9 @@ impl Delegate {
     }
 
     fn selected_result(&self) -> Option<SelectedResult> {
+        if let Some(project) = self.selected_project() {
+            return Some(SelectedResult::Project(project.path));
+        }
         if let Some(link) = self.selected_quicklink() {
             return Some(SelectedResult::Quicklink(link.id));
         }
@@ -4474,6 +4700,7 @@ impl Delegate {
             + self.ivars().matches.borrow().len()
             + self.ivars().launch_matches.borrow().len()
             + self.ivars().quicklink_matches.borrow().len()
+            + self.ivars().project_matches.borrow().len()
     }
 }
 

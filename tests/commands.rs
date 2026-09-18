@@ -131,3 +131,19 @@ fn quicklinks_have_an_explicit_search_entry() {
         assert_eq!(matching_commands(query), [CommandId::Quicklinks]);
     }
 }
+
+#[test]
+fn projects_have_an_explicit_entry() {
+    for query in [
+        "projects",
+        "project",
+        "vscode",
+        "vs code",
+        "RECENT PROJECTS",
+        "最近项目",
+        "项目",
+    ] {
+        assert_eq!(matching_commands(query), [CommandId::Projects]);
+    }
+    assert!(matching_commands("p").is_empty());
+}

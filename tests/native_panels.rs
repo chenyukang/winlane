@@ -10,6 +10,10 @@ mod snippet_ui {
 }
 
 #[cfg(target_os = "macos")]
+#[path = "../src/project_open.rs"]
+mod project_open;
+
+#[cfg(target_os = "macos")]
 #[path = "../src/quicklink_input.rs"]
 mod quicklink_input;
 
@@ -160,6 +164,7 @@ mod app {
     include!("support/commands.rs");
     include!("support/snippet_search.rs");
     include!("support/quicklink_search.rs");
+    include!("support/projects.rs");
     include!("support/clipboard.rs");
 
     pub fn inspect_window_discovery(bundle: &str) {
@@ -343,6 +348,7 @@ mod app {
         verify_command_search(mtm);
         verify_snippet_search(mtm);
         verify_quicklink_search(mtm);
+        verify_projects_search(mtm);
         verify_clipboard_search(mtm);
         verify_clipboard_images(mtm);
         crate::snippet_ui::verify_editor(&delegate, mtm);

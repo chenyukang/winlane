@@ -14,3 +14,5 @@ pub mod shortcuts;
 pub mod snippets;
 
 pub mod quicklinks;
+
+pub mod projects;
