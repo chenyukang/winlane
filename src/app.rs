@@ -33,7 +33,7 @@ use crate::input_source::{self, Source};
 use crate::installed_apps;
 use crate::settings::{self, SettingsWindow};
 use crate::shortcut_tap::ShortcutTap;
-use winlane::input_method::InputSession;
+use winlane::input_method::{InputGate, InputSession};
 
 const WIDTH: f64 = 700.0;
 const HEIGHT: f64 = 590.0;
@@ -115,6 +115,18 @@ struct PendingLaunch {
     origin: LaunchOrigin,
 }
 
+struct WindowSnapshot {
+    windows: Vec<WindowInfo>,
+    identities: HashMap<i32, AppIdentity>,
+}
+
+struct PendingFocus {
+    receiver: Receiver<Option<u64>>,
+    pid: i32,
+    revision: u64,
+    recency: Vec<u64>,
+}
+
 impl RowUi {
     fn select(&mut self, selected: bool) {
         if self.selected == Some(selected) {
@@ -168,8 +180,13 @@ struct AppState {
     keyboard_display: Cell<Option<u32>>,
     changing_displays: Cell<bool>,
     syncing_controls: Cell<bool>,
+    preparing_panel: Cell<bool>,
     saving_settings: Cell<bool>,
     input_session: RefCell<InputSession>,
+    input_target: RefCell<Option<Source>>,
+    input_gate: RefCell<InputGate<Retained<NSEvent>>>,
+    input_start_timer: RefCell<Option<Retained<NSTimer>>>,
+    input_start_deadline: Cell<Option<Instant>>,
     changing_input_source: Cell<bool>,
     check_panel_focus: Cell<bool>,
     config: RefCell<Config>,
@@ -178,6 +195,10 @@ struct AppState {
     automatic_aliases: RefCell<Aliases>,
     identities: RefCell<HashMap<i32, AppIdentity>>,
     icons: RefCell<HashMap<i32, Option<Retained<NSImage>>>>,
+    placeholder_icon: OnceCell<Option<Retained<NSImage>>>,
+    cache_warmup_timer: RefCell<Option<Retained<NSTimer>>>,
+    #[cfg(test)]
+    render_passes: Cell<usize>,
     alias_input: RefCell<AliasInput>,
     alias_error: RefCell<Option<String>>,
     aliases_writable: Cell<bool>,
@@ -226,11 +247,14 @@ struct AppState {
     selected: Cell<usize>,
     previous_pid: Cell<i32>,
     previous_window: Cell<Option<u64>>,
-    receiver: RefCell<Option<Receiver<Vec<WindowInfo>>>>,
+    receiver: RefCell<Option<Receiver<WindowSnapshot>>>,
     loading: Cell<bool>,
     demo: Cell<bool>,
     recency: RefCell<Vec<u64>>,
     focus_observer: RefCell<Option<crate::focus_observer::FocusObserver>>,
+    focus_receiver: RefCell<Option<PendingFocus>>,
+    focus_pid: Cell<i32>,
+    focus_revision: Cell<u64>,
     preferences: RefCell<HashMap<String, u64>>,
 }
 
@@ -249,6 +273,10 @@ define_class!(
         #[unsafe(method(sendEvent:))]
         fn send_event(&self, event: &NSEvent) {
             if event.r#type() == NSEventType::KeyDown {
+                if i64::from(event.keyCode()) != winlane::shortcuts::ESCAPE {
+                    let delegate: Option<Retained<Delegate>> = unsafe { msg_send![self, delegate] };
+                    if let Some(delegate) = delegate && delegate.buffer_search_key(event) { return; }
+                }
                 let composing = self.firstResponder()
                     .and_then(|responder| responder.downcast::<NSTextView>().ok())
                     .is_some_and(|editor| NSTextInputClient::hasMarkedText(&*editor));
@@ -589,11 +617,23 @@ define_class!(
         }
         #[unsafe(method(workspaceActivated:))]
         fn workspace_activated(&self, _: &NSNotification) { self.track_frontmost(); }
+        #[unsafe(method(warmPanelCache:))]
+        fn warm_panel_cache(&self, _: &NSTimer) {
+            if !self.warm_cache_step()
+                && let Some(timer) = self.ivars().cache_warmup_timer.take() { timer.invalidate(); }
+        }
         #[unsafe(method(inputSourceChanged:))]
         fn input_source_changed(&self, _: &NSNotification) {
             if !self.ivars().changing_input_source.get() {
+                self.complete_input_start();
                 self.remember_search_input();
             }
+        }
+        #[unsafe(method(finishSearchInputStart:))]
+        fn finish_input_start(&self, timer: &NSTimer) {
+            if self.ivars().input_start_timer.borrow().as_ref()
+                .is_some_and(|pending| std::ptr::eq(&**pending, timer))
+            { self.complete_input_start(); }
         }
         #[unsafe(method(showSettings:))]
         fn settings_action(&self, _: Option<&AnyObject>) {
@@ -850,16 +890,19 @@ define_class!(
             { self.end_session(); }
             self.check_shortcuts();
             self.drain_shortcut_actions();
+            self.poll_focus();
             self.poll_app_launch();
             self.poll_app_catalog();
             self.poll_projects();
             let clipboard_changed = self.ivars().clipboard.borrow_mut().as_mut().is_some_and(|clipboard| clipboard.poll_storage());
             if clipboard_changed && self.searching_clipboard() { self.filter_preserving(self.selected_result()); }
             let result = self.ivars().receiver.borrow().as_ref().map(|rx| rx.try_recv());
-            if let Some(Ok(mut windows)) = result {
+            if let Some(Ok(snapshot)) = result {
                 self.ivars().receiver.replace(None);
                 self.ivars().loading.set(false);
                 if !self.ivars().demo.get() {
+                    let WindowSnapshot { mut windows, identities } = snapshot;
+                    self.install_identities(identities);
                     if !accessibility::is_trusted() { windows.clear(); }
                     let snapshot_ready = self.ivars().switch_selection.borrow().as_ref()
                         .is_some_and(|selection| selection.selected().is_some());
@@ -875,6 +918,7 @@ define_class!(
                         self.prepare_switch_selection();
                         self.commit_switch_if_ready();
                     }
+                    self.schedule_cache_warmup();
                 }
             } else if matches!(result, Some(Err(TryRecvError::Disconnected))) {
                 self.ivars().receiver.replace(None);
@@ -1613,6 +1657,7 @@ impl Delegate {
         state.last_shortcut_check.set(Some(Instant::now()));
         if !accessibility::is_trusted() {
             state.focus_observer.replace(None);
+            state.focus_receiver.replace(None);
             if state.shortcut_tap.borrow().is_some() {
                 self.end_session();
                 state.shortcut_tap.replace(None);
@@ -2027,6 +2072,18 @@ impl Delegate {
     }
 
     fn show_mode(&self, mode: PanelMode, session: u64, direction: i8) {
+        let already_visible = self.any_panel_visible();
+        self.prepare_panel(mode, session, direction);
+        if mode == PanelMode::Switch && !already_visible {
+            self.schedule_switch_panel();
+        } else {
+            self.present_panels();
+        }
+        self.schedule_cache_warmup();
+    }
+
+    fn prepare_panel(&self, mode: PanelMode, session: u64, direction: i8) {
+        self.ivars().preparing_panel.set(true);
         self.clear_quicklink_input();
         self.ivars().search_scope.set(None);
         if let Some(timer) = self.ivars().snippet_paste_timer.take() {
@@ -2035,7 +2092,6 @@ impl Delegate {
         if let Some(form) = self.ivars().snippet_arguments.take() {
             form.window().close();
         }
-        let already_visible = self.any_panel_visible();
         self.cancel_switch_timer();
         self.finish_search_input();
         if mode == PanelMode::Search {
@@ -2057,7 +2113,13 @@ impl Delegate {
         if let Some(windows) = deferred {
             self.install_windows(windows);
         }
-        self.remember_frontmost_window();
+        if mode == PanelMode::Switch {
+            // A quick release can commit before any worker returns. Preserve
+            // bounded exact capture for apps that omit focus notifications.
+            self.remember_frontmost_window();
+        } else {
+            self.capture_panel_origin();
+        }
         self.ivars().query.borrow_mut().clear();
         self.ivars().session.set(session);
         self.ivars().mode.set(Some(mode));
@@ -2074,16 +2136,12 @@ impl Delegate {
             self.ivars().current_app_only.set(false);
         }
         self.filter_preserving(preserve);
-        self.sync_displays();
         self.prepare_switch_selection();
         if !self.ivars().demo.get() {
             self.refresh();
         }
-        if mode == PanelMode::Switch && !already_visible {
-            self.schedule_switch_panel();
-        } else {
-            self.present_panels();
-        }
+        self.ivars().preparing_panel.set(false);
+        self.sync_displays();
     }
 
     fn cancel_switch_timer(&self) -> bool {
@@ -2139,6 +2197,24 @@ impl Delegate {
                         .and_then(|index| bar.control(index))
                         .unwrap_or(&ui.input);
                     let new_editor = control.currentEditor().is_none();
+                    let first_focus = !self.ivars().input_session.borrow().focused;
+                    let source = if first_focus {
+                        self.ivars().input_target.borrow().clone()
+                    } else if new_editor {
+                        self.ivars()
+                            .input_session
+                            .borrow()
+                            .selected
+                            .as_deref()
+                            .and_then(|id| Source::by_id(id, self.mtm()))
+                    } else {
+                        None
+                    };
+                    // Select before AppKit activates the field editor's input
+                    // context, so the first key cannot start an old IME session.
+                    if let Some(source) = &source {
+                        source.select(self.mtm());
+                    }
                     if new_editor {
                         ui.panel.makeFirstResponder(Some(control));
                     }
@@ -2148,26 +2224,16 @@ impl Delegate {
                     if let Some(editor) = editor
                         && !NSTextInputClient::hasMarkedText(&*editor)
                     {
-                        let first_focus = !self.ivars().input_session.borrow().focused;
-                        let source = if first_focus {
-                            input_source::preferred(
-                                self.ivars().config.borrow().input_method,
-                                self.mtm(),
-                            )
-                        } else if new_editor {
-                            self.ivars()
-                                .input_session
-                                .borrow()
-                                .selected
-                                .as_deref()
-                                .and_then(|id| Source::by_id(id, self.mtm()))
-                        } else {
-                            None
-                        };
-                        if let Some(source) = source {
-                            source.select(self.mtm());
+                        if let Some(source) = source
+                            && let Some(id) = source.id()
+                            && let Some(context) = editor.inputContext()
+                        {
+                            context.setSelectedKeyboardInputSource(Some(&NSString::from_str(&id)));
                         }
                         self.ivars().input_session.borrow_mut().focused = true;
+                        if first_focus {
+                            self.start_input_gate_timer();
+                        }
                         self.remember_search_input();
                     }
                 }
@@ -2178,14 +2244,114 @@ impl Delegate {
             }
         }
         self.ivars().changing_input_source.set(false);
+        self.complete_input_start();
     }
 
     fn prepare_search_input(&self) {
+        self.cancel_input_start();
         let current = Source::current(self.mtm()).and_then(|source| source.id());
+        let target = input_source::preferred(self.ivars().config.borrow().input_method, self.mtm());
+        self.ivars()
+            .input_gate
+            .borrow_mut()
+            .begin(target.as_ref().and_then(Source::id));
+        self.ivars().input_target.replace(target);
         self.ivars()
             .input_session
             .borrow_mut()
             .prepare(current, self.ivars().config.borrow().input_method);
+    }
+
+    fn start_input_gate_timer(&self) {
+        let state = self.ivars();
+        if state.input_gate.borrow().target().is_none()
+            || state.input_start_timer.borrow().is_some()
+        {
+            return;
+        }
+        state
+            .input_start_deadline
+            .set(Some(Instant::now() + Duration::from_millis(250)));
+        // This timer exists only while input-source activation is pending.
+        let timer = unsafe {
+            NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
+                0.005,
+                self,
+                sel!(finishSearchInputStart:),
+                None,
+                true,
+            )
+        };
+        unsafe { NSRunLoop::mainRunLoop().addTimer_forMode(&timer, NSRunLoopCommonModes) };
+        state.input_start_timer.replace(Some(timer));
+    }
+
+    fn cancel_input_start(&self) {
+        let state = self.ivars();
+        if let Some(timer) = state.input_start_timer.take() {
+            timer.invalidate();
+        }
+        state.input_start_deadline.set(None);
+        state.input_gate.borrow_mut().begin(None);
+        state.input_target.replace(None);
+    }
+
+    fn buffer_search_key(&self, event: &NSEvent) -> bool {
+        let state = self.ivars();
+        if state.mode.get() != Some(PanelMode::Search)
+            || state.input_gate.borrow().target().is_none()
+        {
+            return false;
+        }
+        // Queue even the event which observes readiness, so it cannot overtake
+        // earlier letters, Backspace, or Return while the source was changing.
+        state.input_gate.borrow_mut().push(Retained::from(event));
+        self.start_input_gate_timer();
+        self.complete_input_start();
+        true
+    }
+
+    fn complete_input_start(&self) {
+        let state = self.ivars();
+        if state.changing_input_source.get() || state.input_gate.borrow().target().is_none() {
+            return;
+        }
+        if state.mode.get() != Some(PanelMode::Search) || !self.any_panel_key() {
+            self.cancel_input_start();
+            return;
+        }
+        let current = Source::current(self.mtm()).and_then(|source| source.id());
+        let editor_source = self
+            .panels()
+            .into_iter()
+            .find(|ui| ui.panel.isKeyWindow())
+            .and_then(|ui| ui.panel.firstResponder())
+            .and_then(|responder| responder.downcast::<NSTextView>().ok())
+            .and_then(|editor| editor.inputContext())
+            .and_then(|context| context.selectedKeyboardInputSource())
+            .map(|id| id.to_string());
+        let ready = current.as_deref().filter(|id| {
+            state.input_session.borrow().focused && Some(*id) == editor_source.as_deref()
+        });
+        let expired = state
+            .input_start_deadline
+            .get()
+            .is_some_and(|deadline| Instant::now() >= deadline);
+        let Some(events) = state.input_gate.borrow_mut().finish(ready, expired) else {
+            return;
+        };
+        self.cancel_input_start();
+        self.remember_search_input();
+        let session = state.session.get();
+        for event in events {
+            if state.mode.get() != Some(PanelMode::Search) || state.session.get() != session {
+                break;
+            }
+            let Some(ui) = self.panels().into_iter().find(|ui| ui.panel.isKeyWindow()) else {
+                break;
+            };
+            ui.panel.sendEvent(&event);
+        }
     }
 
     fn remember_search_input(&self) {
@@ -2196,6 +2362,15 @@ impl Delegate {
             return;
         }
         let current = Source::current(self.mtm()).and_then(|source| source.id());
+        if self
+            .ivars()
+            .input_gate
+            .borrow()
+            .target()
+            .is_some_and(|target| Some(target) != current.as_deref())
+        {
+            return;
+        }
         let mut session = self.ivars().input_session.borrow_mut();
         if session.observe(current)
             && let Some(id) = &session.selected
@@ -2205,11 +2380,12 @@ impl Delegate {
     }
 
     fn finish_search_input(&self) {
+        self.remember_search_input();
+        self.cancel_input_start();
         if !self.ivars().input_session.borrow().focused {
             self.ivars().input_session.borrow_mut().finish(None);
             return;
         }
-        self.remember_search_input();
         // Do not overwrite a destination app's choice after focus has already moved away.
         let current = self
             .any_panel_key()
@@ -2508,60 +2684,29 @@ impl Delegate {
             self.render();
             return;
         }
-        let apps = NSWorkspace::sharedWorkspace()
-            .runningApplications()
-            .iter()
-            .filter(|app| {
-                app.processIdentifier() != std::process::id() as i32
-                    && !app.isTerminated()
-                    && app.activationPolicy() == NSApplicationActivationPolicy::Regular
-            })
-            .map(|app| {
-                let id = app
-                    .bundleIdentifier()
-                    .map(|id| id.to_string())
-                    .or_else(|| app.bundleURL()?.path().map(|path| path.to_string()));
-                let cached = state
-                    .identities
-                    .borrow()
-                    .get(&app.processIdentifier())
-                    .is_some_and(|app| Some(app.id.as_str()) == id.as_deref());
-                if !cached {
-                    state.icons.borrow_mut().remove(&app.processIdentifier());
-                    state
-                        .identities
-                        .borrow_mut()
-                        .remove(&app.processIdentifier());
-                    if let Some(identity) = app_identity(&app) {
-                        state
-                            .identities
-                            .borrow_mut()
-                            .insert(app.processIdentifier(), identity);
-                    }
-                }
-                (
-                    app.processIdentifier(),
-                    app.localizedName()
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| "Application".into()),
-                )
-            })
-            .collect::<Vec<_>>();
-        let live: HashSet<_> = apps.iter().map(|(pid, _)| *pid).collect();
-        state
-            .identities
-            .borrow_mut()
-            .retain(|pid, _| live.contains(pid));
-        state.icons.borrow_mut().retain(|pid, _| live.contains(pid));
+        let identities = state.identities.borrow().clone();
         state.loading.set(true);
         let (tx, rx) = mpsc::channel();
         state.receiver.replace(Some(rx));
         let wake = state.wake.get().unwrap().handle();
         std::thread::spawn(move || {
-            let _ = tx.send(accessibility::list_windows(&apps));
+            let snapshot = objc2::rc::autoreleasepool(|_| read_window_snapshot(identities));
+            let _ = tx.send(snapshot);
             wake.signal();
         });
         self.render();
+    }
+
+    fn install_identities(&self, identities: HashMap<i32, AppIdentity>) {
+        let state = self.ivars();
+        let previous = state.identities.borrow();
+        state.icons.borrow_mut().retain(|pid, _| {
+            identities
+                .get(pid)
+                .is_some_and(|app| previous.get(pid).is_some_and(|old| old.id == app.id))
+        });
+        drop(previous);
+        state.identities.replace(identities);
     }
 
     fn install_windows(&self, windows: Vec<WindowInfo>) {
@@ -3031,7 +3176,7 @@ impl Delegate {
     }
 
     fn render(&self) {
-        if self.ivars().mode.get().is_none() {
+        if self.ivars().mode.get().is_none() || self.ivars().preparing_panel.get() {
             return;
         }
         self.ivars().syncing_controls.set(true);
@@ -3042,6 +3187,10 @@ impl Delegate {
     }
 
     fn render_panel(&self, ui: &PanelUi) {
+        #[cfg(test)]
+        self.ivars()
+            .render_passes
+            .set(self.ivars().render_passes.get() + 1);
         let opacity = f64::from(self.ivars().config.borrow().background_opacity) / 100.0;
         if ui.backdrop.alphaValue() != opacity {
             ui.backdrop.setAlphaValue(opacity);
@@ -3603,7 +3752,7 @@ impl Delegate {
                         set_label(&row.title, &title);
                         set_label(&row.app, &item.app);
                         set_label(&row.alias, alias.as_deref().unwrap_or(""));
-                        row.icon.setImage(self.icon(item.pid).as_deref());
+                        row.icon.setImage(self.cached_icon(item.pid).as_deref());
                         tooltip
                     }
                     RowContent::Application(app) => {
@@ -3829,6 +3978,93 @@ impl Delegate {
         }
     }
 
+    fn schedule_cache_warmup(&self) {
+        let state = self.ivars();
+        if state.demo.get()
+            || state.cache_warmup_timer.borrow().is_some()
+            || state.windows.borrow().is_empty()
+            || state.panels.borrow().is_empty()
+        {
+            return;
+        }
+        // One icon or row per turn keeps preparation out of shortcut handling.
+        let timer = unsafe {
+            NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
+                0.01,
+                self,
+                sel!(warmPanelCache:),
+                None,
+                true,
+            )
+        };
+        unsafe { NSRunLoop::mainRunLoop().addTimer_forMode(&timer, NSRunLoopCommonModes) };
+        state.cache_warmup_timer.replace(Some(timer));
+    }
+
+    fn warm_cache_step(&self) -> bool {
+        let state = self.ivars();
+        let missing_icon = state
+            .windows
+            .borrow()
+            .iter()
+            .find(|window| !state.icons.borrow().contains_key(&window.pid))
+            .map(|window| window.pid);
+        if let Some(pid) = missing_icon {
+            let image = self.icon(pid);
+            for ui in self.panels() {
+                for row in ui.rows.borrow().iter() {
+                    if matches!(&row.content, Some(RowContent::Window(window, _)) if window.pid == pid)
+                    {
+                        row.icon.setImage(image.as_deref());
+                    }
+                }
+            }
+            return true;
+        }
+        if state.mode.get().is_none() {
+            let density = state.config.borrow().display_density;
+            for ui in self.panels() {
+                let height = ui
+                    .panel
+                    .screen()
+                    .map_or(HEIGHT, |screen| screen.visibleFrame().size.height);
+                let count = state
+                    .windows
+                    .borrow()
+                    .len()
+                    .min((height / row_height(density)).ceil() as usize);
+                let mut rows = ui.rows.borrow_mut();
+                if rows.len() < count {
+                    let position = rows.len();
+                    rows.push(self.create_row(position, density));
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn cached_icon(&self, pid: i32) -> Option<Retained<NSImage>> {
+        self.ivars()
+            .icons
+            .borrow()
+            .get(&pid)
+            .cloned()
+            .unwrap_or_else(|| self.placeholder_icon())
+    }
+
+    fn placeholder_icon(&self) -> Option<Retained<NSImage>> {
+        self.ivars()
+            .placeholder_icon
+            .get_or_init(|| {
+                NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                    ns_string!("macwindow"),
+                    Some(&NSString::from_str(tr!("窗口", "Window"))),
+                )
+            })
+            .clone()
+    }
+
     fn icon(&self, pid: i32) -> Option<Retained<NSImage>> {
         self.ivars()
             .icons
@@ -3837,12 +4073,7 @@ impl Delegate {
             .or_insert_with(|| {
                 NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
                     .and_then(|app| app.icon())
-                    .or_else(|| {
-                        NSImage::imageWithSystemSymbolName_accessibilityDescription(
-                            ns_string!("macwindow"),
-                            Some(&NSString::from_str(tr!("窗口", "Window"))),
-                        )
-                    })
+                    .or_else(|| self.placeholder_icon())
             })
             .clone()
     }
@@ -3886,7 +4117,7 @@ impl Delegate {
         {
             return;
         }
-        self.remember_application(pid);
+        self.request_focus(pid, None);
         if self
             .ivars()
             .focus_observer
@@ -3897,17 +4128,92 @@ impl Delegate {
             return;
         }
         let weak = Weak::new(self);
-        let observer = crate::focus_observer::FocusObserver::new(pid, self.mtm(), move |id| {
+        let observer = crate::focus_observer::FocusObserver::new(pid, self.mtm(), move || {
             if let Some(delegate) = weak.load()
                 && !delegate.ivars().demo.get()
                 && NSWorkspace::sharedWorkspace()
                     .frontmostApplication()
                     .is_some_and(|app| app.processIdentifier() == pid)
             {
-                delegate.remember_window(id);
+                delegate.request_focus(pid, None);
             }
         });
         self.ivars().focus_observer.replace(observer);
+    }
+
+    fn capture_panel_origin(&self) {
+        if self.ivars().demo.get() || self.any_panel_key() {
+            return;
+        }
+        if let Some(front) = NSWorkspace::sharedWorkspace().frontmostApplication()
+            && front.processIdentifier() != std::process::id() as i32
+        {
+            let pid = front.processIdentifier();
+            let window = self.cached_application_window(pid);
+            self.ivars().previous_pid.set(pid);
+            self.ivars().previous_window.set(window);
+            self.request_focus(pid, window);
+        }
+    }
+
+    fn request_focus(&self, pid: i32, provisional: Option<u64>) {
+        let state = self.ivars();
+        // Preserve the history before a provisional cached window was moved
+        // forward. A later exact result must not invent a visit to its sibling.
+        let recency = state
+            .focus_receiver
+            .borrow()
+            .as_ref()
+            .filter(|pending| pending.pid == pid && pending.revision == state.focus_revision.get())
+            .map_or_else(
+                || state.recency.borrow().clone(),
+                |pending| pending.recency.clone(),
+            );
+        if let Some(id) = provisional {
+            self.remember_window(id);
+        }
+        let (tx, rx) = mpsc::channel();
+        state.focus_pid.set(pid);
+        state.focus_receiver.replace(Some(PendingFocus {
+            receiver: rx,
+            pid,
+            revision: state.focus_revision.get(),
+            recency,
+        }));
+        let wake = state.wake.get().unwrap().handle();
+        std::thread::spawn(move || {
+            let _ = tx.send(accessibility::focused_window(pid));
+            wake.signal();
+        });
+    }
+
+    fn poll_focus(&self) {
+        let state = self.ivars();
+        let result = state
+            .focus_receiver
+            .borrow()
+            .as_ref()
+            .map(|pending| (pending.receiver.try_recv(), pending.pid, pending.revision));
+        let (result, pid, revision) = match result {
+            None | Some((Err(TryRecvError::Empty), _, _)) => return,
+            Some(result) => result,
+        };
+        let pending = state.focus_receiver.take().unwrap();
+        if revision != state.focus_revision.get() || pid != state.focus_pid.get() {
+            return;
+        }
+        if let Ok(Some(id)) = result {
+            state.recency.replace(pending.recency);
+            self.remember_window(id);
+            if state.previous_pid.get() == pid {
+                state.previous_window.set(Some(id));
+            }
+            // A held switch gesture owns its snapshot. Search can update the
+            // order, but must keep the same selected result as data arrives.
+            if state.mode.get() == Some(PanelMode::Search) && !self.scoped_search() {
+                self.filter_preserving(self.selected_result());
+            }
+        }
     }
 
     fn remember_frontmost_window(&self) {
@@ -3926,28 +4232,34 @@ impl Delegate {
     }
 
     fn remember_application(&self, pid: i32) -> Option<u64> {
-        let id = accessibility::focused_window(pid).or_else(|| {
-            let windows = self.ivars().windows.borrow();
-            let recent = self.ivars().recency.borrow();
-            windows
-                .iter()
-                .filter(|window| window.pid == pid)
-                .min_by_key(|window| {
-                    (
-                        window.minimized,
-                        recent
-                            .iter()
-                            .position(|id| *id == window.id)
-                            .unwrap_or(usize::MAX),
-                    )
-                })
-                .map(|window| window.id)
-        })?;
+        let id =
+            accessibility::focused_window(pid).or_else(|| self.cached_application_window(pid))?;
         self.remember_window(id);
         Some(id)
     }
 
+    fn cached_application_window(&self, pid: i32) -> Option<u64> {
+        let windows = self.ivars().windows.borrow();
+        let recent = self.ivars().recency.borrow();
+        windows
+            .iter()
+            .filter(|window| window.pid == pid)
+            .min_by_key(|window| {
+                (
+                    window.minimized,
+                    recent
+                        .iter()
+                        .position(|id| *id == window.id)
+                        .unwrap_or(usize::MAX),
+                )
+            })
+            .map(|window| window.id)
+    }
+
     fn remember_window(&self, id: u64) {
+        self.ivars()
+            .focus_revision
+            .set(self.ivars().focus_revision.get().wrapping_add(1));
         let mut recent = self.ivars().recency.borrow_mut();
         recent.retain(|previous| *previous != id);
         recent.insert(0, id);
@@ -4749,6 +5061,46 @@ fn display_rect(frame: NSRect) -> Rect {
         y: frame.origin.y,
         width: frame.size.width,
         height: frame.size.height,
+    }
+}
+
+fn read_window_snapshot(cached: HashMap<i32, AppIdentity>) -> WindowSnapshot {
+    let mut identities = HashMap::new();
+    // runningApplications is thread-safe. Keep bundle metadata and AX reads
+    // together in the worker; only plain Rust data crosses back to AppKit.
+    let apps = NSWorkspace::sharedWorkspace()
+        .runningApplications()
+        .iter()
+        .filter(|app| {
+            app.processIdentifier() != std::process::id() as i32
+                && !app.isTerminated()
+                && app.activationPolicy() == NSApplicationActivationPolicy::Regular
+        })
+        .map(|app| {
+            let pid = app.processIdentifier();
+            let id = app
+                .bundleIdentifier()
+                .map(|id| id.to_string())
+                .or_else(|| app.bundleURL()?.path().map(|path| path.to_string()));
+            let identity = cached
+                .get(&pid)
+                .filter(|app| Some(app.id.as_str()) == id.as_deref())
+                .cloned()
+                .or_else(|| app_identity(&app));
+            if let Some(identity) = identity {
+                identities.insert(pid, identity);
+            }
+            (
+                pid,
+                app.localizedName()
+                    .map(|name| name.to_string())
+                    .unwrap_or_else(|| "Application".into()),
+            )
+        })
+        .collect::<Vec<_>>();
+    WindowSnapshot {
+        windows: accessibility::list_windows(&apps),
+        identities,
     }
 }
 

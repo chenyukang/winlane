@@ -84,6 +84,17 @@ fn verify_project_rule_search(mtm: MainThreadMarker) {
     assert_eq!(*state.aliases.borrow(), *state.automatic_aliases.borrow());
 }
 
+fn scheduled_switch(delegate: &Delegate, delay: f64) -> Retained<NSTimer> {
+    let before = objc2_foundation::NSDate::timeIntervalSinceReferenceDate_class();
+    delegate.schedule_switch_panel();
+    let after = objc2_foundation::NSDate::timeIntervalSinceReferenceDate_class();
+    let timer = delegate.ivars().switch_timer.borrow().as_ref().unwrap().clone();
+    // A non-repeating NSTimer reports a zero interval; verify its deadline.
+    assert!((before + delay - 0.001..=after + delay + 0.001)
+        .contains(&timer.fireDate().timeIntervalSinceReferenceDate()));
+    timer
+}
+
 fn verify_switch_delay(mtm: MainThreadMarker) {
     let delegate = Delegate::new(mtm);
     let state = delegate.ivars();
@@ -91,8 +102,7 @@ fn verify_switch_delay(mtm: MainThreadMarker) {
     state
         .switch_selection
         .replace(Some(SwitchSelection::new(1)));
-    delegate.schedule_switch_panel();
-    let first = state.switch_timer.borrow().as_ref().unwrap().clone();
+    let first = scheduled_switch(&delegate, 0.1);
     assert!(first.isValid());
     assert!(!delegate.any_panel_visible());
     state
@@ -112,11 +122,11 @@ fn verify_switch_delay(mtm: MainThreadMarker) {
     assert!(state.switch_timer.borrow().is_none());
 
     state.mode.set(Some(PanelMode::Switch));
+    state.config.borrow_mut().switch_delay_ms = 750;
     state
         .switch_selection
         .replace(Some(SwitchSelection::new(1)));
-    delegate.schedule_switch_panel();
-    let held = state.switch_timer.borrow().as_ref().unwrap().clone();
+    let held = scheduled_switch(&delegate, 0.75);
     unsafe {
         let _: () = msg_send![&*delegate, presentSwitch: &*first];
     }
@@ -190,7 +200,7 @@ fn verify_external_focus_history(mtm: MainThreadMarker) {
     delegate.filter();
     delegate.prepare_switch_selection();
     assert_eq!(delegate.selected_window().unwrap().id, 3);
-    assert!(crate::focus_observer::FocusObserver::new(-1, mtm, |_| {}).is_none());
+    assert!(crate::focus_observer::FocusObserver::new(-1, mtm, || {}).is_none());
 }
 
 fn verify_shortcut_recency(mtm: MainThreadMarker) {

@@ -25,8 +25,7 @@ unsafe extern "C" {
 }
 
 struct Context {
-    pid: i32,
-    callback: Box<dyn Fn(u64)>,
+    callback: Box<dyn Fn()>,
 }
 
 pub struct FocusObserver {
@@ -38,7 +37,7 @@ pub struct FocusObserver {
 }
 
 impl FocusObserver {
-    pub fn new(pid: i32, mtm: MainThreadMarker, callback: impl Fn(u64) + 'static) -> Option<Self> {
+    pub fn new(pid: i32, mtm: MainThreadMarker, callback: impl Fn() + 'static) -> Option<Self> {
         if pid <= 0 || !crate::accessibility::is_trusted() {
             return None;
         }
@@ -54,7 +53,6 @@ impl FocusObserver {
         }
         let application = unsafe { CFType::wrap_under_create_rule(application) };
         let mut context = Box::new(Context {
-            pid,
             callback: Box::new(callback),
         });
         let notification = CFString::new("AXFocusedWindowChanged");
@@ -97,9 +95,5 @@ extern "C" fn changed(_: CFTypeRef, _: CFTypeRef, _: CFStringRef, context: *mut 
     // SAFETY: Only the main run loop dispatches this source; the owner removes
     // it before dropping the boxed context or observer.
     let context = unsafe { &*context.cast::<Context>() };
-    objc2::rc::autoreleasepool(|_| {
-        if let Some(id) = crate::accessibility::focused_window(context.pid) {
-            (context.callback)(id);
-        }
-    });
+    objc2::rc::autoreleasepool(|_| (context.callback)());
 }

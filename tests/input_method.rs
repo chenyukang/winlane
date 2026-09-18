@@ -1,5 +1,5 @@
 use winlane::config::Config;
-use winlane::input_method::{InputMethod, InputSession};
+use winlane::input_method::{InputGate, InputMethod, InputSession};
 
 #[test]
 fn missing_input_policy_defaults_to_english_and_saved_choices_survive_restart() {
@@ -71,4 +71,66 @@ fn reentering_search_starts_a_new_policy_session_and_unavailable_sources_are_unc
     session.prepare(Some("English".into()), InputMethod::Chinese);
     assert!(!session.focused);
     assert!(session.selected.is_none());
+}
+
+#[test]
+fn early_typing_waits_for_the_target_source_and_keeps_editing_order() {
+    let mut gate = InputGate::default();
+    gate.begin(Some("English".into()));
+    for key in ["r", "u", "Backspace", "s", "Return"] {
+        gate.push(key);
+    }
+    assert_eq!(gate.finish(Some("Chinese"), false), None);
+    assert_eq!(gate.finish(None, false), None);
+    assert_eq!(
+        gate.finish(Some("English"), false),
+        Some(vec!["r", "u", "Backspace", "s", "Return"])
+    );
+    assert!(gate.target().is_none());
+    assert_eq!(
+        gate.finish(Some("English"), false),
+        Some(vec![]),
+        "notifications must not replay twice"
+    );
+    assert_eq!(
+        gate.finish(Some("Chinese"), false),
+        Some(vec![]),
+        "manual changes after startup remain allowed"
+    );
+}
+
+#[test]
+fn cancelled_input_never_leaks_into_a_new_search() {
+    let mut gate = InputGate::default();
+    gate.begin(Some("English".into()));
+    gate.push("old search");
+    gate.begin(None); // Escape or focus loss cancels the queued keys.
+    assert_eq!(gate.finish(Some("English"), false), Some(vec![]));
+    gate.begin(Some("Chinese".into()));
+    gate.push("new search");
+    assert_eq!(gate.finish(Some("English"), false), None);
+    assert_eq!(
+        gate.finish(Some("Chinese"), false),
+        Some(vec!["new search"])
+    );
+}
+
+#[test]
+fn already_selected_and_follow_current_sources_do_not_wait() {
+    let mut gate: InputGate<char> = InputGate::default();
+    gate.begin(Some("English".into()));
+    assert_eq!(gate.finish(Some("English"), false), Some(vec![]));
+    gate.begin(None); // Current policy, or no available source for the policy.
+    assert_eq!(gate.finish(Some("Chinese"), false), Some(vec![]));
+}
+
+#[test]
+fn failed_source_selection_has_a_bounded_wait_without_losing_keys() {
+    let mut gate = InputGate::default();
+    gate.begin(Some("Unavailable".into()));
+    gate.push("kept");
+    assert_eq!(gate.finish(Some("English"), false), None);
+    assert_eq!(gate.finish(Some("English"), true), Some(vec!["kept"]));
+    assert!(gate.target().is_none());
+    assert_eq!(gate.finish(Some("Unavailable"), false), Some(vec![]));
 }

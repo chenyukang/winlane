@@ -166,6 +166,7 @@ mod app {
     include!("support/quicklink_search.rs");
     include!("support/projects.rs");
     include!("support/clipboard.rs");
+    include!("support/responsiveness.rs");
 
     pub fn inspect_window_discovery(bundle: &str) {
         assert!(
@@ -257,6 +258,9 @@ mod app {
         let start = Instant::now();
         objc2::rc::autoreleasepool(|_| delegate.filter());
         let first_list_ms = start.elapsed().as_secs_f64() * 1000.0;
+        let start = Instant::now();
+        while delegate.warm_cache_step() {}
+        let deferred_icons_ms = start.elapsed().as_secs_f64() * 1000.0;
         let before = memory_sample();
         let mut selection = Vec::new();
         for _ in 0..120 {
@@ -279,6 +283,14 @@ mod app {
         }
         selection.sort_by(f64::total_cmp);
         search.sort_by(f64::total_cmp);
+        let mut prepare_search = Vec::new();
+        for session in 0..30 {
+            delegate.end_session();
+            let start = Instant::now();
+            objc2::rc::autoreleasepool(|_| delegate.prepare_panel(PanelMode::Search, session, 0));
+            prepare_search.push(start.elapsed().as_secs_f64() * 1000.0);
+        }
+        prepare_search.sort_by(f64::total_cmp);
         let after = memory_sample();
         assert!(delegate.panels().iter().all(|ui| !ui.panel.isVisible()));
         println!(
@@ -286,6 +298,9 @@ mod app {
             serde_json::json!({
                 "windows":count, "displays":delegate.panels().len(),
                 "panel_init_ms":panel_init_ms, "first_list_ms":first_list_ms,
+                "deferred_icons_ms":deferred_icons_ms,
+                "prepare_search_median_ms":prepare_search[prepare_search.len()/2],
+                "prepare_search_p95_ms":prepare_search[prepare_search.len()*95/100],
                 "selection_median_ms":selection[selection.len()/2],
                 "selection_p95_ms":selection[selection.len()*95/100],
                 "search_median_ms":search[search.len()/2],
@@ -358,6 +373,9 @@ mod app {
         verify_shortcut_recency(mtm);
         verify_external_focus_history(mtm);
         verify_switch_delay(mtm);
+        verify_responsive_panels(mtm);
+        verify_async_focus_order(mtm);
+        verify_async_window_snapshot(mtm);
         verify_project_rule_search(mtm);
         verify_adaptive_panels(mtm);
         verify_display_density(mtm);
@@ -376,12 +394,27 @@ mod app {
         ] {
             delegate.ivars().config.borrow_mut().input_method = policy;
             delegate.prepare_search_input();
+            delegate.start_input_gate_timer();
+            let pending = delegate.ivars().input_start_timer.borrow().clone();
             delegate.focus_search();
             assert!(
                 !delegate.ivars().input_session.borrow().focused,
                 "hidden panels must never change or remember input sources"
             );
+            assert!(delegate.ivars().input_gate.borrow().target().is_none());
+            assert!(delegate.ivars().input_start_timer.borrow().is_none());
+            assert!(pending.as_ref().is_none_or(|timer| !timer.isValid()));
+            delegate.prepare_search_input();
+            delegate.start_input_gate_timer();
+            let next = delegate.ivars().input_start_timer.borrow().clone();
+            if let Some(stale) = pending {
+                delegate.finish_input_start(sel!(finishSearchInputStart:), &stale);
+                assert!(next.as_ref().is_none_or(|timer| timer.isValid()));
+            }
             delegate.finish_search_input();
+            assert!(delegate.ivars().input_gate.borrow().target().is_none());
+            assert!(delegate.ivars().input_start_timer.borrow().is_none());
+            assert!(next.as_ref().is_none_or(|timer| !timer.isValid()));
         }
         delegate.ivars().config.borrow_mut().input_method =
             winlane::input_method::InputMethod::Current;

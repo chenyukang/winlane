@@ -45,3 +45,41 @@ impl InputSession {
         previous
     }
 }
+
+/// Holds early key events until the requested input source is acknowledged.
+pub struct InputGate<T> {
+    target: Option<String>,
+    events: Vec<T>,
+}
+
+impl<T> Default for InputGate<T> {
+    fn default() -> Self {
+        Self {
+            target: None,
+            events: Vec::new(),
+        }
+    }
+}
+
+impl<T> InputGate<T> {
+    pub fn begin(&mut self, target: Option<String>) {
+        self.target = target;
+        self.events.clear();
+    }
+
+    pub fn target(&self) -> Option<&str> {
+        self.target.as_deref()
+    }
+
+    pub fn push(&mut self, event: T) {
+        self.events.push(event);
+    }
+
+    pub fn finish(&mut self, current: Option<&str>, expired: bool) -> Option<Vec<T>> {
+        if !expired && self.target.is_some() && self.target.as_deref() != current {
+            return None;
+        }
+        self.target = None;
+        Some(std::mem::take(&mut self.events))
+    }
+}

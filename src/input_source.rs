@@ -17,6 +17,7 @@ unsafe extern "C" {
     static kTISPropertyInputSourceIsSelectCapable: CFStringRef;
 }
 
+#[derive(Clone)]
 pub struct Source(CFType);
 
 impl Source {
