@@ -343,9 +343,17 @@ pub fn verify_autosave_controls(settings: &SettingsWindow, saved: impl Fn() -> C
     );
 }
 
+fn preference_window_ids(mtm: MainThreadMarker) -> std::collections::BTreeSet<usize> {
+    // NSApplication also includes AppKit's private, offscreen windows.
+    NSApplication::sharedApplication(mtm).windows().iter()
+        .filter(|window| window.downcast_ref::<PreferencesWindow>().is_some())
+        .map(|window| Retained::as_ptr(&window) as usize)
+        .collect()
+}
+
 fn verify_multiple_search_controls(settings: &SettingsWindow) {
     use objc2::AnyThread;
-    let before = NSApplication::sharedApplication(settings.window.mtm()).windows().len();
+    let before = preference_window_ids(settings.window.mtm());
     let mut config = Config {
         shortcut: Shortcut { control: false, command: true, key: "Space".into(), ..Shortcut::default() },
         additional_search_shortcuts: vec![Shortcut::default()],
@@ -366,7 +374,7 @@ fn verify_multiple_search_controls(settings: &SettingsWindow) {
     assert!(settings.candidate().and_then(|candidate| save(&candidate, &store)).is_err());
     assert_eq!(saved(), config, "unfinished rows must not replace saved bindings");
     assert!(!settings.window.isVisible());
-    assert_eq!(NSApplication::sharedApplication(settings.window.mtm()).windows().len(), before);
+    assert_eq!(preference_window_ids(settings.window.mtm()), before);
     settings.search_rows.borrow()[1].shortcut.fill(&config.shortcut);
     assert!(settings.candidate().and_then(|candidate| save(&candidate, &store)).is_err());
     assert_eq!(saved(), config, "duplicate draft must leave existing shortcuts active");
@@ -426,10 +434,24 @@ fn verify_settings_bounds(parent: &NSView) {
 }
 
 pub fn verify_sidebar_actions(settings: &SettingsWindow, saved: impl Fn() -> Config) {
-    let windows = NSApplication::sharedApplication(settings.window.mtm()).windows().len();
+    let windows = preference_window_ids(settings.window.mtm());
+    assert!(windows.contains(&(Retained::as_ptr(&settings.window) as usize)));
+    // Text input can lazily create an AppKit panel on some macOS versions.
+    // Keep an unrelated hidden panel alive to exercise that case on every runner.
+    let auxiliary = NSPanel::initWithContentRect_styleMask_backing_defer(
+        NSPanel::alloc(settings.window.mtm()),
+        rect(0.0, 0.0, 40.0, 40.0),
+        NSWindowStyleMask::Borderless,
+        NSBackingStoreType::Buffered,
+        false,
+    );
+    // SAFETY: The retained test owner releases the panel after closing it.
+    unsafe { auxiliary.setReleasedWhenClosed(false); }
     for button in &settings.navigation {
         unsafe { assert!(button.sendAction_to(button.action(), button.target().as_deref())); }
         assert_eq!(settings.selected_tab(), button.tag());
+        assert_eq!(settings.tabs.window().as_ref(), Some(&settings.window));
+        assert_eq!(preference_window_ids(settings.window.mtm()), windows, "switching sections must reuse the existing preferences windows");
     }
     settings.select_tab(3);
     unsafe { settings.excluded.selectText(None) };
@@ -439,6 +461,8 @@ pub fn verify_sidebar_actions(settings: &SettingsWindow, saved: impl Fn() -> Con
     unsafe { assert!(button.sendAction_to(button.action(), button.target().as_deref())); }
     assert_eq!(settings.selected_tab(), 4);
     assert_eq!(saved().excluded_apps, ["Example Browser"], "leaving a section must save its active text edit");
-    assert_eq!(NSApplication::sharedApplication(settings.window.mtm()).windows().len(), windows);
+    assert_eq!(preference_window_ids(settings.window.mtm()), windows);
     assert!(!settings.window.isVisible());
+    assert!(!auxiliary.isVisible());
+    auxiliary.close();
 }
