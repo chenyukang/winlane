@@ -293,7 +293,17 @@ pub fn verify_autosave_controls(settings: &SettingsWindow, saved: impl Fn() -> C
     settings.opacity_input.setStringValue(ns_string!("18"));
     send(&settings.opacity_input);
     assert_eq!(saved().background_opacity, 18);
+    let search = Shortcut {
+        control: false,
+        option: false,
+        shift: false,
+        command: true,
+        key: "Space".into(),
+    };
     let valid = saved();
+    settings.search_shortcut.fill(&search);
+    assert_eq!(settings.candidate().unwrap().shortcut, search, "Command + Space must be accepted from the native controls");
+    settings.fill(&valid);
     settings.search_shortcut.fill(&valid.switch_shortcut);
     settings.search_shortcut.notify_changed();
     assert_eq!(

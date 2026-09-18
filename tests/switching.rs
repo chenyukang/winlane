@@ -406,3 +406,81 @@ fn search_cannot_occupy_the_switch_reverse_shortcut() {
     };
     assert!(config.validate().is_err());
 }
+
+#[test]
+fn command_space_search_saves_and_routes_without_switching_modes() {
+    let config = Config {
+        shortcut: Shortcut {
+            control: false,
+            option: false,
+            shift: false,
+            command: true,
+            key: "Space".into(),
+        },
+        ..Config::default()
+    };
+    let saved = config
+        .to_json()
+        .expect("Command + Space must be accepted for search");
+    assert_eq!(Config::from_json(&saved).unwrap(), config);
+    let mut router = ShortcutRouter::new(
+        config.shortcut.binding().unwrap(),
+        config.switch_shortcut.binding().unwrap(),
+    );
+    assert_eq!(
+        action(&mut router, KEY_DOWN, SPACE, COMMAND).kind,
+        ActionKind::Search
+    );
+    assert_eq!(router.handle(KEY_DOWN, SPACE, COMMAND, true), (true, None));
+    assert_eq!(router.handle(KEY_UP, SPACE, COMMAND, false), (true, None));
+    assert_eq!(router.handle(FLAGS_CHANGED, 0, 0, false), (false, None));
+    assert_eq!(
+        router.handle(KEY_DOWN, SPACE, 0, false),
+        (false, None),
+        "plain Space still belongs to the search field"
+    );
+    assert_eq!(
+        action(&mut router, KEY_DOWN, SPACE, COMMAND).kind,
+        ActionKind::Cancel
+    );
+    router.handle(KEY_UP, SPACE, COMMAND, false);
+    assert!(matches!(
+        action(&mut router, KEY_DOWN, TAB, COMMAND).kind,
+        ActionKind::Switch { .. }
+    ));
+    assert_eq!(
+        action(&mut router, KEY_DOWN, SPACE, COMMAND).kind,
+        ActionKind::Search
+    );
+    assert_eq!(
+        router.handle(FLAGS_CHANGED, 0, 0, false),
+        (false, None),
+        "entering search must cancel release-to-switch"
+    );
+
+    let invalid_switch = Config {
+        switch_shortcut: config.shortcut.clone(),
+        shortcut: Shortcut::default(),
+        ..config.clone()
+    };
+    assert!(
+        invalid_switch.validate().is_err(),
+        "Space remains reserved for mode changes in the switcher"
+    );
+    let conflicting_app = winlane::config::AppShortcut {
+        application: winlane::config::ApplicationTarget {
+            name: "Example".into(),
+            bundle_id: "com.example.app".into(),
+            path: "/Applications/Example.app".into(),
+        },
+        shortcut: config.shortcut.clone(),
+    };
+    let conflict = Config {
+        app_shortcuts: vec![conflicting_app],
+        ..config
+    };
+    assert!(
+        conflict.validate().is_err(),
+        "app shortcuts cannot reuse the search binding"
+    );
+}

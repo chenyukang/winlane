@@ -188,12 +188,13 @@ impl Shortcut {
     }
 
     pub fn hotkey(&self) -> Result<HotKey, String> {
-        let command_window_key =
-            self.command && !self.shift && matches!(self.key.as_str(), "Tab" | "Backquote");
-        if !self.control && !self.option && !command_window_key {
+        let command_panel_key = self.command
+            && !self.shift
+            && matches!(self.key.as_str(), "Space" | "Tab" | "Backquote");
+        if !self.control && !self.option && !command_panel_key {
             return Err(tr!(
-                "请选择 Command + Tab、Command + `，或包含 Control / Option 的组合。",
-                "Choose Command + Tab, Command + `, or a shortcut with Control / Option."
+                "请选择 Command + Space、Command + Tab、Command + `，或包含 Control / Option 的组合。",
+                "Choose Command + Space, Command + Tab, Command + `, or a shortcut with Control / Option."
             )
             .into());
         }
