@@ -9,6 +9,10 @@ mod app;
 #[cfg(target_os = "macos")]
 mod app_shortcuts;
 #[cfg(target_os = "macos")]
+mod clipboard_runtime;
+#[cfg(target_os = "macos")]
+mod clipboard_settings;
+#[cfg(target_os = "macos")]
 mod focus_observer;
 #[cfg(target_os = "macos")]
 mod input_source;

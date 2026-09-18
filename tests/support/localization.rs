@@ -12,6 +12,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
                 "Startup & Updates",
                 "Aliases",
                 "Snippets",
+                "Clipboard",
             ],
         ),
         (
@@ -25,6 +26,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
                 "启动与更新",
                 "Alias 规则",
                 "文本片段",
+                "剪贴板",
             ],
         ),
     ] {
@@ -115,6 +117,16 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
                 );
             }
         }
+        let mut config = Config::default();
+        config.clipboard.enabled = false;
+        config.clipboard.persistent = false;
+        config.clipboard.max_items = 500;
+        config.clipboard.retention_days = 30;
+        settings.fill(&config);
+        assert_eq!(settings.candidate().unwrap(), config);
+        config.clipboard.max_items = 0;
+        settings.fill(&config);
+        assert!(settings.candidate().is_err());
         for (index, language) in [Language::System, Language::Chinese, Language::English]
             .into_iter()
             .enumerate()
@@ -220,7 +232,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
         crate::app_shortcuts::verify_hidden_settings(target, mtm);
     }
     println!(
-        "English and Chinese settings: seven tabs, input and language choices, layout bounds, configuration round trips passed."
+        "English and Chinese settings: eight tabs, input and language choices, layout bounds, configuration round trips passed."
     );
 }
 

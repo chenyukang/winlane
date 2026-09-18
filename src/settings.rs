@@ -221,6 +221,7 @@ pub struct SettingsWindow {
     switch_shortcut: ShortcutControls,
     tabs: Retained<NSTabView>,
     snippets_tab: Retained<NSView>,
+    clipboard: crate::clipboard_settings::ClipboardControls,
     language: Retained<NSPopUpButton>,
     input_method: Retained<NSPopUpButton>,
     sort: Retained<NSPopUpButton>,
@@ -246,9 +247,9 @@ pub struct SettingsWindow {
 
 impl SettingsWindow {
     pub fn new(target: &AnyObject, mtm: MainThreadMarker) -> Self {
-        let window = preferences_window(rect(0.0, 0.0, 720.0, 620.0), mtm);
+        let window = preferences_window(rect(0.0, 0.0, 800.0, 620.0), mtm);
         window.setTitle(&NSString::from_str(tr!("Winlane 设置", "Winlane Settings")));
-        let view = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 720.0, 620.0));
+        let view = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 800.0, 620.0));
         window.setContentView(Some(&view));
         view.addSubview(&label(
             tr!("Winlane 设置", "Winlane Settings"),
@@ -264,7 +265,7 @@ impl SettingsWindow {
             rect(28.0, 530.0, 660.0, 25.0),
             mtm,
         ));
-        let tabs = NSTabView::initWithFrame(NSTabView::alloc(mtm), rect(20.0, 112.0, 680.0, 404.0));
+        let tabs = NSTabView::initWithFrame(NSTabView::alloc(mtm), rect(20.0, 112.0, 760.0, 404.0));
         tabs.setTabViewType(NSTabViewType::TopTabsBezelBorder);
         tabs.setAutoresizingMask(NSAutoresizingMaskOptions::ViewHeightSizable);
         for child in view.subviews() {
@@ -278,6 +279,9 @@ impl SettingsWindow {
         let startup = settings_tab(&tabs, tr!("启动与更新", "Startup & Updates"), mtm);
         let aliases = settings_tab(&tabs, tr!("Alias 规则", "Aliases"), mtm);
         let snippets_tab = settings_tab(&tabs, tr!("文本片段", "Snippets"), mtm);
+        let clipboard_tab = settings_tab(&tabs, tr!("剪贴板", "Clipboard"), mtm);
+        let clipboard =
+            crate::clipboard_settings::ClipboardControls::new(&clipboard_tab, target, mtm);
         aliases.addSubview(&label(
             tr!(
                 "固定应用与项目的字母",
@@ -684,6 +688,7 @@ impl SettingsWindow {
             window,
             tabs,
             snippets_tab,
+            clipboard,
             language,
             input_method,
             search_shortcut,
@@ -712,6 +717,7 @@ impl SettingsWindow {
 
     pub fn fill(&self, config: &Config) {
         self.set_snippets(&config.snippets);
+        self.fill_clipboard(&config.clipboard);
         self.input_method
             .selectItemAtIndex(match config.input_method {
                 InputMethod::Current => 0,
@@ -768,6 +774,7 @@ impl SettingsWindow {
             app_shortcuts: self.app_shortcuts.borrow().clone(),
             alias_rules: self.alias_rules.borrow().clone(),
             snippets: self.snippets.borrow().clone(),
+            clipboard: self.clipboard.read()?,
             sort: match self.sort.indexOfSelectedItem() {
                 1 => SortOrder::Application,
                 2 => SortOrder::Title,
@@ -812,6 +819,10 @@ impl SettingsWindow {
         };
         config.validate()?;
         Ok(config)
+    }
+
+    pub fn fill_clipboard(&self, settings: &winlane::clipboard::ClipboardSettings) {
+        self.clipboard.fill(settings);
     }
 
     pub fn selected_tab(&self) -> isize {
@@ -879,7 +890,7 @@ impl SettingsWindow {
         }
         self.window.makeFirstResponder(None);
         let old_frame = self.window.frame();
-        self.window.setContentSize(NSSize::new(720.0, height));
+        self.window.setContentSize(NSSize::new(800.0, height));
         let frame = self.window.frame();
         let mut origin = NSPoint::new(
             old_frame.origin.x,
@@ -1060,7 +1071,7 @@ pub(crate) fn hint(text: &str, frame: NSRect, mtm: MainThreadMarker) -> Retained
     value.setMaximumNumberOfLines(2);
     value
 }
-fn checkbox(title: &str, mtm: MainThreadMarker) -> Retained<NSButton> {
+pub(crate) fn checkbox(title: &str, mtm: MainThreadMarker) -> Retained<NSButton> {
     let control = NSButton::new(mtm);
     control.setButtonType(NSButtonType::Switch);
     control.setTitle(&NSString::from_str(title));
@@ -1073,7 +1084,7 @@ fn popup(titles: &[&str], frame: NSRect, mtm: MainThreadMarker) -> Retained<NSPo
     }
     control
 }
-fn set_action(button: &NSControl, target: &AnyObject, action: Sel) {
+pub(crate) fn set_action(button: &NSControl, target: &AnyObject, action: Sel) {
     // SAFETY: The application delegate outlives the controls and implements each selector.
     unsafe {
         button.setTarget(Some(target));

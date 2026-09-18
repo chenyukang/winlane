@@ -3,6 +3,7 @@ use crate::{i18n::Locale, tr};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CommandId {
     Snippets,
+    Clipboard,
     ShowMenu,
     LockScreen,
     Sleep,
@@ -32,6 +33,14 @@ impl Command {
 }
 
 pub const COMMANDS: &[Command] = &[
+    Command {
+        id: CommandId::Clipboard,
+        name: "clipboard",
+        title_en: "Search clipboard history",
+        title_zh: "搜索剪贴板历史",
+        symbol: "clipboard",
+        keywords: &["clipboard history", "clip", "剪贴板", "剪贴板历史"],
+    },
     Command {
         id: CommandId::Snippets,
         name: "snippet",

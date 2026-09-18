@@ -110,6 +110,7 @@ pub fn start(
             report(tr!("无法写入剪贴板。", "Could not write to the clipboard.").into());
             return;
         }
+        crate::clipboard_runtime::mark_generated(&pasteboard);
         // Target the captured process, never whichever app happens to receive global keys.
         unsafe {
             CGEventPostToPid(pid, down.as_CFTypeRef());

@@ -149,6 +149,7 @@ mod app {
     include!("support/launch_search.rs");
     include!("support/commands.rs");
     include!("support/snippet_search.rs");
+    include!("support/clipboard.rs");
 
     pub fn inspect_window_discovery(bundle: &str) {
         assert!(
@@ -330,6 +331,7 @@ mod app {
         verify_launch_search(mtm);
         verify_command_search(mtm);
         verify_snippet_search(mtm);
+        verify_clipboard_search(mtm);
         crate::snippet_ui::verify_editor(&delegate, mtm);
         crate::system_commands::verify_prepared_commands(mtm);
         crate::menu_bar::verify_reveal_positions();
@@ -1580,3 +1582,11 @@ mod snippet_placeholder {
     include!("../src/snippet_placeholder.rs");
     include!("support/snippet_placeholder.rs");
 }
+
+#[cfg(target_os = "macos")]
+#[path = "../src/clipboard_runtime.rs"]
+mod clipboard_runtime;
+
+#[cfg(target_os = "macos")]
+#[path = "../src/clipboard_settings.rs"]
+mod clipboard_settings;

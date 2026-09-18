@@ -61,6 +61,12 @@ Create plain-text snippets in **Settings → Snippets**. Valid edits save automa
 
 Use **Insert Placeholder** for clipboard text, date presets with live previews, or custom text, multiline and dropdown fields. Configure defaults and required fields in Settings, then fill them in before pasting. See [snippet placeholders and examples](docs/snippets.md).
 
+### Find something you copied earlier
+
+Search for **clipboard** and select the command to browse your text history. Search its content or source app, then press Enter to paste into the previous app. **Command + C** copies only; **Command + Backspace** deletes an entry. History stays separate from ordinary window searches.
+
+By default, Winlane keeps up to **200 entries for 7 days**, saved locally across restarts. Adjust retention, pause recording, disable disk storage, or clear history in **Settings → Clipboard**. Text and links are supported; images and file copies are not. See [clipboard history](docs/clipboard.md) for controls, storage and privacy details.
+
 ### Keep aliases for your apps and projects
 
 Open **Settings → Aliases → Alias Rules**. Choose an app and assign one or two lowercase letters. Leave the title field empty for an app alias, or enter a case-insensitive title keyword such as `ckb` to target that project window. Rules save automatically; duplicate aliases are rejected.
@@ -97,6 +103,8 @@ Open Settings from the menu bar or press **Command + ,** while using Winlane. Pr
 | **Appearance & Language** | System, light, or dark appearance; Compact or Normal display density; background opacity; language; a toggle for footer hints, refresh status, and the Settings button. |
 | **Input** | Start searches in English (default) or Chinese, keep the current input source, or remember the last input source used in Winlane. |
 | **Window List** | Sorting, minimized windows, and apps to exclude. Recent sorting follows window focus, including mouse, Dock, and shortcut switches. |
+| **Snippets** | Saved text and dynamic placeholders. |
+| **Clipboard** | Recording, local storage, retention limits, and clearing history. |
 | **Aliases** | Fixed letters for apps or project windows matched by title. |
 | **Startup & Updates** | Launch at login, daily update checks, and Check for Updates. |
 
@@ -114,7 +122,7 @@ The **Window** menu lets you limit searches to the current app, minimize or rest
 
 Winlane uses Accessibility access to read and control windows, and a keyboard event filter to handle its shortcuts. It does not log keystrokes, capture window screenshots, or send window data to a server.
 
-Settings, aliases and snippet templates are stored locally. Filled-in snippet arguments are not saved. Pasting a snippet writes its expanded plain text to the clipboard. Window titles, search terms, and selection history stay in memory and are discarded when Winlane quits. Copying a window title explicitly places it on the clipboard.
+Settings, aliases and snippet templates are stored locally. Filled-in snippet arguments are not saved. Pasting a snippet writes its expanded plain text to the clipboard. Window titles, search terms, and selection history stay in memory and are discarded when Winlane quits. Copying a window title explicitly places it on the clipboard. Clipboard history records new text copies locally in plain text when enabled, with configurable retention. It skips standard sensitive-content markers and common password managers, but cannot detect every secret. See [clipboard privacy and storage](docs/clipboard.md#retention-and-privacy).
 
 Update checks contact GitHub Releases for the update feed and packages. Sparkle system profiling is disabled; window titles and search terms are never included. Update feeds and downloads are verified with an embedded Ed25519 public key.
 

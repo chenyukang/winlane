@@ -43,6 +43,12 @@ const LIST_BOTTOM: f64 = 36.0;
 const LIST_WIDTH: f64 = WIDTH - 20.0;
 const APP_CATALOG_TTL: Duration = Duration::from_secs(10 * 60);
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SearchScope {
+    Snippets,
+    Clipboard,
+}
+
 struct PanelUi {
     display_id: u32,
     shortcut_label: Retained<NSTextField>,
@@ -56,7 +62,8 @@ struct PanelUi {
     demo_button: Retained<NSButton>,
     refresh_button: Retained<NSButton>,
     settings_button: Retained<NSButton>,
-    snippet_back: Retained<NSButton>,
+    scope_back: Retained<NSButton>,
+    clipboard_actions: Retained<NSPopUpButton>,
     mode_label: Retained<NSTextField>,
     rows: RefCell<Vec<RowUi>>,
     empty_labels: RefCell<Vec<Retained<NSTextField>>>,
@@ -77,6 +84,7 @@ struct RowUi {
 enum RowContent {
     Command(CommandId),
     Snippet(winlane::snippets::Snippet),
+    Clipboard(u64, String, String, String),
     Window(WindowInfo, Option<String>),
     Application(ApplicationTarget),
 }
@@ -84,6 +92,7 @@ enum RowContent {
 enum SelectedResult {
     Command(CommandId),
     Snippet(String),
+    Clipboard(u64),
     Window(u64),
     Application(String),
 }
@@ -119,7 +128,12 @@ impl RowUi {
         };
         let launching = matches!(
             self.content,
-            Some(RowContent::Application(_) | RowContent::Command(_) | RowContent::Snippet(_))
+            Some(
+                RowContent::Application(_)
+                    | RowContent::Command(_)
+                    | RowContent::Snippet(_)
+                    | RowContent::Clipboard(..)
+            )
         );
         let detail = if launching && !selected {
             NSColor::secondaryLabelColor()
@@ -144,7 +158,7 @@ impl RowUi {
 struct AppState {
     panels: RefCell<Vec<Rc<PanelUi>>>,
     query: RefCell<String>,
-    snippet_scope: Cell<bool>,
+    search_scope: Cell<Option<SearchScope>>,
     current_app_only: Cell<bool>,
     keyboard_display: Cell<Option<u32>>,
     changing_displays: Cell<bool>,
@@ -192,6 +206,9 @@ struct AppState {
     launch_matches: RefCell<Vec<usize>>,
     command_matches: RefCell<Vec<CommandId>>,
     snippet_matches: RefCell<Vec<winlane::snippets::Snippet>>,
+    clipboard_matches: RefCell<Vec<u64>>,
+    clipboard: RefCell<Option<crate::clipboard_runtime::ClipboardRuntime>>,
+    clipboard_timer: RefCell<Option<Retained<NSTimer>>>,
     snippet_editor: RefCell<Option<Retained<crate::snippet_ui::SnippetEditor>>>,
     snippet_arguments: RefCell<Option<Retained<crate::snippet_ui::SnippetArguments>>>,
     snippet_paste_timer: RefCell<Option<Retained<NSTimer>>>,
@@ -229,9 +246,19 @@ define_class!(
                     if let Some(delegate) = delegate {
                         let mode = delegate.ivars().mode.get().unwrap_or(PanelMode::Search);
                         let empty = delegate.ivars().query.borrow().is_empty();
-                        if !delegate.searching_snippets() && space_changes_mode(mode, empty, composing) {
+                        if !delegate.scoped_search() && space_changes_mode(mode, empty, composing) {
                             if !event.isARepeat() { delegate.toggle_mode(event.modifierFlags().bits() as u64); }
                             return;
+                        }
+                    }
+                }
+                if !composing && event.modifierFlags().intersection(NSEventModifierFlags::Command | NSEventModifierFlags::Control | NSEventModifierFlags::Option | NSEventModifierFlags::Shift) == NSEventModifierFlags::Command {
+                    let delegate: Option<Retained<Delegate>> = unsafe { msg_send![self, delegate] };
+                    if let Some(delegate) = delegate && delegate.searching_clipboard() {
+                        match event.keyCode() {
+                            8 => { delegate.use_clipboard(false); return; }
+                            51 => { delegate.delete_clipboard_entry(); return; }
+                            _ => {}
                         }
                     }
                 }
@@ -414,9 +441,13 @@ define_class!(
                 }
             }
             self.build_ui();
+            self.ivars().clipboard.replace(Some(crate::clipboard_runtime::ClipboardRuntime::new(self.ivars().config.borrow().clipboard.clone())));
+            self.configure_clipboard_timer();
             self.register_hotkeys();
             if !accessibility::is_trusted() { self.show(); } else { self.refresh(); }
         }
+        #[unsafe(method(applicationWillTerminate:))]
+        fn will_terminate(&self, _: &NSNotification) { self.ivars().clipboard.take(); }
         #[unsafe(method(applicationShouldHandleReopen:hasVisibleWindows:))]
         fn reopen(&self, _: &NSApplication, _: bool) -> bool { self.show(); true }
         #[unsafe(method(applicationDidChangeScreenParameters:))]
@@ -482,8 +513,8 @@ define_class!(
                 self.activate_selected(); true
             } else if command == sel!(cancelOperation:) {
                 self.cancel_search(); true
-            } else if command == sel!(deleteBackward:) && self.searching_snippets() && self.ivars().query.borrow().is_empty() {
-                self.leave_snippet_search(); true
+            } else if command == sel!(deleteBackward:) && self.scoped_search() && self.ivars().query.borrow().is_empty() {
+                self.leave_scoped_search(); true
             } else { false }
         }
     }
@@ -498,7 +529,7 @@ define_class!(
                     || self.ivars().updater_error.borrow().is_some()
             } else if action == Some(sel!(toggleScope:)) {
                 item.setState(if self.ivars().current_app_only.get() { NSControlStateValueOn } else { NSControlStateValueOff });
-                self.any_panel_visible() && self.ivars().mode.get() == Some(PanelMode::Search) && !self.searching_snippets()
+                self.any_panel_visible() && self.ivars().mode.get() == Some(PanelMode::Search) && !self.scoped_search()
             } else if [sel!(minimizeChosen:), sel!(hideChosen:), sel!(copyTitle:), sel!(quickSelect:)].into_iter().any(|sel| action == Some(sel)) {
                 let visible = self.any_panel_visible();
                 visible && if action == Some(sel!(quickSelect:)) {
@@ -653,11 +684,11 @@ define_class!(
         }
         #[unsafe(method(manageLogin:))]
         fn manage_login(&self, _: Option<&AnyObject>) { settings::manage_login(); }
-        #[unsafe(method(leaveSnippetSearch:))]
-        fn snippet_back(&self, _: Option<&AnyObject>) { self.leave_snippet_search(); }
+        #[unsafe(method(leaveScopedSearch:))]
+        fn scope_back(&self, _: Option<&AnyObject>) { self.leave_scoped_search(); }
         #[unsafe(method(toggleScope:))]
         fn toggle_scope(&self, _: Option<&AnyObject>) {
-            if self.searching_snippets() { return; }
+            if self.scoped_search() { return; }
             self.ivars().current_app_only.set(!self.ivars().current_app_only.get());
             self.filter();
         }
@@ -742,6 +773,18 @@ define_class!(
                 self.filter();
             } else { state.windows.borrow_mut().clear(); self.refresh(); }
         }
+        #[unsafe(method(pollClipboard:))]
+        fn poll_clipboard(&self, _: Option<&AnyObject>) {
+            let changed = self.ivars().clipboard.borrow_mut().as_mut().is_some_and(|clipboard| clipboard.poll_clipboard());
+            if changed && self.searching_clipboard() { self.filter_preserving(self.selected_result()); }
+        }
+        #[unsafe(method(clipboardActions:))]
+        fn clipboard_action(&self, sender: &NSPopUpButton) {
+            let action = sender.indexOfSelectedItem(); sender.selectItemAtIndex(0);
+            match action { 1 => self.use_clipboard(false), 2 => self.delete_clipboard_entry(), 3 => self.toggle_clipboard_recording(), 4 => self.confirm_clear_clipboard(), _ => {} }
+        }
+        #[unsafe(method(clearClipboardHistory:))]
+        fn clear_clipboard_action(&self, _: Option<&AnyObject>) { self.confirm_clear_clipboard(); }
         #[unsafe(method(poll:))]
         fn poll(&self, _: Option<&AnyObject>) {
             if self.ivars().check_panel_focus.replace(false)
@@ -752,6 +795,8 @@ define_class!(
             self.drain_shortcut_actions();
             self.poll_app_launch();
             self.poll_app_catalog();
+            let clipboard_changed = self.ivars().clipboard.borrow_mut().as_mut().is_some_and(|clipboard| clipboard.poll_storage());
+            if clipboard_changed && self.searching_clipboard() { self.filter_preserving(self.selected_result()); }
             let result = self.ivars().receiver.borrow().as_ref().map(|rx| rx.try_recv());
             if let Some(Ok(mut windows)) = result {
                 self.ivars().receiver.replace(None);
@@ -789,6 +834,7 @@ define_class!(
                 settings.window.makeFirstResponder(None);
             }
             self.end_session();
+            self.ivars().clipboard.take();
             NSApplication::sharedApplication(self.mtm()).terminate(None);
         }
     }
@@ -1337,18 +1383,38 @@ impl Delegate {
             input.setDelegate(Some(ProtocolObject::from_ref(self)));
             root.addSubview(&input);
         }
-        let snippet_back = self.button(
+        let scope_back = self.button(
             tr!("‹ 片段", "‹ Snippets"),
-            sel!(leaveSnippetSearch:),
+            sel!(leaveScopedSearch:),
             rect(10.0, 538.0, 110.0, 34.0),
         );
-        snippet_back.setBordered(false);
-        snippet_back.setHidden(true);
-        snippet_back.setAccessibilityLabel(Some(&NSString::from_str(tr!(
+        scope_back.setBordered(false);
+        scope_back.setHidden(true);
+        scope_back.setAccessibilityLabel(Some(&NSString::from_str(tr!(
             "返回窗口搜索",
             "Back to window search"
         ))));
-        root.addSubview(&snippet_back);
+        root.addSubview(&scope_back);
+        let clipboard_actions = NSPopUpButton::initWithFrame_pullsDown(
+            NSPopUpButton::alloc(mtm),
+            rect(WIDTH - 128.0, 538.0, 118.0, 30.0),
+            false,
+        );
+        for title in [
+            tr!("操作…", "Actions…"),
+            tr!("复制  ⌘C", "Copy  ⌘C"),
+            tr!("删除  ⌘⌫", "Delete  ⌘⌫"),
+            tr!("暂停记录", "Pause recording"),
+            tr!("清空历史…", "Clear history…"),
+        ] {
+            clipboard_actions.addItemWithTitle(&NSString::from_str(title));
+        }
+        unsafe {
+            clipboard_actions.setTarget(Some(self));
+            clipboard_actions.setAction(Some(sel!(clipboardActions:)));
+        }
+        clipboard_actions.setHidden(true);
+        root.addSubview(&clipboard_actions);
         let mode_label = label("", 11.0, rect(16.0, LIST_BOTTOM, WIDTH - 32.0, 20.0), mtm);
         mode_label.setTextColor(Some(&NSColor::labelColor()));
         mode_label.setAlphaValue(0.65);
@@ -1417,7 +1483,8 @@ impl Delegate {
             demo_button,
             refresh_button: refresh,
             settings_button,
-            snippet_back,
+            scope_back,
+            clipboard_actions,
             shortcut_label: shortcut,
             mode_label,
             rows: RefCell::new(Vec::new()),
@@ -1666,10 +1733,15 @@ impl Delegate {
             settings.set_app_shortcuts(&candidate.app_shortcuts);
             settings.set_alias_rules(&candidate.alias_rules);
             settings.set_snippets(&candidate.snippets);
+            settings.fill_clipboard(&candidate.clipboard);
         }
         let language_changed =
             candidate.language != previous.language && settings::apply_language(candidate.language);
+        if let Some(clipboard) = self.ivars().clipboard.borrow_mut().as_mut() {
+            clipboard.configure(candidate.clipboard.clone());
+        }
         self.ivars().config.replace(candidate);
+        self.configure_clipboard_timer();
         self.update_aliases(&self.ivars().windows.borrow());
         if language_changed {
             self.rebuild_localized_ui();
@@ -1880,7 +1952,7 @@ impl Delegate {
     }
 
     fn show_mode(&self, mode: PanelMode, session: u64, direction: i8) {
-        self.ivars().snippet_scope.set(false);
+        self.ivars().search_scope.set(None);
         if let Some(timer) = self.ivars().snippet_paste_timer.take() {
             timer.invalidate();
         }
@@ -2071,30 +2143,42 @@ impl Delegate {
         }
     }
 
-    fn searching_snippets(&self) -> bool {
-        self.ivars().snippet_scope.get() && self.ivars().mode.get() == Some(PanelMode::Search)
+    fn scoped_search(&self) -> bool {
+        self.ivars().search_scope.get().is_some()
+            && self.ivars().mode.get() == Some(PanelMode::Search)
     }
-
+    fn searching_snippets(&self) -> bool {
+        self.scoped_search() && self.ivars().search_scope.get() == Some(SearchScope::Snippets)
+    }
+    fn searching_clipboard(&self) -> bool {
+        self.scoped_search() && self.ivars().search_scope.get() == Some(SearchScope::Clipboard)
+    }
     fn enter_snippet_search(&self) {
-        self.ivars().snippet_scope.set(true);
+        self.enter_scoped_search(SearchScope::Snippets);
+    }
+    fn enter_scoped_search(&self, scope: SearchScope) {
+        self.ivars().search_scope.set(Some(scope));
         self.ivars().query.borrow_mut().clear();
         self.filter();
         self.focus_search();
     }
-
-    fn leave_snippet_search(&self) {
-        if !self.searching_snippets() {
+    fn leave_scoped_search(&self) {
+        if !self.scoped_search() {
             return;
         }
-        self.ivars().snippet_scope.set(false);
-        self.ivars().query.replace("snippet".into());
-        self.filter_preserving(Some(SelectedResult::Command(CommandId::Snippets)));
+        let command = if self.searching_clipboard() {
+            CommandId::Clipboard
+        } else {
+            CommandId::Snippets
+        };
+        self.ivars().search_scope.set(None);
+        self.ivars().query.replace(command.definition().name.into());
+        self.filter_preserving(Some(SelectedResult::Command(command)));
         self.focus_search();
     }
-
     fn cancel_search(&self) {
-        if self.searching_snippets() {
-            self.leave_snippet_search();
+        if self.scoped_search() {
+            self.leave_scoped_search();
         } else {
             self.dismiss();
         }
@@ -2123,7 +2207,16 @@ impl Delegate {
     }
 
     fn end_session(&self) {
-        self.ivars().snippet_scope.set(false);
+        let clipboard = self.searching_clipboard();
+        self.ivars().search_scope.set(None);
+        if clipboard {
+            self.ivars().clipboard_matches.borrow_mut().clear();
+            for ui in self.panels() {
+                for row in ui.rows.borrow_mut().drain(..) {
+                    row.button.removeFromSuperview();
+                }
+            }
+        }
         self.cancel_switch_timer();
         self.finish_search_input();
         let state = self.ivars();
@@ -2146,7 +2239,7 @@ impl Delegate {
     }
 
     fn toggle_mode(&self, flags: u64) {
-        if self.searching_snippets() {
+        if self.scoped_search() {
             return;
         }
         if self.ivars().mode.get() == Some(PanelMode::Switch) {
@@ -2175,7 +2268,7 @@ impl Delegate {
     }
 
     fn display_search(&self, session: u64) {
-        if self.ivars().snippet_scope.replace(false) {
+        if self.ivars().search_scope.replace(None).is_some() {
             self.ivars().query.borrow_mut().clear();
         }
         let was_delayed = self.cancel_switch_timer();
@@ -2385,7 +2478,7 @@ impl Delegate {
     fn ensure_app_catalog(&self) {
         let state = self.ivars();
         if state.demo.get()
-            || self.searching_snippets()
+            || self.scoped_search()
             || state.mode.get() != Some(PanelMode::Search)
             || state.current_app_only.get()
             || state.query.borrow().trim().is_empty()
@@ -2435,6 +2528,10 @@ impl Delegate {
     }
 
     fn filter_preserving(&self, selected_id: Option<SelectedResult>) {
+        if self.searching_clipboard() {
+            self.filter_clipboard(selected_id);
+            return;
+        }
         if self.searching_snippets() {
             self.filter_snippets(selected_id);
             return;
@@ -2552,7 +2649,7 @@ impl Delegate {
                         })
                         .map(|index| extra_count + index)
                 }),
-            None => None,
+            Some(SelectedResult::Clipboard(_)) | None => None,
         }
         .unwrap_or(0);
         let visible_paths: HashSet<_> = launch_matches
@@ -2569,8 +2666,151 @@ impl Delegate {
         self.ivars().launch_matches.replace(launch_matches);
         self.ivars().command_matches.replace(command_matches);
         self.ivars().snippet_matches.replace(snippet_matches);
+        self.ivars().clipboard_matches.borrow_mut().clear();
         self.ivars().selected.set(selected);
         self.render();
+    }
+
+    fn configure_clipboard_timer(&self) {
+        if self.ivars().clipboard.borrow().is_none() {
+            return;
+        }
+        if !self.ivars().config.borrow().clipboard.enabled {
+            if let Some(timer) = self.ivars().clipboard_timer.take() {
+                timer.invalidate();
+            }
+        } else if self.ivars().clipboard_timer.borrow().is_none() {
+            // The main run loop retains the delegate; the selector accepts a timer argument.
+            let timer = unsafe {
+                NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
+                    0.5,
+                    self,
+                    sel!(pollClipboard:),
+                    None,
+                    true,
+                )
+            };
+            timer.setTolerance(0.1);
+            unsafe {
+                NSRunLoop::mainRunLoop().addTimer_forMode(&timer, NSRunLoopCommonModes);
+            }
+            self.ivars().clipboard_timer.replace(Some(timer));
+        }
+    }
+
+    fn filter_clipboard(&self, selected_id: Option<SelectedResult>) {
+        let state = self.ivars();
+        let matches = state
+            .clipboard
+            .borrow()
+            .as_ref()
+            .map(|clipboard| clipboard.history.matching(&state.query.borrow()))
+            .unwrap_or_default();
+        let selected = if let Some(SelectedResult::Clipboard(id)) = selected_id {
+            matches
+                .iter()
+                .position(|candidate| *candidate == id)
+                .unwrap_or_else(|| state.selected.get().min(matches.len().saturating_sub(1)))
+        } else {
+            0
+        };
+        state.matches.borrow_mut().clear();
+        state.launch_matches.borrow_mut().clear();
+        state.command_matches.borrow_mut().clear();
+        state.snippet_matches.borrow_mut().clear();
+        state.application_icons.borrow_mut().clear();
+        state.clipboard_matches.replace(matches);
+        state.selected.set(selected);
+        self.render();
+    }
+
+    fn selected_clipboard(&self) -> Option<winlane::clipboard::Entry> {
+        if !self.searching_clipboard() {
+            return None;
+        }
+        let id = *self
+            .ivars()
+            .clipboard_matches
+            .borrow()
+            .get(self.ivars().selected.get())?;
+        self.ivars()
+            .clipboard
+            .borrow()
+            .as_ref()?
+            .history
+            .get(id)
+            .cloned()
+    }
+
+    fn use_clipboard(&self, paste: bool) {
+        let Some(entry) = self.selected_clipboard() else {
+            return;
+        };
+        if !paste {
+            match crate::clipboard_runtime::copy(&entry.text) {
+                Ok(()) => self.dismiss(),
+                Err(error) => self.report_switch_error(&error),
+            }
+            return;
+        }
+        let Some(target) = NSRunningApplication::runningApplicationWithProcessIdentifier(
+            self.ivars().previous_pid.get(),
+        ) else {
+            self.report_switch_error(tr!(
+                "目标应用已退出，请重新打开搜索。",
+                "The target app has quit. Reopen search."
+            ));
+            return;
+        };
+        self.cancel_routing();
+        self.end_session();
+        if let Err(error) = self.paste_snippet(target, entry.text.to_string()) {
+            self.selection_failed(&error);
+        }
+    }
+
+    fn delete_clipboard_entry(&self) {
+        let Some(entry) = self.selected_clipboard() else {
+            return;
+        };
+        if let Some(clipboard) = self.ivars().clipboard.borrow_mut().as_mut() {
+            clipboard.remove(entry.id);
+        }
+        self.filter_preserving(Some(SelectedResult::Clipboard(entry.id)));
+    }
+
+    fn toggle_clipboard_recording(&self) {
+        let mut candidate = self.ivars().config.borrow().clone();
+        candidate.clipboard.enabled = !candidate.clipboard.enabled;
+        if let Err(error) = self.apply_config(candidate) {
+            self.report_switch_error(&error);
+        }
+    }
+
+    fn clear_clipboard_history(&self) {
+        if let Some(clipboard) = self.ivars().clipboard.borrow_mut().as_mut() {
+            clipboard.clear();
+        }
+        if self.searching_clipboard() {
+            self.filter();
+        }
+    }
+
+    fn confirm_clear_clipboard(&self) {
+        let alert = NSAlert::new(self.mtm());
+        alert.setMessageText(&NSString::from_str(tr!(
+            "清空剪贴板历史？",
+            "Clear clipboard history?"
+        )));
+        alert.setInformativeText(&NSString::from_str(tr!(
+            "删除所有已记录的历史。当前系统剪贴板中的内容不会改变。",
+            "Delete all recorded entries. The current system clipboard will stay unchanged."
+        )));
+        alert.addButtonWithTitle(&NSString::from_str(tr!("清空历史", "Clear History")));
+        alert.addButtonWithTitle(&NSString::from_str(tr!("取消", "Cancel")));
+        if alert.runModal() == NSAlertFirstButtonReturn {
+            self.clear_clipboard_history();
+        }
     }
 
     fn filter_snippets(&self, selected_id: Option<SelectedResult>) {
@@ -2600,6 +2840,7 @@ impl Delegate {
         state.command_matches.borrow_mut().clear();
         state.application_icons.borrow_mut().clear();
         state.snippet_matches.replace(snippets);
+        state.clipboard_matches.borrow_mut().clear();
         state.selected.set(selected);
         self.render();
     }
@@ -2655,12 +2896,15 @@ impl Delegate {
         let command_matches = state.command_matches.borrow();
         let apps = state.installed_apps.borrow();
         let snippet_matches = state.snippet_matches.borrow();
-        let extra_count = command_matches.len() + snippet_matches.len();
+        let clipboard_matches = state.clipboard_matches.borrow();
+        let clipboard = state.clipboard.borrow();
+        let extra_count = command_matches.len() + snippet_matches.len() + clipboard_matches.len();
         let count = extra_count + matched.len() + launch_matches.len();
         let trusted = accessibility::is_trusted();
         let demo = state.demo.get();
         let switching = state.mode.get() == Some(PanelMode::Switch);
         let snippets = self.searching_snippets();
+        let in_clipboard = self.searching_clipboard();
         let show_hints = state.config.borrow().show_usage_hints;
         let density = state.config.borrow().display_density;
         let row_height = row_height(density);
@@ -2708,9 +2952,10 @@ impl Delegate {
             ui.input
                 .setFont(Some(&NSFont::systemFontOfSize(input_font_size)));
         }
-        let header: [(&NSView, f64); 3] = [
+        let header: [(&NSView, f64); 4] = [
+            (&ui.clipboard_actions, height - 50.0),
             (&ui.input, height - 35.0 - input_height / 2.0),
-            (&ui.snippet_back, height - 52.0),
+            (&ui.scope_back, height - 52.0),
             (
                 &ui.shortcut_label,
                 height - if switching { 26.0 } else { 44.0 },
@@ -2729,7 +2974,23 @@ impl Delegate {
         let unmatched_alias =
             switching && !alias_query.is_empty() && alias_match.position().is_none();
         ui.input.setHidden(switching);
-        ui.snippet_back.setHidden(!snippets);
+        ui.scope_back.setHidden(!self.scoped_search());
+        ui.scope_back.setTitle(&NSString::from_str(if in_clipboard {
+            tr!("‹ 剪贴板", "‹ Clipboard")
+        } else {
+            tr!("‹ 片段", "‹ Snippets")
+        }));
+        ui.clipboard_actions.setHidden(!in_clipboard);
+        ui.shortcut_label.setHidden(in_clipboard);
+        if let Some(item) = ui.clipboard_actions.itemAtIndex(3) {
+            item.setTitle(&NSString::from_str(
+                if state.config.borrow().clipboard.enabled {
+                    tr!("暂停记录", "Pause recording")
+                } else {
+                    tr!("恢复记录", "Resume recording")
+                },
+            ));
+        }
         ui.mode_label.setHidden(!show_mode_label);
         ui.settings_button.setHidden(!show_hints);
         let config = state.config.borrow();
@@ -2815,12 +3076,51 @@ impl Delegate {
                 row.attached = false;
             }
         }
-        rows.truncate(count.max(windows.len().min(128)));
+        if !in_clipboard
+            && rows
+                .iter()
+                .any(|row| matches!(row.content, Some(RowContent::Clipboard(..))))
+        {
+            for row in rows.drain(..) {
+                row.button.removeFromSuperview();
+            }
+        }
+        rows.truncate(if in_clipboard {
+            count
+        } else {
+            count.max(windows.len().min(128))
+        });
         for label in ui.empty_labels.borrow_mut().drain(..) {
             label.removeFromSuperview();
         }
         if count == 0 {
-            let (title, detail) = if snippets {
+            let (title, detail) = if in_clipboard {
+                if clipboard
+                    .as_ref()
+                    .is_some_and(|clipboard| clipboard.loading)
+                {
+                    (
+                        tr!("正在读取历史…", "Loading history…"),
+                        tr!("可以继续输入搜索。", "You can keep typing."),
+                    )
+                } else if state.query.borrow().trim().is_empty() {
+                    (
+                        tr!("还没有剪贴板历史", "No clipboard history yet"),
+                        tr!(
+                            "复制一些文本后，它会出现在这里。可在设置 → 剪贴板中管理记录。",
+                            "Copy some text to see it here. Manage recording in Settings → Clipboard."
+                        ),
+                    )
+                } else {
+                    (
+                        tr!("没有匹配的剪贴板记录", "No matching clipboard entries"),
+                        tr!(
+                            "试试其他关键词，或按 Esc 返回。",
+                            "Try other keywords, or press Esc to go back."
+                        ),
+                    )
+                }
+            } else if snippets {
                 if state.config.borrow().snippets.is_empty() {
                     (
                         tr!("还没有片段", "No snippets yet"),
@@ -2905,6 +3205,15 @@ impl Delegate {
                 RowContent::Command(command)
             } else if let Some(snippet) = snippet_matches.get(position - command_matches.len()) {
                 RowContent::Snippet(snippet.clone())
+            } else if let Some(&id) =
+                clipboard_matches.get(position - command_matches.len() - snippet_matches.len())
+            {
+                let entry = clipboard
+                    .as_ref()
+                    .and_then(|clipboard| clipboard.history.get(id))
+                    .expect("matched history entry exists");
+                let (source, preview, tooltip) = crate::clipboard_runtime::summary(entry);
+                RowContent::Clipboard(id, source, preview, tooltip)
             } else if let Some(&index) = matched.get(position - extra_count) {
                 let item = &windows[index];
                 RowContent::Window(item.clone(), aliases.for_window(item.id).map(str::to_owned))
@@ -2957,6 +3266,19 @@ impl Delegate {
                             .as_deref(),
                         );
                         trf!("粘贴片段：{}", "Paste snippet: {}", snippet.name)
+                    }
+                    RowContent::Clipboard(_, source, preview, tooltip) => {
+                        set_label(&row.app, source);
+                        set_label(&row.title, preview);
+                        set_label(&row.alias, "↵");
+                        row.icon.setImage(
+                            NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                                ns_string!("clipboard"),
+                                Some(&NSString::from_str(tr!("剪贴板历史", "Clipboard history"))),
+                            )
+                            .as_deref(),
+                        );
+                        tooltip.clone()
                     }
                     RowContent::Window(item, alias) => {
                         let title = if item.title.trim().is_empty() {
@@ -3012,7 +3334,12 @@ impl Delegate {
             }
         }
 
-        let status = if demo {
+        let clipboard_error = clipboard
+            .as_ref()
+            .and_then(|clipboard| clipboard.error.as_ref());
+        let status = if in_clipboard && let Some(error) = clipboard_error {
+            error.clone()
+        } else if demo {
             trf!(
                 "演示模式 · {} 个示例 · ↑↓ 选择  ↵ 预览选择  Esc 关闭",
                 "Demo · {} examples · ↑↓ select · ↵ preview · Esc close",
@@ -3028,6 +3355,15 @@ impl Delegate {
                 "Accessibility access required. You can also try the demo."
             )
             .into()
+        } else if in_clipboard {
+            trf!(
+                "{} · ↵ 粘贴 · ⌘C 复制 · ⌘⌫ 删除 · Esc 返回",
+                "{} · ↵ paste · ⌘C copy · ⌘⌫ delete · Esc back",
+                winlane::clipboard::entry_count(
+                    clipboard_matches.len(),
+                    !state.config.borrow().clipboard.enabled
+                )
+            )
         } else if snippets {
             trf!(
                 "{} 个片段 · ↑↓ 选择 · ↵ 粘贴 · Esc 返回",
@@ -3066,7 +3402,8 @@ impl Delegate {
         let has_error = !demo
             && (state.hotkey_error.borrow().is_some()
                 || state.alias_error.borrow().is_some()
-                || !trusted);
+                || !trusted
+                || (in_clipboard && clipboard_error.is_some()));
         ui.footer.setHidden(!show_hints && !has_error);
     }
 
@@ -3283,6 +3620,14 @@ impl Delegate {
     }
 
     fn activate_selected(&self) {
+        if self.selected_command() == Some(CommandId::Clipboard) {
+            self.enter_scoped_search(SearchScope::Clipboard);
+            return;
+        }
+        if self.searching_clipboard() {
+            self.use_clipboard(true);
+            return;
+        }
         if self.selected_command() == Some(CommandId::Snippets) {
             self.enter_snippet_search();
             return;
@@ -3589,7 +3934,9 @@ impl Delegate {
     fn selected_window(&self) -> Option<WindowInfo> {
         let state = self.ivars();
         let index = state.selected.get().checked_sub(
-            state.command_matches.borrow().len() + state.snippet_matches.borrow().len(),
+            state.command_matches.borrow().len()
+                + state.snippet_matches.borrow().len()
+                + state.clipboard_matches.borrow().len(),
         )?;
         state
             .matches
@@ -3603,6 +3950,7 @@ impl Delegate {
         let index = state.selected.get().checked_sub(
             state.command_matches.borrow().len()
                 + state.snippet_matches.borrow().len()
+                + state.clipboard_matches.borrow().len()
                 + state.matches.borrow().len(),
         )?;
         state.launch_matches.borrow().get(index).and_then(|&index| {
@@ -3615,6 +3963,9 @@ impl Delegate {
     }
 
     fn selected_result(&self) -> Option<SelectedResult> {
+        if let Some(entry) = self.selected_clipboard() {
+            return Some(SelectedResult::Clipboard(entry.id));
+        }
         if let Some(snippet) = self.selected_snippet() {
             return Some(SelectedResult::Snippet(snippet.id));
         }
@@ -3632,6 +3983,7 @@ impl Delegate {
     fn match_count(&self) -> usize {
         self.ivars().command_matches.borrow().len()
             + self.ivars().snippet_matches.borrow().len()
+            + self.ivars().clipboard_matches.borrow().len()
             + self.ivars().matches.borrow().len()
             + self.ivars().launch_matches.borrow().len()
     }

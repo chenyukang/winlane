@@ -14,7 +14,7 @@ fn verify_snippet_search(mtm: MainThreadMarker) {
     delegate.filter();
     assert!(state.snippet_matches.borrow().is_empty(), "ordinary alias search must not include snippets");
     assert_eq!(delegate.selected_window().unwrap().id, 700);
-    assert!(delegate.panels().iter().all(|ui| ui.snippet_back.isHidden()));
+    assert!(delegate.panels().iter().all(|ui| ui.scope_back.isHidden()));
     state.previous_pid.set(-700);
     state.session.set(41);
     state.query.replace("snippet".into());
@@ -33,8 +33,8 @@ fn verify_snippet_search(mtm: MainThreadMarker) {
     state.config.borrow_mut().show_usage_hints = false;
     delegate.render();
     for ui in delegate.panels() {
-        assert!(!ui.snippet_back.isHidden());
-        assert!(ui.snippet_back.frame().origin.x + ui.snippet_back.frame().size.width < ui.input.frame().origin.x);
+        assert!(!ui.scope_back.isHidden());
+        assert!(ui.scope_back.frame().origin.x + ui.scope_back.frame().size.width < ui.input.frame().origin.x);
         assert_eq!(ui.rows.borrow()[0].alias.stringValue().to_string(), "{}");
     }
     delegate.move_selection(1);
@@ -94,7 +94,7 @@ fn verify_snippet_search(mtm: MainThreadMarker) {
     delegate.cancel_search();
     delegate.cancel_search();
     assert_eq!(state.mode.get(), None);
-    assert!(!state.snippet_scope.get());
+    assert!(state.search_scope.get().is_none());
     state.mode.set(Some(PanelMode::Switch));
     delegate.filter();
     assert!(state.snippet_matches.borrow().is_empty());

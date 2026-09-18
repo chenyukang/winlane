@@ -101,3 +101,19 @@ fn snippet_command_has_an_explicit_search_entry() {
         assert!(matching_commands(query).is_empty());
     }
 }
+
+#[test]
+fn clipboard_command_has_an_explicit_search_entry() {
+    for query in [
+        "clipboard",
+        "clipboard history",
+        "CLIP",
+        "剪贴板",
+        "剪贴板历史",
+    ] {
+        assert_eq!(matching_commands(query), [CommandId::Clipboard]);
+    }
+    for query in ["c", "co", "copied contents", "first test copy"] {
+        assert!(matching_commands(query).is_empty());
+    }
+}
