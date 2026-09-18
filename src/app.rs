@@ -4622,7 +4622,7 @@ impl Delegate {
             self.mtm(),
         ) {
             Ok(prepared) => {
-                if command == CommandId::ShowMenu {
+                if matches!(command, CommandId::ShowMenu | CommandId::Screenshot) {
                     self.dismiss();
                 } else {
                     // Reactivating an app afterward would interrupt Mission Control or locking.

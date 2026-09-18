@@ -39,6 +39,22 @@ pub fn verify_prepared_commands(mtm: MainThreadMarker) {
     mission_control.execute().unwrap();
     assert_eq!(MISSION_CONTROL_CALLS.load(Ordering::Relaxed), 1);
 
+    let mut screenshot = PreparedCommand::prepare(CommandId::Screenshot, None, mtm).unwrap();
+    let Operation::Screenshot(capture) = &mut screenshot.operation else {
+        panic!("screenshot must prepare the native selection utility");
+    };
+    assert_eq!(capture.get_program(), "/usr/sbin/screencapture");
+    assert_eq!(capture.get_args().collect::<Vec<_>>(), ["-i", "-s", "-c", "-d"]);
+    // Exercise process launch without capturing the screen or changing the clipboard.
+    *capture = Command::new("/usr/bin/true");
+    screenshot.execute().unwrap();
+    let mut screenshot = PreparedCommand::prepare(CommandId::Screenshot, None, mtm).unwrap();
+    screenshot.operation = Operation::Screenshot(Command::new("/usr/bin/false"));
+    assert!(screenshot.execute().is_ok(), "ending interactive selection without an image must not reopen search");
+    let mut screenshot = PreparedCommand::prepare(CommandId::Screenshot, None, mtm).unwrap();
+    screenshot.operation = Operation::Screenshot(Command::new("/nonexistent/winlane-test-screencapture"));
+    assert!(screenshot.execute().unwrap_err().contains(tr!("无法启动区域截图", "Could not start area capture")));
+
     assert!(load_function("/System/Library/PrivateFrameworks/login.framework", "WinlaneMissingSymbol").is_none());
     assert!(load_function("/System/Library/Frameworks/WinlaneMissing.framework", "Missing").is_none());
     assert!(PreparedCommand::prepare(CommandId::ShowMenu, None, mtm).is_err());

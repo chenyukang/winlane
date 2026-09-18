@@ -8,6 +8,7 @@ pub enum CommandId {
     Clipboard,
     ShowMenu,
     LockScreen,
+    Screenshot,
     Sleep,
     MissionControl,
 }
@@ -89,6 +90,21 @@ pub const COMMANDS: &[Command] = &[
         title_zh: "锁定屏幕",
         symbol: "lock",
         keywords: &["lock screen", "lock", "锁屏", "锁定屏幕"],
+    },
+    Command {
+        id: CommandId::Screenshot,
+        name: "screenshot",
+        title_en: "Capture an area to clipboard",
+        title_zh: "框选截图并复制到剪贴板",
+        symbol: "viewfinder",
+        keywords: &[
+            "screen shot",
+            "capture area",
+            "screenshot area",
+            "截图",
+            "截屏",
+            "区域截图",
+        ],
     },
     Command {
         id: CommandId::Sleep,

@@ -1,6 +1,21 @@
 use winlane::commands::{COMMANDS, CommandId, matching_commands};
 
 #[test]
+fn screenshot_matches_area_capture_keywords() {
+    for query in [
+        "screenshot",
+        "screen shot",
+        "capture area",
+        "screen",
+        "截图",
+        "截屏",
+        "区域截图",
+    ] {
+        assert_eq!(matching_commands(query), [CommandId::Screenshot], "{query}");
+    }
+}
+
+#[test]
 fn command_search_accepts_names_and_discoverable_prefixes() {
     for query in [
         "show-menu",

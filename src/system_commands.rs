@@ -4,6 +4,7 @@ use core_foundation::string::{CFString, CFStringRef};
 use core_foundation::url::CFURL;
 use objc2_foundation::MainThreadMarker;
 use std::ffi::c_void;
+use std::process::{Command, Stdio};
 use winlane::commands::CommandId;
 use winlane::{tr, trf};
 
@@ -24,6 +25,7 @@ enum Operation {
         lock: LockScreen,
     },
     Sleep(PowerConnection),
+    Screenshot(Command),
     MissionControl {
         _bundle: CFBundle,
         send: DockNotification,
@@ -76,6 +78,21 @@ impl PreparedCommand {
                     lock: unsafe { std::mem::transmute::<*const c_void, LockScreen>(function) },
                 }
             }
+            CommandId::Screenshot => {
+                let path = "/usr/sbin/screencapture";
+                if !std::path::Path::new(path).is_file() {
+                    return Err(unavailable(command));
+                }
+                let mut capture = Command::new(path);
+                // Start only after the picker closes; -s requires manual region selection,
+                // -c writes to the clipboard, and -d lets macOS present capture errors.
+                capture
+                    .args(["-i", "-s", "-c", "-d"])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null());
+                Operation::Screenshot(capture)
+            }
             CommandId::Sleep => {
                 // SAFETY: MACH_PORT_NULL (0) selects the default power-management service.
                 let connection = unsafe { IOPMFindPowerManagement(0) };
@@ -115,6 +132,20 @@ impl PreparedCommand {
             Operation::Sleep(connection) => {
                 // SAFETY: prepare opened this connection; its owner closes it on every exit path.
                 check_status(CommandId::Sleep, unsafe { IOPMSleepSystem(connection.0) })?;
+            }
+            Operation::Screenshot(mut capture) => {
+                let mut child = capture.spawn().map_err(|error| {
+                    trf!(
+                        "无法启动区域截图：{}",
+                        "Could not start area capture: {}",
+                        error
+                    )
+                })?;
+                // Selection can take arbitrarily long. Reap the utility off the main thread;
+                // cancellation is normal and must not reopen the search panel.
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
             }
             Operation::MissionControl { _bundle, send } => {
                 let message = CFString::new("com.apple.expose.awake");
