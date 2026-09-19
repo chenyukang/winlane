@@ -12,7 +12,7 @@ System screenshots sent to the clipboard are recorded even when Winlane is in fr
 - Use the arrow keys or click a row to select it. **Enter** or a row click pastes its text or original image into the app you were using before opening Winlane.
 - **Command + C** copies the selected entry and closes the picker without pasting.
 - **Command + Backspace** deletes the selected entry from history.
-- **Esc** closes the picker. The back button or Backspace in an empty query returns to window search.
+- **Esc** closes the picker. The back button returns to window search. Backspace only deletes text; an empty query stays in Clipboard.
 
 The **Actions…** menu also provides Copy, Delete, Pause/Resume Recording, and Clear History. Image rows show a thumbnail, pixel dimensions and file size. Hover over a row for a longer text preview and its copy time. Clear History asks for confirmation and leaves the current system clipboard unchanged.
 

@@ -2,7 +2,7 @@
 
 Quicklinks open saved websites, app links, files, and folders. Add or edit them in **Settings → Quicklinks**. Valid changes save automatically in the existing settings window; an invalid edit leaves the last saved version intact.
 
-Type a link's name or part of its address in ordinary search, then select it and press Enter. Matching windows come first, so window aliases keep their priority. Search for **quicklink** (or **快捷链接**) and select that command to browse only links. An empty query in this view lists all saved links. Esc closes the picker. The back button or Backspace in an empty query returns to ordinary search. Quicklinks do not appear in switch mode.
+Type a link's name or part of its address in ordinary search, then select it and press Enter. Matching windows come first, so window aliases keep their priority. Search for **quicklink** (or **快捷链接**) and select that command to browse only links. An empty query in this view lists all saved links. Esc closes the picker. The back button returns to ordinary search. Backspace only deletes text; an empty query stays in Quicklinks. Quicklinks do not appear in switch mode.
 
 ## Global shortcuts
 
@@ -25,7 +25,7 @@ While Winlane is running, the shortcut works from other apps. Links without inpu
 
 URL placeholders are percent-encoded, including spaces, Chinese text, `/`, `&`, and `#`. Static URL syntax remains unchanged. Add `| raw` only when the value should supply URL syntax itself. Local path placeholders remain ordinary path text.
 
-`{Query}` is shorthand for `{argument name="Query"}`. Repeated named fields share one value; separate unnamed `{argument}` placeholders create separate inputs. Up to eight input fields are supported. Select a Quicklink and press Enter or Tab to fill its parameters directly in the search panel. Tab and Shift+Tab move between fields; Enter opens the completed destination once required fields are filled. The result row previews the destination. Esc closes the picker and discards the parameter draft. The back button returns to the previous search, preserving its query and selection. Backspace in an empty first field also returns to search. No separate input window opens.
+`{Query}` is shorthand for `{argument name="Query"}`. Repeated named fields share one value; separate unnamed `{argument}` placeholders create separate inputs. Up to eight input fields are supported. Select a Quicklink and press Enter or Tab to fill its parameters directly in the search panel. Tab and Shift+Tab move between fields; Enter opens the completed destination once required fields are filled. The result row previews the destination. Esc closes the picker and discards the parameter draft. The back button returns to the previous search, preserving its query and selection. Backspace in an empty field leaves the field and parameter form unchanged. No separate input window opens.
 
 Leave **Open with** empty to use the system's default app. To choose another app, enter its name, bundle identifier, or application path. Opening a link uses macOS URL handling; link text is never interpreted as a shell command.
 

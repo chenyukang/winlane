@@ -148,8 +148,6 @@ define_class!(
                 self.activate_selected(); true
             } else if command == sel!(cancelOperation:) {
                 self.cancel_search(); true
-            } else if command == sel!(deleteBackward:) && self.scoped_search() && self.ivars().query.borrow().is_empty() {
-                self.leave_scoped_search(); true
             } else { false }
         }
     }

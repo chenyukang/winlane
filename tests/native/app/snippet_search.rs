@@ -140,7 +140,7 @@ pub(super) fn verify_snippet_search(mtm: MainThreadMarker) {
     let ui = delegate.panels()[0].clone();
     let editor = NSTextView::initWithFrame(NSTextView::alloc(mtm), rect(0.0, 0.0, 100.0, 30.0));
     assert!(
-        delegate
+        !delegate
             .text_command(
                 sel!(control:textView:doCommandBySelector:),
                 &ui.input,
@@ -150,9 +150,10 @@ pub(super) fn verify_snippet_search(mtm: MainThreadMarker) {
             .as_bool()
     );
     assert!(
-        !delegate.searching_snippets(),
-        "empty Backspace returns to window search"
+        delegate.searching_snippets(),
+        "empty Backspace stays in snippet search"
     );
+    delegate.leave_scoped_search();
     delegate.activate_selected();
     delegate.display_search(state.session.get());
     assert!(

@@ -5,7 +5,7 @@ Open search with **Control + I**, type **projects** or **vscode**, and select **
 - Type part of a project name or path to filter the list. Multiple words must all match, ignoring case.
 - Use the arrow keys or mouse to select a project. Press **Enter** to open it in Visual Studio Code, launching the app if necessary.
 - Press **Command + R** to reload the history.
-- Press **Esc** to close the picker. Click **‹ Projects** or press Backspace in an empty search field to return to window search.
+- Press **Esc** to close the picker. Click **‹ Projects** to return to window search. Backspace only deletes text; an empty search stays in Projects.
 
 Each row shows the project name and its path. Folders and saved `.code-workspace` files are supported. Opening follows VS Code's own window-opening preferences. A deleted, moved, or unmounted project reports an error and leaves the list open.
 

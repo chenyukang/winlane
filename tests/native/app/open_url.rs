@@ -281,7 +281,7 @@ pub(super) fn verify_open_url(mtm: MainThreadMarker) {
     let editor = NSTextView::initWithFrame(NSTextView::alloc(mtm), rect(0.0, 0.0, 100.0, 30.0));
     let ui = delegate.panels()[0].clone();
     assert!(
-        delegate
+        !delegate
             .text_command(
                 sel!(control:textView:doCommandBySelector:),
                 &ui.input,
@@ -290,7 +290,8 @@ pub(super) fn verify_open_url(mtm: MainThreadMarker) {
             )
             .as_bool()
     );
-    assert!(!delegate.scoped_search());
+    assert!(delegate.searching_open_url());
+    delegate.leave_scoped_search();
     tx.send(History {
         pages: pages.clone(),
         ..History::default()

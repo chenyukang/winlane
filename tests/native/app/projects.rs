@@ -153,7 +153,7 @@ pub(super) fn verify_projects_search(mtm: MainThreadMarker) {
     state.query.borrow_mut().clear();
     let editor = NSTextView::initWithFrame(NSTextView::alloc(mtm), rect(0.0, 0.0, 100.0, 30.0));
     assert!(
-        delegate
+        !delegate
             .text_command(
                 sel!(control:textView:doCommandBySelector:),
                 &ui.input,
@@ -162,7 +162,8 @@ pub(super) fn verify_projects_search(mtm: MainThreadMarker) {
             )
             .as_bool()
     );
-    assert!(!delegate.scoped_search());
+    assert!(delegate.searching_projects());
+    delegate.leave_scoped_search();
     let mut cache = Cache::default();
     cache.projects = projects.clone();
     tx.send(ProjectUpdate::Refreshed(cache)).unwrap();

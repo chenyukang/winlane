@@ -244,32 +244,6 @@ impl Delegate {
             self.submit_quicklink_input();
         } else if command == sel!(cancelOperation:) {
             self.cancel_search();
-        } else if command == sel!(deleteBackward:) {
-            let empty = self
-                .ivars()
-                .quicklink_input
-                .borrow()
-                .as_ref()
-                .is_some_and(|input| {
-                    input
-                        .values
-                        .get(&input.template.arguments[input.active].name)
-                        .is_none_or(String::is_empty)
-                });
-            if !empty {
-                return false;
-            }
-            let first = self
-                .ivars()
-                .quicklink_input
-                .borrow()
-                .as_ref()
-                .is_some_and(|input| input.active == 0);
-            if first {
-                self.leave_scoped_search();
-            } else {
-                self.step_quicklink_argument(-1);
-            }
         } else {
             return false;
         }

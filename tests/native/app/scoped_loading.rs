@@ -2,6 +2,7 @@ use super::*;
 use crate::macos::app::projects::ProjectUpdate;
 
 pub(super) fn verify_scoped_loading(mtm: MainThreadMarker) {
+    verify_scope_backspace(mtm);
     verify_scope_escape(mtm);
     use winlane::features::open_url::Page;
     use winlane::features::projects::{Kind, Project};
@@ -74,6 +75,45 @@ pub(super) fn verify_scoped_loading(mtm: MainThreadMarker) {
     }
     verify_deferred_refresh(mtm);
     verify_incremental_projects(mtm);
+}
+
+fn verify_scope_backspace(mtm: MainThreadMarker) {
+    for command in [
+        CommandId::Projects,
+        CommandId::OpenUrl,
+        CommandId::Quicklinks,
+        CommandId::Snippets,
+        CommandId::Clipboard,
+    ] {
+        let delegate = responsive_fixture(mtm);
+        delegate.prepare_command_search(command, 45);
+        let state = delegate.ivars();
+        let scope = state.search_scope.get();
+        let ui = delegate.panels()[0].clone();
+        let editor = NSTextView::initWithFrame(NSTextView::alloc(mtm), rect(0.0, 0.0, 100.0, 30.0));
+        for query in ["example", "", "", ""] {
+            state.query.replace(query.into());
+            delegate.filter();
+            assert!(
+                !delegate
+                    .text_command(
+                        sel!(control:textView:doCommandBySelector:),
+                        &ui.input,
+                        &editor,
+                        sel!(deleteBackward:),
+                    )
+                    .as_bool(),
+                "Backspace must remain native text editing in {command:?}"
+            );
+            assert!(state.search_scope.get() == scope);
+            assert_eq!(state.mode.get(), Some(PanelMode::Search));
+            assert_eq!(state.query.borrow().as_str(), query);
+        }
+        delegate.scope_back(sel!(leaveScopedSearch:), None);
+        assert!(!delegate.scoped_search());
+        assert_eq!(state.query.borrow().as_str(), command.definition().name);
+        delegate.end_session();
+    }
 }
 
 fn verify_scope_escape(mtm: MainThreadMarker) {

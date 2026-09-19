@@ -388,7 +388,12 @@ fn verify_inline_quicklink(mtm: MainThreadMarker) {
         "",
         "reopening must start a fresh draft"
     );
-    assert!(command(&query, sel!(deleteBackward:)));
+    for _ in 0..3 {
+        assert!(!command(&query, sel!(deleteBackward:)));
+        assert!(delegate.editing_quicklink());
+        assert_eq!(state.quicklink_input.borrow().as_ref().unwrap().active, 0);
+    }
+    delegate.leave_scoped_search();
     assert!(!delegate.editing_quicklink());
     assert!(
         delegate.searching_quicklinks(),
@@ -423,8 +428,8 @@ fn verify_inline_quicklink(mtm: MainThreadMarker) {
         drop(bar);
         assert!(command(&inline_control(&ui, 0), sel!(insertBacktab:)));
         assert_eq!(state.quicklink_input.borrow().as_ref().unwrap().active, 7);
-        assert!(command(&inline_control(&ui, 7), sel!(deleteBackward:)));
-        assert_eq!(state.quicklink_input.borrow().as_ref().unwrap().active, 6);
+        assert!(!command(&inline_control(&ui, 7), sel!(deleteBackward:)));
+        assert_eq!(state.quicklink_input.borrow().as_ref().unwrap().active, 7);
         delegate.leave_scoped_search();
     }
     let link = winlane::features::quicklinks::Quicklink { id: "choice".into(), name: "Choice".into(), link: r#"https://example.com/{argument name="Tone" type="choice" options="Friendly\nFormal" default="Formal"}"#.into(), open_with: String::new(), shortcut: None };
