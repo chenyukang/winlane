@@ -159,6 +159,21 @@ impl Delegate {
         shortcut.setAlphaValue(0.65);
         root.addSubview(&shortcut);
 
+        let project_progress = NSProgressIndicator::initWithFrame(
+            NSProgressIndicator::alloc(mtm),
+            rect(WIDTH - 36.0, 546.0, 16.0, 16.0),
+        );
+        project_progress.setStyle(NSProgressIndicatorStyle::Spinning);
+        project_progress.setControlSize(NSControlSize::Small);
+        project_progress.setIndeterminate(true);
+        project_progress.setDisplayedWhenStopped(false);
+        project_progress.setHidden(true);
+        project_progress.setAccessibilityLabel(Some(&NSString::from_str(tr!(
+            "正在更新项目",
+            "Updating projects"
+        ))));
+        root.addSubview(&project_progress);
+
         let input_width = ((WIDTH - 32.0) * 0.618).round();
         let input = NSSearchField::initWithFrame(
             NSSearchField::alloc(mtm),
@@ -272,6 +287,7 @@ impl Delegate {
         root.addSubview(&history_permissions_button);
 
         Rc::new(PanelUi {
+            project_progress,
             display_id,
             panel,
             backdrop,

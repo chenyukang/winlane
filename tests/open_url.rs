@@ -2,7 +2,87 @@ use rusqlite::Connection;
 use std::fs;
 use std::path::Path;
 use winlane::core::commands::{CommandId, matching_commands};
-use winlane::features::open_url::{MAX_URLS, is_web_url, load, matching};
+use winlane::features::open_url::{MAX_RESULTS, MAX_URLS, Page, is_web_url, load, matching};
+
+fn page(url: &str, title: &str, time: i64) -> Page {
+    Page {
+        url: url.into(),
+        title: title.into(),
+        last_visit_time: time,
+    }
+}
+
+#[test]
+fn domain_matches_rank_before_title_and_path_matches() {
+    let pages = vec![
+        page("https://example.test/article", "Video guide", 100),
+        page("https://example.test/video", "Guide", 90),
+        page("https://myvideo.example.test/", "Guide", 80),
+        page("https://videos.example.test/older", "Guide", 5),
+        page("https://www.videos.example.test/newer", "Guide", 10),
+        page("https://www.video/", "Guide", 1),
+    ];
+    let results = matching(&pages, " ViDeO ");
+    assert_eq!(
+        results,
+        [5, 4, 3, 2, 0, 1].map(|index| pages[index].clone()),
+    );
+    assert_eq!(matching(&pages, "videos.example.test").len(), 2);
+    assert!(matching(&pages, "missing").is_empty());
+}
+
+#[test]
+fn domain_ranking_uses_the_host_not_credentials_paths_or_query_parameters() {
+    let pages = vec![
+        page(
+            "https://example.test/?next=https://video.example.test",
+            "Guide",
+            100,
+        ),
+        page("https://example.test/video.example.test", "Guide", 90),
+        page("https://video.example.test@example.test/", "Guide", 80),
+        page("https://video.example.test.other.test/", "Guide", 70),
+        page("https://www.video.example.test:8443/watch", "Guide", 1),
+    ];
+    assert_eq!(
+        matching(&pages, "VIDEO.EXAMPLE.TEST"),
+        [4, 3, 0, 1, 2].map(|index| pages[index].clone()),
+    );
+}
+
+#[test]
+fn multiple_terms_can_match_both_domain_and_title_and_empty_search_is_recent_first() {
+    let pages = vec![
+        page("https://example.test/", "Video Rust 中文", 50),
+        page("https://video.example.test/newer", "Rust 中文", 20),
+        page("https://video.example.test/older", "Rust 中文", 10),
+        page("https://video.example.test/other", "Other", 100),
+    ];
+    assert_eq!(
+        matching(&pages, "video RUST 中文"),
+        pages[1..3]
+            .iter()
+            .chain(&pages[..1])
+            .cloned()
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        matching(&pages, " \t "),
+        [3, 0, 1, 2].map(|index| pages[index].clone()),
+    );
+}
+
+#[test]
+fn ranking_happens_before_the_visible_result_limit() {
+    let mut pages: Vec<_> = (0..MAX_RESULTS)
+        .map(|index| page(&format!("https://example.test/{index}"), "Video guide", 100))
+        .collect();
+    let domain = page("https://video.example.test/", "Home", 1);
+    pages.push(domain.clone());
+    let results = matching(&pages, "video");
+    assert_eq!(results.len(), MAX_RESULTS);
+    assert_eq!(results[0], domain);
+}
 
 fn database(root: &Path, profile: &str, wal: bool) -> Connection {
     let path = root.join(profile);

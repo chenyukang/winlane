@@ -23,6 +23,11 @@ impl Delegate {
         {
             return;
         }
+        self.cancel_project_open_if_switched(
+            pid,
+            app.bundleIdentifier()
+                .is_some_and(|id| id.to_string() == "com.microsoft.VSCode"),
+        );
         self.check_window_liveness();
         self.request_focus(pid, None);
         if self

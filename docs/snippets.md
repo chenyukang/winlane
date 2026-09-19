@@ -4,7 +4,7 @@ Open **Settings → Snippets**, choose **New**, and enter a name and some text. 
 
 Open search with **Control + I**, type **snippet**, and select the **Search snippets** command. This opens a dedicated snippet list: an empty query shows all saved snippets, and typing filters by name or content. Results marked **{}** paste a snippet. Full name matches come before partial names and content matches.
 
-The **‹ Snippets** button returns to ordinary search. You can also press **Esc**, or Backspace when the query is empty; another Esc closes the picker. Spaces stay part of the query in snippet search. Ordinary search and switch mode do not mix in snippets, so window aliases keep their usual behavior. Entering snippet search preserves the application you were using as the paste destination.
+Press **Esc** to close the picker. The **‹ Snippets** button or Backspace when the query is empty returns to ordinary search. Spaces stay part of the query in snippet search. Ordinary search and switch mode do not mix in snippets, so window aliases keep their usual behavior. Entering snippet search preserves the application you were using as the paste destination.
 
 Selecting a snippet pastes plain text into the application that was active before Winlane opened. If it contains input fields, fill them in, review the preview, then choose **Paste** or press Enter. Forms with multiline fields use **Command + Enter** to paste, leaving Enter available for line breaks. Press Esc to cancel. Winlane waits for the destination app to gain focus and for modifier keys to be released; if another app takes focus, it cancels the paste. The expanded text stays on your clipboard. This requires Accessibility permission and a destination that accepts Command + V.
 

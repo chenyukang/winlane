@@ -458,6 +458,23 @@ pub fn focused_window(pid: i32, policy: FocusRead) -> Option<u64> {
     Some(id)
 }
 
+pub fn project_windows(pid: i32) -> Vec<winlane::features::projects::focus::Window> {
+    if !is_trusted() {
+        return Vec::new();
+    }
+    let Some(application) = Element::application(pid) else {
+        return Vec::new();
+    };
+    all_windows(&application, pid, &Inventory::read())
+        .into_iter()
+        .map(|window| winlane::features::projects::focus::Window {
+            id: window.id(pid),
+            title: window.string("AXTitle").unwrap_or_default(),
+            document: window.string("AXDocument"),
+        })
+        .collect()
+}
+
 pub fn list_windows(apps: &[(i32, String)]) -> (Vec<WindowInfo>, HashMap<u64, u32>) {
     if !is_trusted() {
         return (Vec::new(), HashMap::new());

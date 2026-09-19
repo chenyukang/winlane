@@ -50,14 +50,48 @@ pub fn chrome_directory(home: &Path) -> PathBuf {
 
 pub fn matching(pages: &[Page], query: &str) -> Vec<Page> {
     let terms: Vec<_> = query.split_whitespace().map(str::to_lowercase).collect();
-    pages
+    let mut matches: Vec<_> = pages
         .iter()
-        .filter(|page| {
-            let text = format!("{} {}", page.title, page.url).to_lowercase();
-            terms.iter().all(|term| text.contains(term))
+        .filter_map(|page| {
+            if terms.is_empty() {
+                return Some(((0, 0), page));
+            }
+            let title = page.title.to_lowercase();
+            let url = page.url.to_lowercase();
+            if !terms
+                .iter()
+                .all(|term| title.contains(term) || url.contains(term))
+            {
+                return None;
+            }
+            let parsed = url::Url::parse(&page.url).ok();
+            let host = parsed.as_ref().and_then(|url| url.host_str()).unwrap_or("");
+            let host = host.strip_prefix("www.").unwrap_or(host);
+            let rank = terms.iter().fold((0, 0), |(worst, total), term| {
+                let term = term.strip_prefix("www.").unwrap_or(term);
+                let rank = if host == term {
+                    0
+                } else if host.starts_with(term) {
+                    1
+                } else if host.contains(term) {
+                    2
+                } else {
+                    3
+                };
+                (worst.max(rank), total + rank)
+            });
+            Some((rank, page))
         })
+        .collect();
+    matches.sort_by(|(a_rank, a), (b_rank, b)| {
+        a_rank
+            .cmp(b_rank)
+            .then_with(|| b.last_visit_time.cmp(&a.last_visit_time))
+    });
+    matches
+        .into_iter()
         .take(MAX_RESULTS)
-        .cloned()
+        .map(|(_, page)| page.clone())
         .collect()
 }
 

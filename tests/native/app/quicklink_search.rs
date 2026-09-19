@@ -57,7 +57,7 @@ pub(super) fn verify_quicklink_search(mtm: MainThreadMarker) {
     assert!(delegate.searching_quicklinks());
     assert_eq!(delegate.match_count(), 0);
     state.catalog_checked.set(Some(Instant::now()));
-    delegate.cancel_search();
+    delegate.leave_scoped_search();
     assert!(!delegate.scoped_search());
     assert_eq!(state.query.borrow().as_str(), "quicklink");
     delegate.enter_scoped_search(SearchScope::Snippets);
@@ -367,17 +367,13 @@ fn verify_inline_quicklink(mtm: MainThreadMarker) {
     NSTextInputClient::unmarkText(&*editor);
     assert!(command(&query, sel!(cancelOperation:)));
     assert!(!delegate.editing_quicklink());
+    assert_eq!(state.mode.get(), None);
+    assert!(state.search_scope.get().is_none());
+    assert!(!delegate.any_panel_visible());
     assert_eq!(state.query.borrow().as_str(), "Search Example");
-    assert_eq!(delegate.selected_quicklink().unwrap().id, "search-example");
-    assert!(!ui.input.isHidden());
     assert!(ui.quicklink_bar.borrow().view.isHidden());
     assert!(ui.quicklink_bar.borrow().control(0).is_none());
-    assert_ne!(
-        ui.rows.borrow()[0].title.stringValue().to_string(),
-        destination,
-        "returning must clear the inline preview"
-    );
-
+    state.mode.set(Some(PanelMode::Search));
     delegate.enter_scoped_search(SearchScope::Quicklinks);
     state.query.replace("Example".into());
     delegate.filter();
@@ -429,7 +425,7 @@ fn verify_inline_quicklink(mtm: MainThreadMarker) {
         assert_eq!(state.quicklink_input.borrow().as_ref().unwrap().active, 7);
         assert!(command(&inline_control(&ui, 7), sel!(deleteBackward:)));
         assert_eq!(state.quicklink_input.borrow().as_ref().unwrap().active, 6);
-        delegate.cancel_search();
+        delegate.leave_scoped_search();
     }
     let link = winlane::features::quicklinks::Quicklink { id: "choice".into(), name: "Choice".into(), link: r#"https://example.com/{argument name="Tone" type="choice" options="Friendly\nFormal" default="Formal"}"#.into(), open_with: String::new(), shortcut: None };
     delegate.begin_quicklink_input(

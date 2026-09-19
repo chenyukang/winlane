@@ -73,6 +73,9 @@ impl Delegate {
             }),
             self.mtm(),
         );
+        if let Some(draft) = self.ivars().quicklink_editor_draft.take() {
+            editor.restore_draft(draft);
+        }
         self.ivars().quicklink_editor.replace(Some(editor.clone()));
         editor
     }
@@ -240,7 +243,7 @@ impl Delegate {
         } else if command == sel!(insertNewline:) {
             self.submit_quicklink_input();
         } else if command == sel!(cancelOperation:) {
-            self.leave_scoped_search();
+            self.cancel_search();
         } else if command == sel!(deleteBackward:) {
             let empty = self
                 .ivars()

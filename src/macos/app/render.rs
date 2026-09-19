@@ -53,6 +53,18 @@ impl Delegate {
         let project_matches = state.project_matches.borrow();
         let project_cache = state.project_cache.borrow();
         let in_projects = self.searching_projects();
+        let projects_loading = in_projects
+            && (state.project_receiver.borrow().is_some()
+                || state.scoped_refresh_timer.borrow().is_some());
+        if projects_loading && ui.project_progress.isHidden() {
+            ui.project_progress.setHidden(false);
+            // SAFETY: This main-thread AppKit action accepts a nil sender.
+            unsafe { ui.project_progress.startAnimation(None) };
+        } else if !projects_loading && !ui.project_progress.isHidden() {
+            // SAFETY: This main-thread AppKit action accepts a nil sender.
+            unsafe { ui.project_progress.stopAnimation(None) };
+            ui.project_progress.setHidden(true);
+        }
         let clipboard_matches = state.clipboard_matches.borrow();
         let clipboard = state.clipboard.borrow();
         let extra_count = command_matches.len() + snippet_matches.len() + clipboard_matches.len();
@@ -120,7 +132,8 @@ impl Delegate {
             ui.input
                 .setFont(Some(&NSFont::systemFontOfSize(input_font_size)));
         }
-        let header: [(&NSView, f64); 4] = [
+        let header: [(&NSView, f64); 5] = [
+            (&ui.project_progress, height - 43.0),
             (&ui.clipboard_actions, height - 50.0),
             (&ui.input, height - 35.0 - input_height / 2.0),
             (&ui.scope_back, height - 52.0),
@@ -174,7 +187,8 @@ impl Delegate {
             tr!("‹ 片段", "‹ Snippets")
         }));
         ui.clipboard_actions.setHidden(!in_clipboard);
-        ui.shortcut_label.setHidden(in_clipboard || inline);
+        ui.shortcut_label
+            .setHidden(in_clipboard || inline || projects_loading);
         if let Some(item) = ui.clipboard_actions.itemAtIndex(3) {
             item.setTitle(&NSString::from_str(
                 if state.config.borrow().clipboard.enabled {
@@ -325,8 +339,8 @@ impl Delegate {
                     (
                         tr!("没有匹配的剪贴板记录", "No matching clipboard entries"),
                         tr!(
-                            "试试其他关键词，或按 Esc 返回。",
-                            "Try other keywords, or press Esc to go back."
+                            "试试其他关键词，或按 Esc 关闭。",
+                            "Try other keywords, or press Esc to close."
                         ),
                     )
                 }
@@ -365,8 +379,8 @@ impl Delegate {
                     (
                         tr!("无法读取浏览记录", "Could not load browsing history"),
                         tr!(
-                            "按 ⌘R 重试，或按 Esc 返回。",
-                            "Press ⌘R to retry, or Esc to go back."
+                            "按 ⌘R 重试，或按 Esc 关闭。",
+                            "Press ⌘R to retry, or Esc to close."
                         ),
                     )
                 } else if url_history.pages.is_empty() {
@@ -381,8 +395,8 @@ impl Delegate {
                     (
                         tr!("没有匹配的网址", "No matching URLs"),
                         tr!(
-                            "按标题或网址搜索，或按 Esc 返回。",
-                            "Search by title or URL, or press Esc to go back."
+                            "按标题或网址搜索，或按 Esc 关闭。",
+                            "Search by title or URL, or press Esc to close."
                         ),
                     )
                 }
@@ -398,8 +412,8 @@ impl Delegate {
                     (
                         tr!("无法读取最近项目", "Could not load recent projects"),
                         tr!(
-                            "按 ⌘R 重试，或按 Esc 返回。",
-                            "Press ⌘R to retry, or Esc to go back."
+                            "按 ⌘R 重试，或按 Esc 关闭。",
+                            "Press ⌘R to retry, or Esc to close."
                         ),
                     )
                 } else if project_cache.projects.is_empty() {
@@ -414,8 +428,8 @@ impl Delegate {
                     (
                         tr!("没有匹配的项目", "No matching projects"),
                         tr!(
-                            "按项目名或路径搜索，或按 Esc 返回。",
-                            "Search by project name or path, or press Esc to go back."
+                            "按项目名或路径搜索，或按 Esc 关闭。",
+                            "Search by project name or path, or press Esc to close."
                         ),
                     )
                 }
@@ -423,8 +437,8 @@ impl Delegate {
                 (
                     tr!("没有匹配的快捷链接", "No matching quicklinks"),
                     tr!(
-                        "在设置 → 快捷链接中添加或导入链接，或按 Esc 返回。",
-                        "Add or import links in Settings → Quicklinks, or press Esc to go back."
+                        "在设置 → 快捷链接中添加或导入链接，或按 Esc 关闭。",
+                        "Add or import links in Settings → Quicklinks, or press Esc to close."
                     ),
                 )
             } else if snippets {
@@ -432,16 +446,16 @@ impl Delegate {
                     (
                         tr!("还没有片段", "No snippets yet"),
                         tr!(
-                            "在设置 → 片段中新建，或按 Esc 返回窗口搜索。",
-                            "Create one in Settings → Snippets, or press Esc to return to window search."
+                            "在设置 → 片段中新建，或按 Esc 关闭。",
+                            "Create one in Settings → Snippets, or press Esc to close."
                         ),
                     )
                 } else {
                     (
                         tr!("没有匹配的片段", "No matching snippets"),
                         tr!(
-                            "按名称或正文搜索，或按 Esc 返回窗口搜索。",
-                            "Search by name or content, or press Esc to return to window search."
+                            "按名称或正文搜索，或按 Esc 关闭。",
+                            "Search by name or content, or press Esc to close."
                         ),
                     )
                 }
@@ -734,17 +748,20 @@ impl Delegate {
             .and_then(|clipboard| clipboard.error.as_ref());
         let status = if inline {
             tr!(
-                "Tab 切换参数 · ↵ 打开 · Esc 返回",
-                "Tab next field · ↵ open · Esc back"
+                "Tab 切换参数 · ↵ 打开 · Esc 关闭",
+                "Tab next field · ↵ open · Esc close"
             )
             .into()
         } else if in_open_url {
             url_history.error.clone().unwrap_or_else(|| {
                 if let Some(target) = &url_input_target {
                     if matches!(target, winlane::features::open_url::InputTarget::Url(_)) {
-                        tr!("↵ 打开输入的网址 · Esc 返回", "↵ open typed URL · Esc back")
+                        tr!(
+                            "↵ 打开输入的网址 · Esc 关闭",
+                            "↵ open typed URL · Esc close"
+                        )
                     } else {
-                        tr!("↵ Google 搜索 · Esc 返回", "↵ search Google · Esc back")
+                        tr!("↵ Google 搜索 · Esc 关闭", "↵ search Google · Esc close")
                     }
                     .into()
                 } else if state.open_url_receiver.borrow().is_some()
@@ -753,8 +770,8 @@ impl Delegate {
                     tr!("正在更新浏览记录…", "Updating browsing history…").into()
                 } else {
                     trf!(
-                        "{} 个网址 · ↵ 打开 · ⌃↵ 使用输入 · ⌘R 刷新 · Esc 返回",
-                        "{} URLs · ↵ open · ⌃↵ use input · ⌘R refresh · Esc back",
+                        "{} 个网址 · ↵ 打开 · ⌃↵ 使用输入 · ⌘R 刷新 · Esc 关闭",
+                        "{} URLs · ↵ open · ⌃↵ use input · ⌘R refresh · Esc close",
                         open_url.len()
                     )
                 }
@@ -767,8 +784,8 @@ impl Delegate {
                     tr!("正在更新项目…", "Updating projects…").into()
                 } else {
                     trf!(
-                        "{} 个项目 · ↵ 用 VS Code 打开 · ⌘R 刷新 · Esc 返回",
-                        "{} projects · ↵ open in VS Code · ⌘R refresh · Esc back",
+                        "{} 个项目 · ↵ 用 VS Code 打开 · ⌘R 刷新 · Esc 关闭",
+                        "{} projects · ↵ open in VS Code · ⌘R refresh · Esc close",
                         project_matches.len()
                     )
                 }
@@ -793,8 +810,8 @@ impl Delegate {
             .into()
         } else if in_clipboard {
             trf!(
-                "{} · ↵ 粘贴 · ⌘C 复制 · ⌘⌫ 删除 · Esc 返回",
-                "{} · ↵ paste · ⌘C copy · ⌘⌫ delete · Esc back",
+                "{} · ↵ 粘贴 · ⌘C 复制 · ⌘⌫ 删除 · Esc 关闭",
+                "{} · ↵ paste · ⌘C copy · ⌘⌫ delete · Esc close",
                 winlane::features::clipboard::entry_count(
                     clipboard_matches.len(),
                     !state.config.borrow().clipboard.enabled
@@ -802,14 +819,14 @@ impl Delegate {
             )
         } else if self.searching_quicklinks() {
             trf!(
-                "{} 个链接 · ↑↓ 选择 · ↵ 打开 · Esc 返回",
-                "{} links · ↑↓ select · ↵ open · Esc back",
+                "{} 个链接 · ↑↓ 选择 · ↵ 打开 · Esc 关闭",
+                "{} links · ↑↓ select · ↵ open · Esc close",
                 quicklink_matches.len()
             )
         } else if snippets {
             trf!(
-                "{} 个片段 · ↑↓ 选择 · ↵ 粘贴 · Esc 返回",
-                "{} snippets · ↑↓ select · ↵ paste · Esc back",
+                "{} 个片段 · ↑↓ 选择 · ↵ 粘贴 · Esc 关闭",
+                "{} snippets · ↑↓ select · ↵ paste · Esc close",
                 snippet_matches.len()
             )
         } else if state.loading.get() {

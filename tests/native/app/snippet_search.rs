@@ -123,7 +123,7 @@ pub(super) fn verify_snippet_search(mtm: MainThreadMarker) {
                 == tr!("没有匹配的片段", "No matching snippets"))
     );
     state.catalog_checked.set(Some(Instant::now()));
-    delegate.cancel_search();
+    delegate.leave_scoped_search();
     assert!(!delegate.searching_snippets());
     assert_eq!(*state.query.borrow(), "snippet");
     assert_eq!(delegate.selected_command(), Some(CommandId::Snippets));
@@ -172,7 +172,6 @@ pub(super) fn verify_snippet_search(mtm: MainThreadMarker) {
             .all(|ui| ui.empty_labels.borrow()[0].stringValue().to_string()
                 == tr!("还没有片段", "No snippets yet"))
     );
-    delegate.cancel_search();
     delegate.cancel_search();
     assert_eq!(state.mode.get(), None);
     assert!(state.search_scope.get().is_none());

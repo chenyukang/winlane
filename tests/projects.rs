@@ -3,7 +3,92 @@ use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use winlane::features::projects::{Cache, Kind, MAX_PROJECTS, Sources, matching};
+use winlane::features::projects::{
+    Cache, Kind, MAX_PROJECTS, MAX_RESULTS, Project, Sources, matching, snapshot,
+};
+
+fn many_projects() -> Vec<Project> {
+    (0..MAX_PROJECTS)
+        .map(|index| Project {
+            path: PathBuf::from(format!("/example/project-{index:04}")),
+            name: format!("Project {index:04}"),
+            kind: Kind::Folder,
+        })
+        .collect()
+}
+
+#[test]
+fn visible_results_are_bounded_but_search_includes_the_entire_history() {
+    let projects = many_projects();
+    assert_eq!(matching(&projects, ""), projects[..MAX_RESULTS]);
+    assert_eq!(matching(&projects, "project"), projects[..MAX_RESULTS]);
+    assert_eq!(matching(&projects, "0499"), vec![projects[499].clone()]);
+}
+
+#[test]
+fn project_snapshot_survives_restart_and_preserves_only_25_recent_projects() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = snapshot::path(directory.path());
+    let mut projects = many_projects();
+    projects[1].kind = Kind::Workspace;
+    projects[1].name = "Workspace 世界".into();
+    projects.insert(2, projects[0].clone());
+    let expected: Vec<_> = std::iter::once(projects[0].clone())
+        .chain(std::iter::once(projects[1].clone()))
+        .chain(projects[3..].iter().cloned())
+        .take(MAX_RESULTS)
+        .collect();
+    snapshot::save(&path, &projects).unwrap();
+    assert_eq!(snapshot::load(&path).unwrap(), expected);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+    let before = fs::read(&path).unwrap();
+    projects[0].name = "x".repeat(300 * 1024);
+    assert!(snapshot::save(&path, &projects).is_err());
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        before,
+        "failed cache writes are atomic"
+    );
+    snapshot::save(&path, &[]).unwrap();
+    assert!(
+        snapshot::load(&path).unwrap().is_empty(),
+        "an empty successful history clears old cached projects"
+    );
+}
+
+#[test]
+fn malformed_or_oversized_project_snapshots_do_not_prevent_a_fresh_load() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("projects.json");
+    assert!(snapshot::load(&path).is_err());
+    for invalid in [
+        "invalid".to_owned(),
+        r#"{"version":2,"projects":[]}"#.to_owned(),
+        " ".repeat(300 * 1024),
+    ] {
+        fs::write(&path, invalid).unwrap();
+        assert!(snapshot::load(&path).is_err());
+    }
+    fs::write(
+        &path,
+        json!({"version":1,"projects":[
+            {"path":"relative","name":"Bad","kind":"Folder"},
+            {"path":"/example/valid","name":"Valid","kind":"Folder"}
+        ]})
+        .to_string(),
+    )
+    .unwrap();
+    assert_eq!(snapshot::load(&path).unwrap().len(), 1);
+    snapshot::save(&path, &many_projects()).unwrap();
+    assert_eq!(snapshot::load(&path).unwrap().len(), MAX_RESULTS);
+}
 
 struct Fixture(PathBuf);
 impl Fixture {

@@ -70,7 +70,7 @@ pub fn verify_editor(mtm: MainThreadMarker) {
     assert_eq!(saved.borrow()[0].link, "https://example.com/?q={Query}");
     assert!(!editor.ui().message.stringValue().is_empty());
     let copy = QuicklinkEditor::new(Vec::new(), Box::new(|_| Ok(())), mtm);
-    copy.copy_draft_from(&editor);
+    copy.restore_draft(editor.draft());
     assert_eq!(copy.ui().link.stringValue(), editor.ui().link.stringValue());
     assert_eq!(copy.ui().shortcut.read_optional().unwrap(), Some(shortcut));
     assert!(copy.view().window().is_none());

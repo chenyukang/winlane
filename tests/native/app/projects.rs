@@ -1,6 +1,8 @@
 use super::*;
+use crate::macos::app::projects::ProjectUpdate;
 
 pub(super) fn verify_projects_search(mtm: MainThreadMarker) {
+    verify_project_open_cancellation(mtm);
     use winlane::features::projects::{Cache, Kind, Project};
     let temporary =
         std::env::temp_dir().join(format!("winlane-project-open-{}", std::process::id()));
@@ -101,7 +103,7 @@ pub(super) fn verify_projects_search(mtm: MainThreadMarker) {
     let mut cache = Cache::default();
     cache.projects = projects.clone();
     cache.projects.reverse();
-    tx.send(cache).unwrap();
+    tx.send(ProjectUpdate::Refreshed(cache)).unwrap();
     delegate.poll_projects();
     assert_eq!(
         delegate.selected_project(),
@@ -140,7 +142,7 @@ pub(super) fn verify_projects_search(mtm: MainThreadMarker) {
     delegate.activate_selected();
     assert!(delegate.searching_projects());
     assert_eq!(delegate.match_count(), 0);
-    delegate.cancel_search();
+    delegate.leave_scoped_search();
     assert!(!delegate.scoped_search());
     assert_eq!(state.query.borrow().as_str(), "projects");
     assert_eq!(delegate.selected_command(), Some(CommandId::Projects));
@@ -163,7 +165,7 @@ pub(super) fn verify_projects_search(mtm: MainThreadMarker) {
     assert!(!delegate.scoped_search());
     let mut cache = Cache::default();
     cache.projects = projects.clone();
-    tx.send(cache).unwrap();
+    tx.send(ProjectUpdate::Refreshed(cache)).unwrap();
     let before = state.render_passes.get();
     delegate.poll_projects();
     assert_eq!(
@@ -214,4 +216,61 @@ pub(super) fn verify_projects_search(mtm: MainThreadMarker) {
     println!(
         "Projects: explicit entry, MRU order, project/path search, background selection, scope isolation, missing-path errors and Escape."
     );
+}
+
+fn verify_project_open_cancellation(mtm: MainThreadMarker) {
+    use crate::macos::platform::project_open::{OpenedProject, tests::pending};
+    use std::sync::atomic::Ordering;
+    let delegate = Delegate::new(mtm);
+    let state = delegate.ivars();
+    state.demo.set(true);
+    let origin = NSWorkspace::sharedWorkspace()
+        .frontmostApplication()
+        .map_or(0, |app| app.processIdentifier());
+    let (job, _tx, cancelled) = pending(origin);
+    state.project_open.replace(Some(job));
+    state.check_panel_focus.set(true);
+    delegate.poll(sel!(poll:), None);
+    assert!(
+        state.project_open.borrow().is_some(),
+        "a delayed panel resign event must not cancel a project opening after the picker closed"
+    );
+    assert!(!cancelled.load(Ordering::Relaxed));
+    state.project_open.take();
+    let (job, tx, cancelled) = pending(10);
+    state.project_open.replace(Some(job));
+    delegate.cancel_project_open_if_switched(10, false);
+    assert!(state.project_open.borrow().is_some());
+    delegate.cancel_project_open_if_switched(20, true);
+    assert!(state.project_open.borrow().is_some());
+    delegate.cancel_project_open_if_switched(10, false);
+    assert!(state.project_open.borrow().is_none());
+    assert!(cancelled.load(Ordering::Relaxed));
+    assert!(
+        tx.send(Ok(OpenedProject {
+            pid: -1,
+            window: Some(42)
+        }))
+        .is_err()
+    );
+
+    let (job, _tx, cancelled) = pending(10);
+    state.project_open.replace(Some(job));
+    delegate.end_session();
+    assert!(cancelled.load(Ordering::Relaxed));
+
+    let (job, tx, cancelled) = pending(10);
+    state.project_open.replace(Some(job));
+    tx.send(Ok(OpenedProject {
+        pid: -1,
+        window: Some(42),
+    }))
+    .unwrap();
+    state.mode.set(Some(PanelMode::Search));
+    delegate.poll_project_open();
+    assert!(state.project_open.borrow().is_none());
+    assert!(cancelled.load(Ordering::Relaxed));
+    assert_eq!(state.mode.get(), Some(PanelMode::Search));
+    assert!(state.recency.borrow().is_empty());
+    assert!(delegate.panels().is_empty());
 }

@@ -4,6 +4,7 @@ use objc2_foundation::{NSUserDefaults, ns_string};
 use winlane::core::i18n;
 
 pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
+    verify_lazy_pages(target, mtm);
     verify_card_appearances(mtm);
     use winlane::core::i18n::Locale;
     for (locale, title, tabs) in [
@@ -41,33 +42,42 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
         i18n::set_locale(locale);
         let settings = SettingsWindow::new(target, mtm);
         settings.update_updater(false, false, None);
-        assert!(!settings.automatic_updates.isEnabled());
-        assert!(!settings.check_updates.isEnabled());
+        assert!(!settings.general().automatic_updates.isEnabled());
+        assert!(!settings.general().check_updates.isEnabled());
         settings.update_updater(true, true, None);
-        assert!(settings.automatic_updates.isEnabled());
-        assert_eq!(settings.automatic_updates.state(), NSControlStateValueOn);
+        assert!(settings.general().automatic_updates.isEnabled());
         assert_eq!(
-            settings.automatic_updates.action(),
+            settings.general().automatic_updates.state(),
+            NSControlStateValueOn
+        );
+        assert_eq!(
+            settings.general().automatic_updates.action(),
             Some(sel!(toggleAutomaticUpdates:))
         );
         assert_eq!(
-            settings.check_updates.action(),
+            settings.general().check_updates.action(),
             Some(sel!(checkForUpdates:))
         );
         settings.update_updater(true, false, None);
-        assert_eq!(settings.automatic_updates.state(), NSControlStateValueOff);
+        assert_eq!(
+            settings.general().automatic_updates.state(),
+            NSControlStateValueOff
+        );
         settings.update_updater(false, false, Some("invalid feed"));
-        assert!(settings.check_updates.isEnabled());
+        assert!(settings.general().check_updates.isEnabled());
         for control in [
-            &*settings.language,
-            &*settings.appearance,
-            &*settings.density,
-            &*settings.sort,
-            &*settings.input_method,
+            &*settings.general().language,
+            &*settings.appearance().appearance,
+            &*settings.appearance().density,
+            &*settings.windows().sort,
+            &*settings.input().input_method,
         ] {
             assert_eq!(control.action(), Some(sel!(settingsChanged:)));
         }
-        for shortcut in [&settings.search_shortcut, &settings.switch_shortcut] {
+        for shortcut in [
+            &settings.shortcuts().search_shortcut,
+            &settings.shortcuts().switch_shortcut,
+        ] {
             assert_eq!(shortcut.key.action(), Some(sel!(settingsChanged:)));
             assert!(
                 shortcut
@@ -76,10 +86,20 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
                     .all(|control| control.action() == Some(sel!(settingsChanged:)))
             );
         }
-        assert!(settings.excluded.cell().unwrap().sendsActionOnEndEditing());
-        assert_eq!(settings.usage_hints.action(), Some(sel!(settingsChanged:)));
+        assert!(
+            settings
+                .windows()
+                .excluded
+                .cell()
+                .unwrap()
+                .sendsActionOnEndEditing()
+        );
         assert_eq!(
-            settings.usage_hints.title().to_string(),
+            settings.appearance().usage_hints.action(),
+            Some(sel!(settingsChanged:))
+        );
+        assert_eq!(
+            settings.appearance().usage_hints.title().to_string(),
             match locale {
                 Locale::English => "Show footer hints and Settings button",
                 Locale::Chinese => "显示底部提示和设置按钮",
@@ -87,6 +107,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
         );
         assert!(
             settings
+                .appearance()
                 .opacity_input
                 .cell()
                 .unwrap()
@@ -190,6 +211,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
         settings.fill(&config);
         assert_eq!(settings.candidate().unwrap(), config);
         let (_, controls) = settings
+            .shortcuts()
             .command_shortcuts
             .rows
             .iter()
@@ -238,9 +260,12 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
             };
             settings.fill(&config);
             assert_eq!(settings.candidate().unwrap(), config);
-            assert_eq!(settings.language.indexOfSelectedItem(), index as isize);
+            assert_eq!(
+                settings.general().language.indexOfSelectedItem(),
+                index as isize
+            );
         }
-        settings.language.selectItemAtIndex(0);
+        settings.general().language.selectItemAtIndex(0);
         assert_eq!(settings.candidate().unwrap().language, Language::System);
         for (index, input_method) in [
             InputMethod::Current,
@@ -256,45 +281,66 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
                 ..Config::default()
             };
             settings.fill(&config);
-            assert_eq!(settings.input_method.indexOfSelectedItem(), index as isize);
+            assert_eq!(
+                settings.input().input_method.indexOfSelectedItem(),
+                index as isize
+            );
             assert_eq!(settings.candidate().unwrap(), config);
         }
         settings.fill(&Config::default());
-        assert_eq!(settings.input_method.indexOfSelectedItem(), 1);
-        assert_eq!(settings.density.indexOfSelectedItem(), 1);
+        assert_eq!(settings.input().input_method.indexOfSelectedItem(), 1);
+        assert_eq!(settings.appearance().density.indexOfSelectedItem(), 1);
         assert_eq!(
-            settings.density.itemTitleAtIndex(1).to_string(),
+            settings
+                .appearance()
+                .density
+                .itemTitleAtIndex(1)
+                .to_string(),
             match locale {
                 Locale::English => "Normal",
                 Locale::Chinese => "标准",
             }
         );
-        settings.density.selectItemAtIndex(1);
+        settings.appearance().density.selectItemAtIndex(1);
         let normal = settings.candidate().unwrap();
         assert_eq!(normal.display_density, DisplayDensity::Normal);
         settings.fill(&Config::from_json(&normal.to_json().unwrap()).unwrap());
-        assert_eq!(settings.density.indexOfSelectedItem(), 1);
-        settings.opacity_slider.setDoubleValue(67.4);
+        assert_eq!(settings.appearance().density.indexOfSelectedItem(), 1);
+        settings.appearance().opacity_slider.setDoubleValue(67.4);
         settings.opacity_slider_changed();
-        assert_eq!(settings.opacity_input.stringValue().to_string(), "67");
-        crate::macos::ui::material::tests::verify_backdrop_opacity(&settings.opacity_preview, 0.67);
         assert_eq!(
-            settings.opacity_slider.isEnabled(),
+            settings
+                .appearance()
+                .opacity_input
+                .stringValue()
+                .to_string(),
+            "67"
+        );
+        crate::macos::ui::material::tests::verify_backdrop_opacity(
+            &settings.appearance().opacity_preview,
+            0.67,
+        );
+        assert_eq!(
+            settings.appearance().opacity_slider.isEnabled(),
             !crate::macos::ui::material::glass_available()
         );
         assert_eq!(
-            settings.opacity_input.isEnabled(),
+            settings.appearance().opacity_input.isEnabled(),
             !crate::macos::ui::material::glass_available()
         );
         assert_eq!(settings.candidate().unwrap().background_opacity, 67);
         for value in [0, 50, 100] {
             settings
+                .appearance()
                 .opacity_input
                 .setStringValue(&NSString::from_str(&value.to_string()));
             settings.opacity_input_changed().unwrap();
-            assert_eq!(settings.opacity_slider.doubleValue(), f64::from(value));
+            assert_eq!(
+                settings.appearance().opacity_slider.doubleValue(),
+                f64::from(value)
+            );
             crate::macos::ui::material::tests::verify_backdrop_opacity(
-                &settings.opacity_preview,
+                &settings.appearance().opacity_preview,
                 f64::from(value) / 100.0,
             );
             let config = settings.candidate().unwrap();
@@ -303,16 +349,20 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
         }
         for text in ["", "-1", "101", "50.5", "abc"] {
             settings
+                .appearance()
                 .opacity_input
                 .setStringValue(&NSString::from_str(text));
             assert!(settings.opacity_input_changed().is_err());
             assert!(settings.candidate().is_err());
         }
         settings.fill(&Config::default());
-        crate::macos::ui::material::tests::verify_backdrop_opacity(&settings.opacity_preview, 1.0);
+        crate::macos::ui::material::tests::verify_backdrop_opacity(
+            &settings.appearance().opacity_preview,
+            1.0,
+        );
         verify_multiple_search_controls(&settings);
         if let Ok(directory) = std::env::var("WINLANE_PREVIEW_DIR") {
-            settings.set_opacity(65);
+            settings.appearance().set_opacity(65);
             let view = settings.window.contentView().unwrap();
             let background = NSBox::initWithFrame(NSBox::alloc(mtm), view.bounds());
             background.setBoxType(NSBoxType::Custom);
@@ -349,6 +399,65 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
     println!(
         "English and Chinese settings: sidebar navigation, stable window size, grouped layout bounds, configuration round trips passed."
     );
+}
+
+pub fn verify_loaded_pages(settings: &SettingsWindow, expected: &[isize]) {
+    let loaded: Vec<_> = (0..settings.tabs.numberOfTabViewItems())
+        .filter(|&index| !settings.host(index).subviews().is_empty())
+        .collect();
+    assert_eq!(loaded, expected, "only visited pages should have controls");
+}
+
+fn verify_lazy_pages(target: &AnyObject, mtm: MainThreadMarker) {
+    let settings = SettingsWindow::new(target, mtm);
+    let mut config = Config {
+        appearance: Appearance::Dark,
+        display_density: DisplayDensity::Compact,
+        input_method: InputMethod::Chinese,
+        sort: SortOrder::Title,
+        excluded_apps: vec!["com.example.hidden".into()],
+        ..Config::default()
+    };
+    config.clipboard.max_items = 37;
+    config.clipboard.retention_days = 21;
+    settings.fill(&config);
+    settings.update_updater(true, false, None);
+    verify_loaded_pages(&settings, &[]);
+    assert_eq!(settings.candidate().unwrap(), config);
+    settings.select_tab(4);
+    verify_loaded_pages(&settings, &[4]);
+    assert_eq!(settings.candidate().unwrap(), config);
+
+    // A separate editor may update configuration before its Settings page is visited.
+    config.clipboard.max_items = 83;
+    settings.sync_saved_config(&config);
+    settings.select_tab(7);
+    verify_loaded_pages(&settings, &[4, 7]);
+    assert_eq!(settings.candidate().unwrap(), config);
+    settings.select_tab(1);
+    let appearance_control = settings.appearance().opacity_input.clone();
+    settings
+        .appearance()
+        .opacity_input
+        .setStringValue(ns_string!("68"));
+    settings.select_tab(4);
+    settings.select_tab(1);
+    assert_eq!(settings.appearance().opacity_input, appearance_control);
+    assert_eq!(
+        settings
+            .appearance()
+            .opacity_input
+            .stringValue()
+            .to_string(),
+        "68"
+    );
+    config.background_opacity = 68;
+    assert_eq!(settings.candidate().unwrap(), config);
+    for index in [0, 2, 3, 5] {
+        settings.select_tab(index);
+    }
+    verify_loaded_pages(&settings, &[0, 1, 2, 3, 4, 5, 7]);
+    assert_eq!(settings.candidate().unwrap(), config);
 }
 
 fn verify_card_appearances(mtm: MainThreadMarker) {
@@ -399,48 +508,67 @@ pub fn verify_autosave_controls(settings: &SettingsWindow, saved: impl Fn() -> C
         assert!(control.sendAction_to(control.action(), control.target().as_deref()));
     };
     for (index, density) in [(0, DisplayDensity::Compact), (1, DisplayDensity::Normal)] {
-        settings.density.selectItemAtIndex(index);
-        send(&settings.density);
+        settings.appearance().density.selectItemAtIndex(index);
+        send(&settings.appearance().density);
         assert_eq!(saved().display_density, density);
     }
-    settings.switch_delay.setStringValue(ns_string!("150"));
-    send(&settings.switch_delay);
+    settings
+        .windows()
+        .switch_delay
+        .setStringValue(ns_string!("150"));
+    send(&settings.windows().switch_delay);
     assert_eq!(saved().switch_delay_ms, 150);
-    settings.switch_delay.setStringValue(ns_string!("1001"));
-    send(&settings.switch_delay);
+    settings
+        .windows()
+        .switch_delay
+        .setStringValue(ns_string!("1001"));
+    send(&settings.windows().switch_delay);
     assert_eq!(saved().switch_delay_ms, 150);
-    settings.switch_delay.setStringValue(ns_string!("150"));
-    settings.input_method.selectItemAtIndex(2);
-    send(&settings.input_method);
+    settings
+        .windows()
+        .switch_delay
+        .setStringValue(ns_string!("150"));
+    settings.input().input_method.selectItemAtIndex(2);
+    send(&settings.input().input_method);
     assert_eq!(saved().input_method, InputMethod::Chinese);
-    settings.minimized.setState(NSControlStateValueOff);
-    send(&settings.minimized);
+    settings
+        .windows()
+        .minimized
+        .setState(NSControlStateValueOff);
+    send(&settings.windows().minimized);
     assert!(!saved().include_minimized);
     for (state, show) in [
         (NSControlStateValueOff, false),
         (NSControlStateValueOn, true),
     ] {
-        settings.usage_hints.setState(state);
-        send(&settings.usage_hints);
+        settings.appearance().usage_hints.setState(state);
+        send(&settings.appearance().usage_hints);
         assert_eq!(saved().show_usage_hints, show);
     }
-    settings.sort.selectItemAtIndex(1);
-    send(&settings.sort);
+    settings.windows().sort.selectItemAtIndex(1);
+    send(&settings.windows().sort);
     assert_eq!(saved().sort, SortOrder::Application);
     settings
+        .windows()
         .excluded
         .setStringValue(ns_string!("Browser, Editor"));
-    send(&settings.excluded);
+    send(&settings.windows().excluded);
     assert_eq!(saved().excluded_apps, ["Browser", "Editor"]);
-    settings.opacity_slider.setDoubleValue(61.2);
-    send(&settings.opacity_slider);
+    settings.appearance().opacity_slider.setDoubleValue(61.2);
+    send(&settings.appearance().opacity_slider);
     assert_eq!(saved().background_opacity, 61);
-    settings.opacity_input.setStringValue(ns_string!("24"));
-    send(&settings.opacity_input);
+    settings
+        .appearance()
+        .opacity_input
+        .setStringValue(ns_string!("24"));
+    send(&settings.appearance().opacity_input);
     assert_eq!(saved().background_opacity, 24);
     let valid = saved();
-    settings.opacity_input.setStringValue(ns_string!("101"));
-    send(&settings.opacity_input);
+    settings
+        .appearance()
+        .opacity_input
+        .setStringValue(ns_string!("101"));
+    send(&settings.appearance().opacity_input);
     assert_eq!(saved(), valid);
     assert!(
         settings
@@ -449,8 +577,11 @@ pub fn verify_autosave_controls(settings: &SettingsWindow, saved: impl Fn() -> C
             .to_string()
             .starts_with("Not saved:")
     );
-    settings.opacity_input.setStringValue(ns_string!("18"));
-    send(&settings.opacity_input);
+    settings
+        .appearance()
+        .opacity_input
+        .setStringValue(ns_string!("18"));
+    send(&settings.appearance().opacity_input);
     assert_eq!(saved().background_opacity, 18);
     let search = Shortcut {
         control: false,
@@ -460,15 +591,18 @@ pub fn verify_autosave_controls(settings: &SettingsWindow, saved: impl Fn() -> C
         key: "Space".into(),
     };
     let valid = saved();
-    settings.search_shortcut.fill(&search);
+    settings.shortcuts().search_shortcut.fill(&search);
     assert_eq!(
         settings.candidate().unwrap().shortcut,
         search,
         "Command + Space must be accepted from the native controls"
     );
     settings.fill(&valid);
-    settings.search_shortcut.fill(&valid.switch_shortcut);
-    settings.search_shortcut.notify_changed();
+    settings
+        .shortcuts()
+        .search_shortcut
+        .fill(&valid.switch_shortcut);
+    settings.shortcuts().search_shortcut.notify_changed();
     assert_eq!(
         saved(),
         valid,
@@ -514,13 +648,19 @@ fn verify_multiple_search_controls(settings: &SettingsWindow) {
     };
     settings.fill(&config);
     assert_eq!(settings.candidate().unwrap(), config);
-    assert_eq!(settings.add_search.action(), Some(sel!(addSearchShortcut:)));
     assert_eq!(
-        settings.search_rows.borrow()[0].shortcut.key.action(),
+        settings.shortcuts().add_search.action(),
+        Some(sel!(addSearchShortcut:))
+    );
+    assert_eq!(
+        settings.shortcuts().search_rows.borrow()[0]
+            .shortcut
+            .key
+            .action(),
         Some(sel!(settingsChanged:))
     );
     assert_eq!(
-        settings.search_rows.borrow()[0].remove.action(),
+        settings.shortcuts().search_rows.borrow()[0].remove.action(),
         Some(sel!(removeSearchShortcut:))
     );
     let domain = NSString::from_str(&format!(
@@ -540,7 +680,7 @@ fn verify_multiple_search_controls(settings: &SettingsWindow) {
         .unwrap()
     };
     settings.add_search_shortcut();
-    assert_eq!(settings.search_rows.borrow().len(), 2);
+    assert_eq!(settings.shortcuts().search_rows.borrow().len(), 2);
     assert!(
         settings
             .candidate()
@@ -554,7 +694,7 @@ fn verify_multiple_search_controls(settings: &SettingsWindow) {
     );
     assert!(!settings.window.isVisible());
     assert_eq!(preference_window_ids(settings.window.mtm()), before);
-    settings.search_rows.borrow()[1]
+    settings.shortcuts().search_rows.borrow()[1]
         .shortcut
         .fill(&config.shortcut);
     assert!(
@@ -572,7 +712,9 @@ fn verify_multiple_search_controls(settings: &SettingsWindow) {
         key: "KeyU".into(),
         ..Shortcut::default()
     };
-    settings.search_rows.borrow()[1].shortcut.fill(&extra);
+    settings.shortcuts().search_rows.borrow()[1]
+        .shortcut
+        .fill(&extra);
     let candidate = settings.candidate().unwrap();
     save(&candidate, &store).unwrap();
     config.additional_search_shortcuts.push(extra);
@@ -582,7 +724,7 @@ fn verify_multiple_search_controls(settings: &SettingsWindow) {
     save(&candidate, &store).unwrap();
     config.additional_search_shortcuts.remove(0);
     assert_eq!(saved(), config);
-    assert_eq!(settings.search_rows.borrow()[0].remove.tag(), 0);
+    assert_eq!(settings.shortcuts().search_rows.borrow()[0].remove.tag(), 0);
     config.additional_search_shortcuts = (1..winlane::core::config::MAX_SEARCH_SHORTCUTS)
         .map(|n| Shortcut {
             key: format!("F{n}"),
@@ -591,11 +733,11 @@ fn verify_multiple_search_controls(settings: &SettingsWindow) {
         .collect();
     settings.fill(&config);
     assert_eq!(settings.candidate().unwrap(), config);
-    assert!(!settings.add_search.isEnabled());
+    assert!(!settings.shortcuts().add_search.isEnabled());
     settings.add_search_shortcut();
-    assert_eq!(settings.search_rows.borrow().len(), 7);
-    let mut previous = settings.search_header.frame().origin.y;
-    for row in settings.search_rows.borrow().iter() {
+    assert_eq!(settings.shortcuts().search_rows.borrow().len(), 7);
+    let mut previous = settings.shortcuts().search_header.frame().origin.y;
+    for row in settings.shortcuts().search_rows.borrow().iter() {
         let frame = row.view.frame();
         assert!(frame.origin.y >= 0.0);
         assert!(frame.origin.y + frame.size.height <= previous);
@@ -608,23 +750,24 @@ fn verify_multiple_search_controls(settings: &SettingsWindow) {
         }
     }
     assert!(
-        settings.shortcuts_document.frame().size.height
-            > settings.shortcuts_scroll.contentSize().height
+        settings.shortcuts().shortcuts_document.frame().size.height
+            > settings.shortcuts().shortcuts_scroll.contentSize().height
     );
-    assert!(settings.app_shortcuts_card.frame().origin.y >= 0.0);
+    assert!(settings.shortcuts().app_shortcuts_card.frame().origin.y >= 0.0);
     assert!(
-        settings.app_shortcuts_card.frame().origin.y
-            + settings.app_shortcuts_card.frame().size.height
-            < settings.switch_card.frame().origin.y
+        settings.shortcuts().app_shortcuts_card.frame().origin.y
+            + settings.shortcuts().app_shortcuts_card.frame().size.height
+            < settings.shortcuts().switch_card.frame().origin.y
     );
     assert!(
-        settings.switch_card.frame().origin.y + settings.switch_card.frame().size.height
-            < settings.search_card.frame().origin.y
+        settings.shortcuts().switch_card.frame().origin.y
+            + settings.shortcuts().switch_card.frame().size.height
+            < settings.shortcuts().search_card.frame().origin.y
     );
     settings.remove_search_shortcut(6);
-    assert!(settings.add_search.isEnabled());
+    assert!(settings.shortcuts().add_search.isEnabled());
     settings.fill(&Config::default());
-    assert!(settings.search_rows.borrow().is_empty());
+    assert!(settings.shortcuts().search_rows.borrow().is_empty());
     assert_eq!(settings.candidate().unwrap(), Config::default());
     store.removePersistentDomainForName(&domain);
 }
@@ -682,7 +825,7 @@ pub fn verify_sidebar_actions(settings: &SettingsWindow, saved: impl Fn() -> Con
         );
     }
     settings.select_tab(3);
-    unsafe { settings.excluded.selectText(None) };
+    unsafe { settings.windows().excluded.selectText(None) };
     let editor = settings
         .window
         .firstResponder()
@@ -786,7 +929,7 @@ pub fn verify_escape_close(window: &NSWindow) {
 
 pub fn verify_escape_autosave(settings: &SettingsWindow, saved: impl Fn() -> Config) {
     settings.select_tab(3);
-    unsafe { settings.excluded.selectText(None) };
+    unsafe { settings.windows().excluded.selectText(None) };
     let editor = settings
         .window
         .firstResponder()

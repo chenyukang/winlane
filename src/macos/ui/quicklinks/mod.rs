@@ -14,6 +14,14 @@ use winlane::features::quicklinks::{self, Quicklink};
 use winlane::{tr, trf};
 
 type Save = Box<dyn Fn(Vec<Quicklink>) -> Result<(), String>>;
+
+#[derive(Debug, PartialEq)]
+pub(crate) struct QuicklinkEditorDraft {
+    links: Vec<Quicklink>,
+    saved: Vec<Quicklink>,
+    selected: Option<usize>,
+}
+
 pub(crate) struct EditorState {
     ui: OnceCell<EditorUi>,
     links: RefCell<Vec<Quicklink>>,
@@ -222,14 +230,18 @@ impl QuicklinkEditor {
     pub fn view(&self) -> &NSView {
         &self.ui().root
     }
-    pub fn copy_draft_from(&self, old: &Self) {
-        self.ivars()
-            .links
-            .replace(old.ivars().links.borrow().clone());
-        self.ivars()
-            .saved
-            .replace(old.ivars().saved.borrow().clone());
-        self.ivars().selected.set(old.ivars().selected.get());
+    pub fn draft(&self) -> QuicklinkEditorDraft {
+        QuicklinkEditorDraft {
+            links: self.ivars().links.borrow().clone(),
+            saved: self.ivars().saved.borrow().clone(),
+            selected: self.ivars().selected.get(),
+        }
+    }
+
+    pub fn restore_draft(&self, draft: QuicklinkEditorDraft) {
+        self.ivars().links.replace(draft.links);
+        self.ivars().saved.replace(draft.saved);
+        self.ivars().selected.set(draft.selected);
         self.fill();
     }
     fn report(&self, message: &str) {

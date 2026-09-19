@@ -52,6 +52,7 @@ impl Delegate {
         direction: i8,
         scope: Option<SearchScope>,
     ) {
+        self.ivars().project_open.take();
         self.ivars().preparing_panel.set(true);
         self.cancel_scoped_refresh();
         self.clear_quicklink_input();
@@ -270,11 +271,7 @@ impl Delegate {
     }
 
     pub(super) fn cancel_search(&self) {
-        if self.scoped_search() {
-            self.leave_scoped_search();
-        } else {
-            self.dismiss();
-        }
+        self.dismiss();
     }
 
     pub(super) fn dismiss(&self) {
@@ -300,6 +297,7 @@ impl Delegate {
     }
 
     pub(super) fn end_session(&self) {
+        self.ivars().project_open.take();
         self.cancel_scoped_refresh();
         self.clear_quicklink_input();
         let clipboard = self.searching_clipboard();
@@ -328,6 +326,9 @@ impl Delegate {
         state.switch_selection.replace(None);
         state.check_panel_focus.set(false);
         for ui in self.panels() {
+            // SAFETY: This main-thread AppKit action accepts a nil sender.
+            unsafe { ui.project_progress.stopAnimation(None) };
+            ui.project_progress.setHidden(true);
             ui.panel.orderOut(None);
         }
         let deferred = state.deferred_windows.borrow_mut().take();

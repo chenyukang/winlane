@@ -253,7 +253,7 @@ pub(super) fn verify_open_url(mtm: MainThreadMarker) {
         delegate.open_url_target(true),
         "both actions use input when nothing matches"
     );
-    delegate.cancel_search();
+    delegate.leave_scoped_search();
     assert_eq!(state.query.borrow().as_str(), "open-url");
     assert_eq!(delegate.selected_command(), Some(CommandId::OpenUrl));
     assert_eq!(state.open_url_history.borrow().pages.len(), 2);

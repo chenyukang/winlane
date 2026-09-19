@@ -16,6 +16,13 @@ use winlane::{tr, trf};
 
 type Save = Box<dyn Fn(Vec<Snippet>) -> Result<(), String>>;
 
+#[derive(Debug, PartialEq)]
+pub(crate) struct SnippetEditorDraft {
+    snippets: Vec<Snippet>,
+    saved: Vec<Snippet>,
+    selected: Option<usize>,
+}
+
 pub(crate) struct EditorState {
     ui: OnceCell<EditorUi>,
     snippets: RefCell<Vec<Snippet>>,
@@ -293,14 +300,18 @@ impl SnippetEditor {
         }
     }
 
-    pub fn copy_draft_from(&self, previous: &Self) {
-        self.ivars()
-            .snippets
-            .replace(previous.ivars().snippets.borrow().clone());
-        self.ivars()
-            .saved
-            .replace(previous.ivars().saved.borrow().clone());
-        self.ivars().selected.set(previous.ivars().selected.get());
+    pub fn draft(&self) -> SnippetEditorDraft {
+        SnippetEditorDraft {
+            snippets: self.ivars().snippets.borrow().clone(),
+            saved: self.ivars().saved.borrow().clone(),
+            selected: self.ivars().selected.get(),
+        }
+    }
+
+    pub fn restore_draft(&self, draft: SnippetEditorDraft) {
+        self.ivars().snippets.replace(draft.snippets);
+        self.ivars().saved.replace(draft.saved);
+        self.ivars().selected.set(draft.selected);
         self.fill();
     }
     fn ui(&self) -> &EditorUi {

@@ -53,6 +53,9 @@ impl Delegate {
             }),
             self.mtm(),
         );
+        if let Some(draft) = self.ivars().snippet_editor_draft.take() {
+            editor.restore_draft(draft);
+        }
         self.ivars().snippet_editor.replace(Some(editor.clone()));
         editor
     }

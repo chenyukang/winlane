@@ -57,11 +57,11 @@ The letters beside each window are its **alias**. Type those letters while holdi
 
 ### Reopen a VS Code project
 
-Search for **projects** or **vscode** and select **Open recent VS Code projects**. Browse recent folders and workspaces, filter by project name or path, then press Enter to open one in VS Code. This also works when the project has no open window or VS Code is not running. Press Esc to return to window search, or **Command + R** to refresh the projects. See [recent projects](docs/projects.md) for supported locations and caching.
+Search for **projects** or **vscode** and select **Open recent VS Code projects**. Browse recent folders and workspaces, filter by project name or path, then press Enter to open one in VS Code. This also works when the project has no open window or VS Code is not running. Press Esc to close the picker, or **Command + R** to refresh the projects. See [recent projects](docs/projects.md) for supported locations and caching.
 
 ### Open a URL or search the web
 
-Search for **open-url** and select **Open URL or search Google**. The first matching history item is selected automatically; press Enter to open it, or use the arrow keys to select another. **Control + Enter** uses your input directly: open a URL in Chrome or search keywords on Google. Enter also uses your input when nothing matches. **Command + R** refreshes; Esc returns to window search. History loads in the background only after entering the command. Assign a direct shortcut in **Settings → Shortcuts → Command shortcuts**; other built-in commands support shortcuts there too. See [Open URL](docs/open-url.md) for profile support and limits.
+Search for **open-url** and select **Open URL or search Google**. The first matching history item is selected automatically; press Enter to open it, or use the arrow keys to select another. **Control + Enter** uses your input directly: open a URL in Chrome or search keywords on Google. Enter also uses your input when nothing matches. **Command + R** refreshes; Esc closes the picker. History loads in the background only after entering the command. Assign a direct shortcut in **Settings → Shortcuts → Command shortcuts**; other built-in commands support shortcuts there too. See [Open URL](docs/open-url.md) for profile support and limits.
 
 ### Open saved links
 
@@ -69,7 +69,7 @@ Save websites, app links, and folders in **Settings → Quicklinks**, or import 
 
 ### Reuse text with snippets
 
-Create plain-text snippets in **Settings → Snippets**. Valid edits save automatically. Search for **snippet** and select the command to browse or search your snippets, then press Enter to paste into the app you were using before opening Winlane. Press Esc to return to window search; snippets stay out of ordinary window results.
+Create plain-text snippets in **Settings → Snippets**. Valid edits save automatically. Search for **snippet** and select the command to browse or search your snippets, then press Enter to paste into the app you were using before opening Winlane. Press Esc to close the picker; snippets stay out of ordinary window results.
 
 Use **Insert Placeholder** for clipboard text, date presets with live previews, or custom text, multiline and dropdown fields. Configure defaults and required fields in Settings, then fill them in before pasting. See [snippet placeholders and examples](docs/snippets.md).
 

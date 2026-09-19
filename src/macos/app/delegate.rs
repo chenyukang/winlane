@@ -47,6 +47,7 @@ define_class!(
                 }
             }
             self.build_ui();
+            self.preload_projects();
             self.ivars().clipboard.replace(Some(crate::macos::platform::clipboard::ClipboardRuntime::new(self.ivars().config.borrow().clipboard.clone())));
             self.configure_clipboard_timer();
             self.register_hotkeys();
@@ -85,6 +86,15 @@ define_class!(
                 true
             }
         }
+        #[unsafe(method(windowWillClose:))]
+        fn settings_closed(&self, notification: &NSNotification) {
+            if let Some(window) = notification.object().and_then(|object| object.downcast::<NSWindow>().ok())
+                && self.settings_window().is_some_and(|settings| settings.window == window)
+            {
+                self.ivars().settings_release_pending.set(true);
+                self.ivars().wake.get().unwrap().signal();
+            }
+        }
         #[unsafe(method(windowDidResignKey:))]
         fn resigned(&self, notification: &NSNotification) {
             let Some(window) = notification.object().and_then(|object| object.downcast::<NSWindow>().ok()) else { return; };
@@ -100,6 +110,7 @@ define_class!(
         #[unsafe(method(tabView:didSelectTabViewItem:))]
         fn settings_tab_changed(&self, _: &NSTabView, _: Option<&NSTabViewItem>) {
             if let Some(settings) = self.settings_window() { settings.layout_selected_tab(); }
+            self.ensure_settings_editor();
         }
     }
     unsafe impl NSControlTextEditingDelegate for Delegate {
@@ -459,7 +470,9 @@ define_class!(
         fn clear_clipboard_action(&self, _: Option<&AnyObject>) { self.confirm_clear_clipboard(); }
         #[unsafe(method(poll:))]
         fn poll(&self, _: Option<&AnyObject>) {
+            self.release_closed_settings();
             if self.ivars().check_panel_focus.replace(false)
+                && self.ivars().mode.get().is_some()
                 && !self.ivars().changing_displays.get()
                 && !self.any_panel_key()
             { self.end_session(); }
@@ -468,6 +481,7 @@ define_class!(
             self.drain_shortcut_actions();
             self.poll_focus();
             self.poll_app_launch();
+            self.poll_project_open();
             self.poll_app_catalog();
             self.poll_projects();
             self.poll_open_url();

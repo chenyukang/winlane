@@ -70,6 +70,9 @@ pub(super) fn verify_autosave(mtm: MainThreadMarker) {
     crate::macos::ui::settings::tests::verify_escape_close(&settings.window);
     crate::macos::ui::settings::tests::verify_escape_close(&shortcuts.window);
     crate::macos::ui::settings::tests::verify_escape_autosave(&settings, saved);
+    assert!(delegate.ivars().settings_release_pending.get());
+    delegate.release_closed_settings();
+    assert!(delegate.settings_window().is_none());
     println!(
         "Settings Escape checks passed: all three windows close, active edits save, IME composition and modified Escape do not close windows."
     );
@@ -77,5 +80,116 @@ pub(super) fn verify_autosave(mtm: MainThreadMarker) {
     winlane::core::i18n::set_locale(previous_locale);
     println!(
         "Autosave checks passed: native actions persisted to an isolated preferences domain; invalid values and conflicts preserved prior settings; no keyboard taps installed."
+    );
+    verify_settings_lifecycle(mtm);
+}
+
+fn verify_settings_lifecycle(mtm: MainThreadMarker) {
+    use crate::macos::ui::settings::tests::verify_loaded_pages;
+    use objc2::rc::autoreleasepool;
+
+    let delegate = Delegate::new(mtm);
+    let initial = Config {
+        snippets: vec![winlane::features::snippets::Snippet {
+            id: "greeting".into(),
+            name: "Greeting".into(),
+            body: "Hello {clipboard}".into(),
+        }],
+        quicklinks: vec![winlane::features::quicklinks::Quicklink {
+            id: "docs".into(),
+            name: "Docs".into(),
+            link: "https://example.com/docs".into(),
+            open_with: String::new(),
+            shortcut: None,
+        }],
+        ..Config::default()
+    };
+    delegate.ivars().config.replace(initial.clone());
+    let (window, snippet_view, quicklink_view, snippet, quicklink, snippet_draft, quicklink_draft) =
+        autoreleasepool(|_| {
+            let settings = delegate.ensure_settings_window();
+            verify_loaded_pages(&settings, &[4]);
+            assert!(delegate.ivars().snippet_editor.borrow().is_none());
+            assert!(delegate.ivars().quicklink_editor.borrow().is_none());
+            assert_eq!(settings.candidate().unwrap(), initial);
+            settings.select_tab(6);
+            let snippet = delegate.ivars().snippet_editor.borrow().clone().unwrap();
+            assert!(delegate.ivars().quicklink_editor.borrow().is_none());
+            settings.select_tab(8);
+            let quicklink = delegate.ivars().quicklink_editor.borrow().clone().unwrap();
+            // Unfinished additions are drafts; they must survive without being saved.
+            unsafe {
+                let _: () = msg_send![&*snippet, addSnippet: None::<&AnyObject>];
+                let _: () = msg_send![&*quicklink, addQuicklink: None::<&AnyObject>];
+            }
+            assert_eq!(*delegate.ivars().config.borrow(), initial);
+            verify_loaded_pages(&settings, &[4, 6, 8]);
+            let result = (
+                Weak::new(&*settings.window),
+                Weak::new(snippet.view()),
+                Weak::new(quicklink.view()),
+                Weak::new(&*snippet),
+                Weak::new(&*quicklink),
+                snippet.draft(),
+                quicklink.draft(),
+            );
+            settings.window.close();
+            assert!(delegate.ivars().settings_release_pending.get());
+            assert!(
+                delegate.settings_window().is_some(),
+                "release must wait until close returns"
+            );
+            delegate.release_closed_settings();
+            assert!(delegate.settings_window().is_none());
+            assert!(delegate.ivars().snippet_editor.borrow().is_none());
+            assert!(delegate.ivars().quicklink_editor.borrow().is_none());
+            result
+        });
+    assert!(
+        window.load().is_none(),
+        "closed Settings window was retained"
+    );
+    assert!(
+        snippet_view.load().is_none(),
+        "snippet controls were retained"
+    );
+    assert!(
+        quicklink_view.load().is_none(),
+        "quicklink controls were retained"
+    );
+    assert!(snippet.load().is_none());
+    assert!(quicklink.load().is_none());
+
+    for _ in 0..2 {
+        let (window, snippet, quicklink) = autoreleasepool(|_| {
+            let settings = delegate.ensure_settings_window();
+            assert_eq!(settings.selected_tab(), 8);
+            verify_loaded_pages(&settings, &[8]);
+            assert!(delegate.ivars().snippet_editor.borrow().is_none());
+            assert!(delegate.ivars().snippet_editor_draft.borrow().is_some());
+            let quicklink = delegate.ivars().quicklink_editor.borrow().clone().unwrap();
+            assert_eq!(quicklink.draft(), quicklink_draft);
+            settings.select_tab(6);
+            let snippet = delegate.ivars().snippet_editor.borrow().clone().unwrap();
+            assert_eq!(snippet.draft(), snippet_draft);
+            assert_eq!(settings.candidate().unwrap(), initial);
+            assert_eq!(*delegate.ivars().config.borrow(), initial);
+            verify_loaded_pages(&settings, &[6, 8]);
+            settings.select_tab(8);
+            let weak = (
+                Weak::new(&*settings.window),
+                Weak::new(&*snippet),
+                Weak::new(&*quicklink),
+            );
+            settings.window.close();
+            delegate.release_closed_settings();
+            weak
+        });
+        assert!(window.load().is_none());
+        assert!(snippet.load().is_none());
+        assert!(quicklink.load().is_none());
+    }
+    println!(
+        "Settings lifecycle checks passed: pages load on demand; windows and editors release on close; drafts and saved values survive repeated reopen."
     );
 }

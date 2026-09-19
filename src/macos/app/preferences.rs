@@ -7,18 +7,63 @@ impl Delegate {
     }
 
     pub(super) fn ensure_settings_window(&self) -> Rc<SettingsWindow> {
+        self.release_closed_settings();
         if let Some(window) = self.settings_window() {
             return window;
         }
         let window = Rc::new(SettingsWindow::new(self, self.mtm()));
+        window.fill(&self.ivars().config.borrow());
         window
             .window
             .setDelegate(Some(ProtocolObject::from_ref(self)));
         self.ivars().settings.replace(Some(window.clone()));
-        window.embed_snippets(self.ensure_snippet_editor().view());
-        window.embed_quicklinks(self.ensure_quicklink_editor().view());
         self.update_update_settings();
+        window.select_tab(self.ivars().settings_last_tab.get().unwrap_or(4));
+        self.ensure_settings_editor();
         window
+    }
+
+    pub(super) fn ensure_settings_editor(&self) {
+        let Some(settings) = self.settings_window() else {
+            return;
+        };
+        match settings.selected_tab() {
+            6 => settings.embed_snippets(self.ensure_snippet_editor().view()),
+            8 => settings.embed_quicklinks(self.ensure_quicklink_editor().view()),
+            _ => {}
+        }
+    }
+
+    fn release_settings_editors(&self) {
+        if let Some(editor) = self.ivars().snippet_editor.take() {
+            self.ivars()
+                .snippet_editor_draft
+                .replace(Some(editor.draft()));
+        }
+        if let Some(editor) = self.ivars().quicklink_editor.take() {
+            self.ivars()
+                .quicklink_editor_draft
+                .replace(Some(editor.draft()));
+        }
+    }
+
+    pub(super) fn release_closed_settings(&self) {
+        if !self.ivars().settings_release_pending.replace(false) {
+            return;
+        }
+        let Some(settings) = self.settings_window() else {
+            return;
+        };
+        if settings.window.isVisible() {
+            return;
+        }
+        // Release after AppKit finishes dispatching the window's close notification.
+        self.ivars()
+            .settings_last_tab
+            .set(Some(settings.selected_tab()));
+        settings.window.setDelegate(None);
+        self.release_settings_editors();
+        self.ivars().settings.take();
     }
 
     pub(super) fn prepare_update_ui(&self) {
@@ -113,16 +158,21 @@ impl Delegate {
         if visible {
             self.present_panels();
         }
-        let old_quicklink_editor = state.quicklink_editor.take();
-        let old_snippet_editor = state.snippet_editor.take();
+        if let Some(settings) = self.settings_window() {
+            settings.window.makeFirstResponder(None);
+        }
+        self.release_settings_editors();
+        state.settings_release_pending.set(false);
         let old_settings = state.settings.take();
         if let Some(old) = old_settings {
             let showing = old.window.isVisible();
             let frame = old.window.frame();
             let tab = old.selected_tab();
+            state.settings_last_tab.set(Some(tab));
             let candidate = old
                 .candidate()
                 .unwrap_or_else(|_| state.config.borrow().clone());
+            old.window.setDelegate(None);
             old.window.close();
             if showing {
                 let window = self.ensure_settings_window();
@@ -131,12 +181,6 @@ impl Delegate {
                 window.window.setFrameOrigin(frame.origin);
                 self.report_shortcut_status();
             }
-        }
-        if let Some(old) = old_quicklink_editor {
-            self.ensure_quicklink_editor().copy_draft_from(&old);
-        }
-        if let Some(old) = old_snippet_editor {
-            self.ensure_snippet_editor().copy_draft_from(&old);
         }
         let old_alias_rules = state.alias_rules.take();
         if let Some(old) = old_alias_rules {
@@ -240,12 +284,7 @@ impl Delegate {
             preference_store::apply_appearance(&candidate, self.mtm());
         }
         if let Some(settings) = self.settings_window() {
-            settings.set_app_shortcuts(&candidate.app_shortcuts);
-            settings.set_command_shortcuts(&candidate.command_shortcuts);
-            settings.set_alias_rules(&candidate.alias_rules);
-            settings.set_snippets(&candidate.snippets);
-            settings.set_quicklinks(&candidate.quicklinks);
-            settings.fill_clipboard(&candidate.clipboard);
+            settings.sync_saved_config(&candidate);
         }
         let language_changed = candidate.language != previous.language
             && preference_store::apply_language(candidate.language);

@@ -4,7 +4,10 @@ use objc2::rc::{Retained, autoreleasepool};
 use objc2_app_kit::{NSRunningApplication, NSWorkspace, NSWorkspaceOpenConfiguration};
 use objc2_foundation::{NSArray, NSError, NSString, NSURL};
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver};
+use std::time::{Duration, Instant};
 use winlane::features::projects::Project;
 use winlane::{tr, trf};
 
@@ -22,6 +25,25 @@ pub fn application_path() -> Option<PathBuf> {
 pub struct PreparedProject {
     pub(crate) project: Retained<NSURL>,
     application: Retained<NSURL>,
+    target: Project,
+}
+
+pub struct OpenedProject {
+    pub pid: i32,
+    pub window: Option<u64>,
+}
+
+pub struct PendingProjectOpen {
+    pub receiver: Receiver<Result<OpenedProject, String>>,
+    pub origin_pid: i32,
+    pub target_seen: bool,
+    cancelled: Arc<AtomicBool>,
+}
+
+impl Drop for PendingProjectOpen {
+    fn drop(&mut self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+    }
 }
 
 impl PreparedProject {
@@ -37,14 +59,18 @@ impl PreparedProject {
         Ok(Self {
             project: NSURL::fileURLWithPath(&NSString::from_str(&project.path.to_string_lossy())),
             application,
+            target: project.clone(),
         })
     }
 
-    pub fn open(self, wake: WakeHandle) -> Receiver<Result<i32, String>> {
+    pub fn open(self, origin_pid: i32, wake: WakeHandle) -> PendingProjectOpen {
         let configuration = NSWorkspaceOpenConfiguration::configuration();
         configuration.setActivates(true);
         configuration.setCreatesNewApplicationInstance(false);
         let (tx, rx) = mpsc::channel();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let worker_cancelled = cancelled.clone();
+        let project = self.target;
         let completion =
             RcBlock::new(move |app: *mut NSRunningApplication, error: *mut NSError| {
                 autoreleasepool(|_| {
@@ -66,8 +92,20 @@ impl PreparedProject {
                             .into())
                         }
                     };
-                    let _ = tx.send(result);
-                    wake.signal();
+                    let tx = tx.clone();
+                    let wake = wake.clone();
+                    let cancelled = worker_cancelled.clone();
+                    let project = project.clone();
+                    std::thread::spawn(move || {
+                        let result = result.map(|pid| OpenedProject {
+                            pid,
+                            window: wait_for_window(pid, &project, &cancelled),
+                        });
+                        if !cancelled.load(Ordering::Relaxed) {
+                            let _ = tx.send(result);
+                            wake.signal();
+                        }
+                    });
                 });
             });
         NSWorkspace::sharedWorkspace()
@@ -77,6 +115,36 @@ impl PreparedProject {
                 &configuration,
                 Some(&completion),
             );
-        rx
+        PendingProjectOpen {
+            receiver: rx,
+            origin_pid,
+            target_seen: false,
+            cancelled,
+        }
     }
 }
+
+fn wait_for_window(pid: i32, project: &Project, cancelled: &AtomicBool) -> Option<u64> {
+    if !super::accessibility::is_trusted() {
+        return None;
+    }
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let mut ready = winlane::features::projects::focus::ReadyWindow::default();
+    while Instant::now() < deadline && !cancelled.load(Ordering::Relaxed) {
+        let candidate = winlane::features::projects::focus::target_window(
+            project,
+            &super::accessibility::project_windows(pid),
+        );
+        // Electron publishes intermediate windows while restoring a project.
+        // Require the same identified window on two separate observations.
+        if let Some(window) = ready.observe(candidate) {
+            return Some(window);
+        }
+        std::thread::sleep(Duration::from_millis(120));
+    }
+    None
+}
+
+#[cfg(test)]
+#[path = "../../../tests/native/project_open.rs"]
+pub(crate) mod tests;

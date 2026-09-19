@@ -152,7 +152,7 @@ pub(super) fn verify_clipboard_search(mtm: MainThreadMarker) {
         "Space belongs to history search"
     );
     state.catalog_checked.set(Some(Instant::now()));
-    delegate.cancel_search();
+    delegate.leave_scoped_search();
     assert!(!delegate.scoped_search());
     assert_eq!(*state.query.borrow(), "clipboard");
     assert_eq!(delegate.selected_command(), Some(CommandId::Clipboard));
@@ -169,7 +169,6 @@ pub(super) fn verify_clipboard_search(mtm: MainThreadMarker) {
             .entries
             .is_empty()
     );
-    delegate.cancel_search();
     delegate.cancel_search();
     assert_eq!(state.mode.get(), None);
     state.clipboard.take();

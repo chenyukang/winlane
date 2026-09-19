@@ -1,5 +1,6 @@
 use crate::{tr, trf};
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::fs;
@@ -9,14 +10,18 @@ use std::time::{Duration, SystemTime};
 
 const MAX_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_PROJECTS: usize = 500;
+pub const MAX_RESULTS: usize = 25;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub mod focus;
+pub mod snapshot;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Kind {
     Folder,
     Workspace,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Project {
     pub path: PathBuf,
     pub name: String,
@@ -136,6 +141,7 @@ pub fn matching(projects: &[Project], query: &str) -> Vec<Project> {
             let text = format!("{} {}", project.name, project.path.display()).to_lowercase();
             terms.iter().all(|term| text.contains(term))
         })
+        .take(MAX_RESULTS)
         .cloned()
         .collect()
 }
