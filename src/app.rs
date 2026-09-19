@@ -389,7 +389,7 @@ define_class!(
                 // Reuse the panel's blurred backdrop beneath a uniform translucent tint.
                 NSColor::whiteColor().colorWithAlphaComponent(0.10).setFill();
                 glass.fill();
-                tint(0x76a1df, 0.20).setFill();
+                tint(0x76a1df, 0.26).setFill();
                 glass.fill();
                 NSColor::whiteColor().colorWithAlphaComponent(0.28).setStroke();
                 glass.setLineWidth(1.0);
