@@ -206,6 +206,21 @@ fn verify_async_focus_order(mtm: MainThreadMarker) {
     state.mode.set(Some(PanelMode::Search));
     delegate.filter();
     let selected = delegate.selected_window().unwrap().id;
+    let old_tx = pending_test_focus(&delegate, -1);
+    old_tx.send(Some(3)).unwrap();
+    let tx = pending_test_focus(&delegate, -1);
+    let before = state.recency.borrow().clone();
+    delegate.poll_focus();
+    assert_eq!(*state.recency.borrow(), before);
+    assert!(
+        old_tx.send(Some(3)).is_err(),
+        "superseded focus queries are detached"
+    );
+    tx.send(Some(1)).unwrap();
+    delegate.poll_focus();
+    assert_eq!(state.recency.borrow()[0], 1);
+    assert_eq!(delegate.selected_window().unwrap().id, selected);
+
     let tx = pending_test_focus(&delegate, -1);
     tx.send(Some(1)).unwrap();
     delegate.poll_focus();

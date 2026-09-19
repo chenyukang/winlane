@@ -1,7 +1,8 @@
 use winlane::config::{Config, visible_matches};
 use winlane::discovery::{
-    AX_CANNOT_COMPLETE, finish_application_scan, merge_window_sources, normal_window_surface,
-    read_published_windows, read_with_retry, remote_window_token, switchable_window,
+    AX_CANNOT_COMPLETE, AX_NO_VALUE, FocusRead, finish_application_scan, merge_window_sources,
+    normal_window_surface, read_focused_window, read_published_windows, read_with_retry,
+    remote_window_token, switchable_window,
 };
 use winlane::search::WindowInfo;
 
@@ -78,6 +79,72 @@ fn a_slow_application_gets_one_longer_read_attempt() {
     assert_eq!(result, Ok("window list"));
     assert_eq!(timeouts.len(), 2);
     assert!(timeouts[1] > timeouts[0]);
+}
+
+#[test]
+fn a_slow_focused_window_does_not_block_the_shortcut_but_can_resolve_in_background() {
+    for (policy, expected, calls) in [
+        (FocusRead::Immediate, Err(AX_CANNOT_COMPLETE), 1),
+        (FocusRead::Background, Ok(42), 2),
+    ] {
+        let mut timeouts = Vec::new();
+        let result = read_focused_window(policy, |timeout| {
+            timeouts.push(timeout);
+            if timeout < 0.3 {
+                Err(AX_CANNOT_COMPLETE)
+            } else {
+                Ok(42)
+            }
+        });
+        assert_eq!(result, expected);
+        assert_eq!(timeouts.len(), calls);
+        if calls == 1 {
+            assert_eq!(timeouts, [0.02]);
+        } else {
+            assert!(timeouts[0] > 0.02);
+            assert!(timeouts[1] > timeouts[0]);
+            assert!(timeouts.iter().sum::<f32>() <= 1.0);
+        }
+    }
+}
+
+#[test]
+fn a_window_exposed_after_activation_gets_one_background_retry() {
+    let mut calls = 0;
+    let result = read_focused_window(FocusRead::Background, |_| {
+        calls += 1;
+        if calls == 1 { Err(AX_NO_VALUE) } else { Ok(42) }
+    });
+    assert_eq!(result, Ok(42));
+    assert_eq!(calls, 2);
+}
+
+#[test]
+fn focused_window_retries_are_bounded_and_only_for_transient_background_failures() {
+    for error in [AX_CANNOT_COMPLETE, AX_NO_VALUE, -25202, -25205, -25211] {
+        for policy in [FocusRead::Immediate, FocusRead::Background] {
+            let mut calls = 0;
+            let result: Result<(), _> = read_focused_window(policy, |_| {
+                calls += 1;
+                Err(error)
+            });
+            assert_eq!(result, Err(error));
+            let retry = matches!(policy, FocusRead::Background)
+                && matches!(error, AX_CANNOT_COMPLETE | AX_NO_VALUE);
+            assert_eq!(calls, if retry { 2 } else { 1 });
+        }
+    }
+    for policy in [FocusRead::Immediate, FocusRead::Background] {
+        let mut calls = 0;
+        assert_eq!(
+            read_focused_window(policy, |_| {
+                calls += 1;
+                Ok(42)
+            }),
+            Ok(42)
+        );
+        assert_eq!(calls, 1);
+    }
 }
 
 #[test]

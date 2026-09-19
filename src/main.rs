@@ -31,6 +31,8 @@ mod quicklink_input;
 #[cfg(target_os = "macos")]
 mod quicklink_ui;
 #[cfg(target_os = "macos")]
+mod recency_trace;
+#[cfg(target_os = "macos")]
 mod settings;
 #[cfg(target_os = "macos")]
 mod shortcut_tap;

@@ -20,6 +20,7 @@ use winlane::aliases::{AliasInput, AliasMatch, Aliases, AppIdentity};
 use winlane::app_catalog::{InstalledApp, matching_apps};
 use winlane::commands::{CommandId, matching_commands};
 use winlane::config::{ApplicationTarget, Config, DisplayDensity, visible_matches};
+use winlane::discovery::FocusRead;
 use winlane::displays::{Display, Rect, placements};
 use winlane::search::WindowInfo;
 use winlane::shortcuts::{
@@ -253,6 +254,7 @@ struct AppState {
     loading: Cell<bool>,
     demo: Cell<bool>,
     recency: RefCell<Vec<u64>>,
+    recency_store: OnceCell<Retained<NSUserDefaults>>,
     focus_observer: RefCell<Option<crate::focus_observer::FocusObserver>>,
     focus_receiver: RefCell<Option<PendingFocus>>,
     focus_pid: Cell<i32>,
@@ -495,12 +497,18 @@ define_class!(
         }
         #[unsafe(method(applicationDidFinishLaunching:))]
         fn did_launch(&self, _: &NSNotification) {
+            if NSUserDefaults::standardUserDefaults().boolForKey(ns_string!("WinlaneTraceRecency"))
+                && let Some(home) = std::env::var_os("HOME")
+            {
+                crate::recency_trace::init(std::path::PathBuf::from(home).join("Library/Logs/Winlane"));
+            }
             settings::apply_language(winlane::i18n::Language::System);
             match settings::load() {
                 Ok(config) => { self.ivars().config.replace(config); }
                 Err(error) => { self.ivars().hotkey_error.replace(Some(error)); }
             }
             settings::apply_language(self.ivars().config.borrow().language);
+            self.restore_recency(NSUserDefaults::standardUserDefaults());
             match settings::load_aliases() {
                 Ok(aliases) => {
                     self.ivars().aliases.replace(aliases.with_rules(&[], &HashMap::new(), &self.ivars().config.borrow().alias_rules));
@@ -525,7 +533,10 @@ define_class!(
             if !accessibility::is_trusted() { self.show(); } else { self.refresh(); }
         }
         #[unsafe(method(applicationWillTerminate:))]
-        fn will_terminate(&self, _: &NSNotification) { self.ivars().clipboard.take(); }
+        fn will_terminate(&self, _: &NSNotification) {
+            self.save_recency();
+            self.ivars().clipboard.take();
+        }
         #[unsafe(method(applicationShouldHandleReopen:hasVisibleWindows:))]
         fn reopen(&self, _: &NSApplication, _: bool) -> bool { self.show(); true }
         #[unsafe(method(applicationDidChangeScreenParameters:))]
@@ -2851,6 +2862,19 @@ impl Delegate {
     }
 
     fn install_windows(&self, windows: Vec<WindowInfo>) {
+        crate::recency_trace::record("inventory", || {
+            format!(
+                "windows={:?} apps={:?} recent={:?}",
+                windows.iter().map(|w| (w.id, w.pid)).collect::<Vec<_>>(),
+                self.ivars()
+                    .identities
+                    .borrow()
+                    .iter()
+                    .map(|(pid, app)| (*pid, &app.id))
+                    .collect::<Vec<_>>(),
+                self.ivars().recency.borrow(),
+            )
+        });
         self.update_aliases(&windows);
         self.ivars().windows.replace(windows);
     }
@@ -2998,6 +3022,17 @@ impl Delegate {
             aliases.filter_order(&query, &matched, &windows)
         };
         let matched = alias_matches.unwrap_or(matched);
+        crate::recency_trace::record("order", || {
+            format!(
+                "mode={:?} filtered={} origin={}/{:?} windows={:?} recent={:?}",
+                self.ivars().mode.get(),
+                !query.is_empty(),
+                self.ivars().previous_pid.get(),
+                self.ivars().previous_window.get(),
+                matched.iter().map(|&i| windows[i].id).collect::<Vec<_>>(),
+                self.ivars().recency.borrow(),
+            )
+        });
         let command_matches = if self.ivars().mode.get() == Some(PanelMode::Search)
             && !self.ivars().demo.get()
             && scope_pid.is_none()
@@ -4261,6 +4296,14 @@ impl Delegate {
             return;
         };
         let pid = app.processIdentifier();
+        crate::recency_trace::record("frontmost", || {
+            format!(
+                "app_pid={pid} policy={:?} panel_key={} mode={:?}",
+                app.activationPolicy(),
+                self.any_panel_key(),
+                self.ivars().mode.get(),
+            )
+        });
         if pid == std::process::id() as i32
             || app.activationPolicy() != NSApplicationActivationPolicy::Regular
         {
@@ -4287,6 +4330,9 @@ impl Delegate {
                 delegate.request_focus(pid, None);
             }
         });
+        crate::recency_trace::record("observer", || {
+            format!("app_pid={pid} registered={}", observer.is_some())
+        });
         self.ivars().focus_observer.replace(observer);
     }
 
@@ -4307,6 +4353,18 @@ impl Delegate {
 
     fn request_focus(&self, pid: i32, provisional: Option<u64>) {
         let state = self.ivars();
+        crate::recency_trace::record("focus-request", || {
+            format!(
+                "app_pid={pid} provisional={provisional:?} revision={} pending={:?} recent={:?}",
+                state.focus_revision.get(),
+                state
+                    .focus_receiver
+                    .borrow()
+                    .as_ref()
+                    .map(|p| (p.pid, p.revision)),
+                state.recency.borrow(),
+            )
+        });
         // Preserve the history before a provisional cached window was moved
         // forward. A later exact result must not invent a visit to its sibling.
         let recency = state
@@ -4331,7 +4389,7 @@ impl Delegate {
         }));
         let wake = state.wake.get().unwrap().handle();
         std::thread::spawn(move || {
-            let _ = tx.send(accessibility::focused_window(pid));
+            let _ = tx.send(accessibility::focused_window(pid, FocusRead::Background));
             wake.signal();
         });
     }
@@ -4348,6 +4406,15 @@ impl Delegate {
             Some(result) => result,
         };
         let pending = state.focus_receiver.take().unwrap();
+        crate::recency_trace::record("focus-result", || {
+            format!(
+                "app_pid={pid} result={result:?} revision={revision} current_revision={} focus_pid={} baseline={:?} recent={:?}",
+                state.focus_revision.get(),
+                state.focus_pid.get(),
+                pending.recency,
+                state.recency.borrow(),
+            )
+        });
         if revision != state.focus_revision.get() || pid != state.focus_pid.get() {
             return;
         }
@@ -4355,6 +4422,12 @@ impl Delegate {
             .ok()
             .flatten()
             .or_else(|| self.cached_application_window(pid));
+        crate::recency_trace::record("focus-apply", || {
+            format!(
+                "app_pid={pid} window={window:?} known={}",
+                window.is_some_and(|id| state.windows.borrow().iter().any(|w| w.id == id)),
+            )
+        });
         if let Some(id) = window {
             state.recency.replace(pending.recency);
             self.remember_window(id);
@@ -4385,8 +4458,14 @@ impl Delegate {
     }
 
     fn remember_application(&self, pid: i32) -> Option<u64> {
-        let id =
-            accessibility::focused_window(pid).or_else(|| self.cached_application_window(pid))?;
+        crate::recency_trace::record("capture", || {
+            format!(
+                "app_pid={pid} cached={:?}",
+                self.cached_application_window(pid)
+            )
+        });
+        let id = accessibility::focused_window(pid, FocusRead::Immediate)
+            .or_else(|| self.cached_application_window(pid))?;
         self.remember_window(id);
         Some(id)
     }
@@ -4409,14 +4488,49 @@ impl Delegate {
             .map(|window| window.id)
     }
 
+    #[track_caller]
     fn remember_window(&self, id: u64) {
+        let caller = std::panic::Location::caller();
+        crate::recency_trace::record("visit", || {
+            format!(
+                "id={id} app_pid={:?} caller={} revision={} before={:?}",
+                self.ivars()
+                    .windows
+                    .borrow()
+                    .iter()
+                    .find(|w| w.id == id)
+                    .map(|w| w.pid),
+                caller,
+                self.ivars().focus_revision.get(),
+                self.ivars().recency.borrow(),
+            )
+        });
         self.ivars()
             .focus_revision
             .set(self.ivars().focus_revision.get().wrapping_add(1));
         let mut recent = self.ivars().recency.borrow_mut();
         recent.retain(|previous| *previous != id);
         recent.insert(0, id);
-        recent.truncate(128);
+        recent.truncate(settings::RECENT_WINDOW_LIMIT);
+    }
+
+    fn restore_recency(&self, defaults: Retained<NSUserDefaults>) {
+        self.ivars()
+            .recency
+            .replace(settings::load_recency(&defaults));
+        let _ = self.ivars().recency_store.set(defaults);
+        crate::recency_trace::record("restore", || {
+            format!("recent={:?}", self.ivars().recency.borrow())
+        });
+    }
+
+    fn save_recency(&self) {
+        crate::recency_trace::record("exit-save", || {
+            format!("recent={:?}", self.ivars().recency.borrow())
+        });
+        if let Some(defaults) = self.ivars().recency_store.get() {
+            settings::save_recency(&self.ivars().recency.borrow(), defaults);
+        }
     }
 
     fn activate_selected(&self) {

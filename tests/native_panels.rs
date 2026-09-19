@@ -34,6 +34,10 @@ mod updater {
 mod main_wake;
 
 #[cfg(target_os = "macos")]
+#[path = "../src/recency_trace.rs"]
+mod recency_trace;
+
+#[cfg(target_os = "macos")]
 mod system_commands {
     include!("../src/system_commands.rs");
     include!("support/system_commands.rs");
@@ -167,6 +171,7 @@ mod app {
     include!("support/projects.rs");
     include!("support/clipboard.rs");
     include!("support/responsiveness.rs");
+    include!("support/recency.rs");
     include!("support/input_start.rs");
 
     pub fn inspect_window_discovery(bundle: &str) {
@@ -379,6 +384,7 @@ mod app {
         verify_input_language_is_prepared_before_focus(mtm);
         verify_direct_layout_input(mtm);
         verify_async_focus_order(mtm);
+        verify_recency_persistence(mtm);
         verify_async_window_snapshot(mtm);
         verify_project_rule_search(mtm);
         verify_adaptive_panels(mtm);

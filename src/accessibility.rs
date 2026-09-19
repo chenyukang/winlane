@@ -13,8 +13,8 @@ use std::ptr;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use winlane::discovery::{
-    READ_TIMEOUT, finish_application_scan, read_published_windows, read_with_retry,
-    remote_window_token, switchable_window,
+    AX_NO_VALUE, FocusRead, READ_TIMEOUT, finish_application_scan, read_focused_window,
+    read_published_windows, read_with_retry, remote_window_token, switchable_window,
 };
 use winlane::search::WindowInfo;
 use winlane::{tr, trf};
@@ -26,7 +26,6 @@ const AX_SUCCESS: AxError = 0;
 const AX_ATTRIBUTE_UNSUPPORTED: AxError = -25205;
 const AX_ACTION_UNSUPPORTED: AxError = -25206;
 const AX_NOT_IMPLEMENTED: AxError = -25208;
-const AX_NO_VALUE: AxError = -25212;
 
 #[link(name = "ApplicationServices", kind = "framework")]
 unsafe extern "C" {
@@ -426,17 +425,29 @@ fn scan_application(
         .collect())
 }
 
-pub fn focused_window(pid: i32) -> Option<u64> {
+pub fn focused_window(pid: i32, policy: FocusRead) -> Option<u64> {
     let application = Element::application(pid)?;
-    // This runs on the shortcut path: use one bounded read, without discovery
-    // or retries when the foreground application is busy.
-    application.set_timeout(0.02);
-    let value = application.attribute_once("AXFocusedWindow").ok()?;
+    let value = read_focused_window(policy, |timeout| {
+        application.set_timeout(timeout);
+        let start = std::time::Instant::now();
+        let result = application.attribute_once("AXFocusedWindow");
+        crate::recency_trace::record("ax-focus", || {
+            format!(
+                "app_pid={pid} timeout={timeout} elapsed_ms={:.3} error={:?}",
+                start.elapsed().as_secs_f64() * 1000.0,
+                result.as_ref().err(),
+            )
+        });
+        result
+    })
+    .ok()?;
     // SAFETY: The owned attribute is checked before treating it as an AX element.
     if unsafe { CFGetTypeID(value.as_CFTypeRef()) } != unsafe { AXUIElementGetTypeID() } {
         return None;
     }
-    Some(Element(value).id(pid))
+    let id = Element(value).id(pid);
+    crate::recency_trace::record("ax-window", || format!("app_pid={pid} id={id}"));
+    Some(id)
 }
 
 pub fn list_windows(apps: &[(i32, String)]) -> Vec<WindowInfo> {

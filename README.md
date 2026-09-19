@@ -137,9 +137,11 @@ The **Window** menu lets you limit searches to the current app, minimize or rest
 
 Winlane uses Accessibility access to read and control windows, and a keyboard event filter to handle its shortcuts. It does not log keystrokes, take screenshots automatically, or send window data to a server. The explicit `screenshot` command captures only the area you select and places the image on your clipboard.
 
-Settings, aliases and snippet templates are stored locally. Filled-in snippet arguments are not saved. Pasting a snippet writes its expanded plain text to the clipboard. Window titles, search terms, and selection history stay in memory and are discarded when Winlane quits. Copying a window title explicitly places it on the clipboard. Clipboard history records new text and image copies locally without encryption when enabled, with configurable retention. It skips standard sensitive-content markers and common password managers, but cannot detect every secret. See [clipboard privacy and storage](docs/clipboard.md#retention-and-privacy).
+Settings, aliases and snippet templates are stored locally. Filled-in snippet arguments are not saved. Pasting a snippet writes its expanded plain text to the clipboard. On normal exit, Winlane saves up to 128 recent window IDs to restore their order after restarting. Window titles and search terms stay in memory and are discarded when Winlane quits. Copying a window title explicitly places it on the clipboard. Clipboard history records new text and image copies locally without encryption when enabled, with configurable retention. It skips standard sensitive-content markers and common password managers, but cannot detect every secret. See [clipboard privacy and storage](docs/clipboard.md#retention-and-privacy).
 
 Update checks contact GitHub Releases for the update feed and packages. Sparkle system profiling is disabled; window titles and search terms are never included. Update feeds and downloads are verified with an embedded Ed25519 public key.
+
+Optional local window-order diagnostics record window IDs, app identifiers and focus events in size-limited logs. They are disabled by default and never include window titles or search text. See [development notes](docs/development.md#platform-behavior).
 
 ## Development
 

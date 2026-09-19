@@ -82,6 +82,28 @@ pub fn save_aliases(aliases: &Aliases) {
     }
 }
 
+pub(crate) const RECENT_WINDOW_LIMIT: usize = 128;
+
+pub(crate) fn load_recency(defaults: &NSUserDefaults) -> Vec<u64> {
+    let mut recent = defaults
+        .stringForKey(ns_string!("WinlaneRecentWindowsV1"))
+        .and_then(|value| serde_json::from_str::<Vec<u64>>(&value.to_string()).ok())
+        .unwrap_or_default();
+    let mut seen = std::collections::HashSet::new();
+    recent.retain(|id| seen.insert(*id));
+    recent.truncate(RECENT_WINDOW_LIMIT);
+    recent
+}
+
+pub(crate) fn save_recency(recent: &[u64], defaults: &NSUserDefaults) {
+    let recent = &recent[..recent.len().min(RECENT_WINDOW_LIMIT)];
+    let json = NSString::from_str(&serde_json::to_string(recent).unwrap());
+    // SAFETY: Only window IDs are stored, separately from settings and aliases.
+    unsafe {
+        defaults.setObject_forKey(Some(&json), ns_string!("WinlaneRecentWindowsV1"));
+    }
+}
+
 fn storage_key() -> &'static NSString {
     ns_string!("WindowlanePreferencesV1")
 }

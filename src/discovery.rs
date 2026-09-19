@@ -1,8 +1,29 @@
 use crate::search::WindowInfo;
 
 pub const AX_CANNOT_COMPLETE: i32 = -25204;
+pub const AX_NO_VALUE: i32 = -25212;
 pub const READ_TIMEOUT: f32 = 0.12;
 const RETRY_TIMEOUT: f32 = 0.8;
+
+#[derive(Clone, Copy)]
+pub enum FocusRead {
+    Immediate,
+    Background,
+}
+
+pub fn read_focused_window<T>(
+    policy: FocusRead,
+    mut read: impl FnMut(f32) -> Result<T, i32>,
+) -> Result<T, i32> {
+    match policy {
+        FocusRead::Immediate => read(0.02),
+        FocusRead::Background => match read(READ_TIMEOUT) {
+            // Activation can arrive before the app exposes its focused window.
+            Err(AX_CANNOT_COMPLETE | AX_NO_VALUE) => read(RETRY_TIMEOUT),
+            result => result,
+        },
+    }
+}
 
 pub fn read_with_retry<T>(mut read: impl FnMut(f32) -> Result<T, i32>) -> Result<T, i32> {
     match read(READ_TIMEOUT) {
