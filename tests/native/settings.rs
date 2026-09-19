@@ -4,6 +4,7 @@ use objc2_foundation::{NSUserDefaults, ns_string};
 use winlane::core::i18n;
 
 pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
+    verify_card_appearances(mtm);
     use winlane::core::i18n::Locale;
     for (locale, title, tabs) in [
         (
@@ -348,6 +349,49 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
     println!(
         "English and Chinese settings: sidebar navigation, stable window size, grouped layout bounds, configuration round trips passed."
     );
+}
+
+fn verify_card_appearances(mtm: MainThreadMarker) {
+    let aqua = NSAppearance::appearanceNamed(unsafe { NSAppearanceNameAqua }).unwrap();
+    let dark = NSAppearance::appearanceNamed(unsafe { NSAppearanceNameDarkAqua }).unwrap();
+    for initial in [&aqua, &dark] {
+        let window = preferences_window(rect(0.0, 0.0, 180.0, 100.0), mtm);
+        window.setAppearance(Some(initial));
+        let root = window.contentView().unwrap();
+        let backing = NSBox::initWithFrame(NSBox::alloc(mtm), root.bounds());
+        backing.setBoxType(NSBoxType::Custom);
+        backing.setBorderWidth(0.0);
+        backing.setFillColor(&NSColor::windowBackgroundColor());
+        root.addSubview(&backing);
+        initial.performAsCurrentDrawingAppearance(&block2::RcBlock::new(|| {
+            card(&root, rect(10.0, 10.0, 160.0, 80.0), mtm);
+        }));
+        for (appearance, is_dark) in [(&dark, true), (&aqua, false), (&dark, true)] {
+            window.setAppearance(Some(appearance));
+            root.layoutSubtreeIfNeeded();
+            let bitmap = root
+                .bitmapImageRepForCachingDisplayInRect(root.bounds())
+                .unwrap();
+            root.cacheDisplayInRect_toBitmapImageRep(root.bounds(), &bitmap);
+            let pixel = bitmap
+                .colorAtX_y(bitmap.pixelsWide() / 2, bitmap.pixelsHigh() / 2)
+                .unwrap()
+                .colorUsingColorSpace(&NSColorSpace::sRGBColorSpace())
+                .unwrap();
+            let brightness =
+                (pixel.redComponent() + pixel.greenComponent() + pixel.blueComponent()) / 3.0;
+            assert!(
+                if is_dark {
+                    brightness < 0.4
+                } else {
+                    brightness > 0.75
+                },
+                "settings cards must follow the current appearance, including after toggling: dark={is_dark}, brightness={brightness}"
+            );
+        }
+        assert!(!window.isVisible());
+        window.close();
+    }
 }
 
 pub fn verify_autosave_controls(settings: &SettingsWindow, saved: impl Fn() -> Config) {

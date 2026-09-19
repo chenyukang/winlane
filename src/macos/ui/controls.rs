@@ -118,8 +118,9 @@ pub(crate) fn card(parent: &NSView, frame: NSRect, mtm: MainThreadMarker) -> Ret
     background.setTitlePosition(NSTitlePosition::NoTitle);
     background.setCornerRadius(10.0);
     background.setBorderWidth(1.0);
-    background.setBorderColor(&NSColor::separatorColor().colorWithAlphaComponent(0.5));
-    background.setFillColor(&NSColor::controlBackgroundColor().colorWithAlphaComponent(0.5));
+    // Native group colors keep existing cards adaptive when the appearance changes.
+    background.setBorderColor(&NSColor::separatorColor());
+    background.setFillColor(&NSColor::quaternarySystemFillColor());
     background.setAutoresizingMask(
         NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable,
     );
