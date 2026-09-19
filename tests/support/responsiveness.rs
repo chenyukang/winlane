@@ -106,6 +106,54 @@ fn verify_responsive_panels(mtm: MainThreadMarker) {
 }
 
 fn verify_async_focus_order(mtm: MainThreadMarker) {
+    for disconnected in [false, true] {
+        let delegate = responsive_fixture(mtm);
+        let state = delegate.ivars();
+        state.recency.replace(vec![2, 3, 1]);
+        let tx = pending_test_focus(&delegate, -1);
+        if !disconnected {
+            tx.send(None).unwrap();
+        }
+        drop(tx);
+        delegate.poll_focus();
+        assert_eq!(
+            *state.recency.borrow(),
+            [1, 2, 3],
+            "a failed focus read must still record the activated app's cached window"
+        );
+        delegate.remember_window(2);
+        delegate.filter();
+        assert_eq!(
+            state
+                .matches
+                .borrow()
+                .iter()
+                .map(|&index| state.windows.borrow()[index].id)
+                .collect::<Vec<_>>(),
+            [2, 1, 3],
+            "the app just left must follow the app switched to"
+        );
+
+        let tx = pending_test_focus(&delegate, -1);
+        delegate.remember_window(3);
+        tx.send(None).unwrap();
+        delegate.poll_focus();
+        assert_eq!(
+            *state.recency.borrow(),
+            [3, 2, 1],
+            "a failed stale query must not overwrite a newer visit"
+        );
+        let tx = pending_test_focus(&delegate, -1);
+        state.focus_pid.set(-2);
+        tx.send(None).unwrap();
+        delegate.poll_focus();
+        assert_eq!(*state.recency.borrow(), [3, 2, 1]);
+        let tx = pending_test_focus(&delegate, -99);
+        tx.send(None).unwrap();
+        delegate.poll_focus();
+        assert_eq!(*state.recency.borrow(), [3, 2, 1]);
+    }
+
     let delegate = responsive_fixture(mtm);
     let state = delegate.ivars();
     state.mode.set(Some(PanelMode::Switch));

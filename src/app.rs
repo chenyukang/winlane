@@ -4351,7 +4351,11 @@ impl Delegate {
         if revision != state.focus_revision.get() || pid != state.focus_pid.get() {
             return;
         }
-        if let Ok(Some(id)) = result {
+        let window = result
+            .ok()
+            .flatten()
+            .or_else(|| self.cached_application_window(pid));
+        if let Some(id) = window {
             state.recency.replace(pending.recency);
             self.remember_window(id);
             if state.previous_pid.get() == pid {
