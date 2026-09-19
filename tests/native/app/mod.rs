@@ -1,3 +1,4 @@
+mod bluetooth;
 mod clipboard;
 mod commands;
 pub(crate) mod diagnostics;
@@ -86,6 +87,7 @@ pub fn verify_hidden_panels() {
     verify_quicklink_search(mtm);
     verify_projects_search(mtm);
     open_url::verify_open_url(mtm);
+    bluetooth::verify_bluetooth(mtm);
     verify_clipboard_search(mtm);
     verify_clipboard_images(mtm);
     crate::macos::ui::snippets::tests::verify_editor(&delegate, mtm);

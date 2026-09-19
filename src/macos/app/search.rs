@@ -6,6 +6,11 @@ impl Delegate {
     }
 
     pub(super) fn filter_preserving(&self, selected_id: Option<SelectedResult>) {
+        if self.searching_bluetooth() {
+            self.filter_bluetooth(selected_id);
+            return;
+        }
+        self.ivars().bluetooth_matches.borrow_mut().clear();
         if self.searching_open_url() {
             self.filter_open_url(selected_id);
             return;
@@ -174,7 +179,8 @@ impl Delegate {
                         .map(|index| extra_count + index)
                 }),
             Some(
-                SelectedResult::Clipboard(_)
+                SelectedResult::Bluetooth(_)
+                | SelectedResult::Clipboard(_)
                 | SelectedResult::Project(_)
                 | SelectedResult::OpenUrl(_),
             )
@@ -259,6 +265,9 @@ impl Delegate {
     }
 
     pub(super) fn selected_result(&self) -> Option<SelectedResult> {
+        if let Some(device) = self.selected_bluetooth() {
+            return Some(SelectedResult::Bluetooth(device.address));
+        }
         if let Some(page) = self.selected_url() {
             return Some(SelectedResult::OpenUrl(page.url));
         }
@@ -286,7 +295,8 @@ impl Delegate {
     }
 
     pub(super) fn match_count(&self) -> usize {
-        self.ivars().command_matches.borrow().len()
+        self.ivars().bluetooth_matches.borrow().len()
+            + self.ivars().command_matches.borrow().len()
             + self.ivars().snippet_matches.borrow().len()
             + self.ivars().clipboard_matches.borrow().len()
             + self.ivars().matches.borrow().len()

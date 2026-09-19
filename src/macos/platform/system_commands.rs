@@ -53,7 +53,8 @@ impl PreparedCommand {
         mtm: MainThreadMarker,
     ) -> Result<Self, String> {
         let operation = match command {
-            CommandId::Projects
+            CommandId::Bluetooth
+            | CommandId::Projects
             | CommandId::OpenUrl
             | CommandId::Snippets
             | CommandId::Clipboard

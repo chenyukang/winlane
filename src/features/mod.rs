@@ -1,3 +1,4 @@
+pub mod bluetooth;
 pub mod clipboard;
 pub mod open_url;
 pub mod projects;

@@ -2,6 +2,10 @@ use super::*;
 
 impl Delegate {
     pub(super) fn activate_selected(&self) {
+        if self.searching_bluetooth() {
+            self.toggle_selected_bluetooth();
+            return;
+        }
         if let Some(scope) = self
             .selected_command()
             .and_then(super::commands::command_scope)

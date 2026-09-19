@@ -401,6 +401,7 @@ define_class!(
         }
         #[unsafe(method(refreshWindows:))]
         fn refresh_action(&self, _: Option<&AnyObject>) {
+            if self.searching_bluetooth() { self.refresh_bluetooth(); self.render(); return; }
             if self.searching_open_url() { self.refresh_open_url(); self.render(); return; }
             if self.searching_projects() { self.refresh_projects(true); self.render(); return; }
             if self.ivars().demo.get() { self.filter(); } else {
@@ -473,6 +474,7 @@ define_class!(
                 && self.ivars().mode.get().is_some()
                 && !self.ivars().changing_displays.get()
                 && !self.any_panel_key()
+                && !(self.searching_bluetooth() && self.ivars().bluetooth_permission.borrow().is_some())
             { self.end_session(); }
             self.check_shortcuts();
             self.poll_window_liveness();
@@ -483,6 +485,7 @@ define_class!(
             self.poll_app_catalog();
             self.poll_projects();
             self.poll_open_url();
+            self.poll_bluetooth();
             let clipboard_changed = self.ivars().clipboard.borrow_mut().as_mut().is_some_and(|clipboard| clipboard.poll_storage());
             if clipboard_changed && self.searching_clipboard() { self.filter_preserving(self.selected_result()); }
             let result = self.ivars().receiver.borrow().as_ref().map(|rx| rx.try_recv());

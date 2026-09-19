@@ -9,6 +9,7 @@ pub(super) fn verify_command_reapplies_input_policy(mtm: MainThreadMarker) {
         .and_then(|source| source.id())
         .expect("English source is available for native checks");
     for scope in [
+        SearchScope::Bluetooth,
         SearchScope::Projects,
         SearchScope::OpenUrl,
         SearchScope::Quicklinks,
@@ -135,6 +136,7 @@ pub(super) fn verify_input_language_is_prepared_before_focus(mtm: MainThreadMark
         );
         for scope in [
             SearchScope::OpenUrl,
+            SearchScope::Bluetooth,
             SearchScope::Projects,
             SearchScope::Quicklinks,
             SearchScope::Snippets,

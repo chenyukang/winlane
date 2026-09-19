@@ -4,6 +4,7 @@ use crate::tr;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CommandId {
+    Bluetooth,
     Projects,
     OpenUrl,
     #[serde(rename = "quicklink")]
@@ -42,6 +43,14 @@ impl Command {
 }
 
 pub const COMMANDS: &[Command] = &[
+    Command {
+        id: CommandId::Bluetooth,
+        name: "bluetooth",
+        title_en: "Connect or disconnect Bluetooth devices",
+        title_zh: "连接或断开蓝牙设备",
+        symbol: "antenna.radiowaves.left.and.right",
+        keywords: &["bt", "蓝牙", "蓝牙设备"],
+    },
     Command {
         id: CommandId::OpenUrl,
         name: "open-url",

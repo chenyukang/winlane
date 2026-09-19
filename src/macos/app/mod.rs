@@ -1,3 +1,4 @@
+mod bluetooth;
 mod catalog;
 mod clipboard;
 mod commands;
@@ -78,6 +79,7 @@ const APP_CATALOG_TTL: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SearchScope {
+    Bluetooth,
     Projects,
     OpenUrl,
     Quicklinks,
@@ -121,6 +123,7 @@ struct RowUi {
 
 #[derive(Clone, PartialEq, Eq)]
 enum RowContent {
+    Bluetooth(winlane::features::bluetooth::Device, Option<bool>),
     Project(winlane::features::projects::Project),
     OpenUrl(winlane::features::open_url::Page),
     Command(CommandId),
@@ -132,6 +135,7 @@ enum RowContent {
 }
 
 enum SelectedResult {
+    Bluetooth(String),
     Project(std::path::PathBuf),
     OpenUrl(String),
     Command(CommandId),
@@ -234,6 +238,12 @@ struct AppState {
     launch_matches: RefCell<Vec<usize>>,
     command_matches: RefCell<Vec<CommandId>>,
     snippet_matches: RefCell<Vec<winlane::features::snippets::Snippet>>,
+    bluetooth_devices: RefCell<Vec<winlane::features::bluetooth::Device>>,
+    bluetooth_matches: RefCell<Vec<winlane::features::bluetooth::Device>>,
+    bluetooth_error: RefCell<Option<String>>,
+    bluetooth_receiver: RefCell<Option<Receiver<winlane::features::bluetooth::Update>>>,
+    bluetooth_pending: RefCell<Option<(String, bool)>>,
+    bluetooth_permission: RefCell<Option<Retained<AnyObject>>>,
     open_url_matches: RefCell<Vec<winlane::features::open_url::Page>>,
     open_url_history: RefCell<winlane::features::open_url::History>,
     open_url_receiver: RefCell<Option<Receiver<winlane::features::open_url::History>>>,

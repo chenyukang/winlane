@@ -162,6 +162,10 @@ impl Delegate {
             && self.ivars().mode.get() == Some(PanelMode::Search)
     }
 
+    pub(super) fn searching_bluetooth(&self) -> bool {
+        self.scoped_search() && self.ivars().search_scope.get() == Some(SearchScope::Bluetooth)
+    }
+
     pub(super) fn searching_open_url(&self) -> bool {
         self.scoped_search() && self.ivars().search_scope.get() == Some(SearchScope::OpenUrl)
     }
@@ -199,8 +203,8 @@ impl Delegate {
 
     pub(super) fn schedule_scoped_refresh(&self) {
         self.cancel_scoped_refresh();
-        let needs_refresh = (self.searching_projects()
-            && self.ivars().project_receiver.borrow().is_none())
+        let needs_refresh = (self.searching_bluetooth() && !self.bluetooth_busy())
+            || (self.searching_projects() && self.ivars().project_receiver.borrow().is_none())
             || (self.searching_open_url() && self.ivars().open_url_receiver.borrow().is_none());
         if !needs_refresh {
             return;
@@ -231,7 +235,9 @@ impl Delegate {
             return;
         }
         self.cancel_scoped_refresh();
-        if self.searching_projects() {
+        if self.searching_bluetooth() {
+            self.refresh_bluetooth();
+        } else if self.searching_projects() {
             self.refresh_projects(false);
         } else if self.searching_open_url() {
             self.refresh_open_url();
@@ -253,7 +259,9 @@ impl Delegate {
             return;
         }
         self.prepare_search_field();
-        let command = if self.searching_open_url() {
+        let command = if self.searching_bluetooth() {
+            CommandId::Bluetooth
+        } else if self.searching_open_url() {
             CommandId::OpenUrl
         } else if self.searching_projects() {
             CommandId::Projects
@@ -303,9 +311,11 @@ impl Delegate {
         let clipboard = self.searching_clipboard();
         let projects = self.searching_projects();
         let open_url = self.searching_open_url();
+        let bluetooth = self.searching_bluetooth();
+        self.ivars().bluetooth_matches.borrow_mut().clear();
         self.clear_open_url_matches();
         self.ivars().search_scope.set(None);
-        if clipboard || projects || open_url {
+        if clipboard || projects || open_url || bluetooth {
             self.ivars().clipboard_matches.borrow_mut().clear();
             self.ivars().project_matches.borrow_mut().clear();
             for ui in self.panels() {

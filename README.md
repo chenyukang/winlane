@@ -55,6 +55,10 @@ Each row represents an independent window. Separate editor projects appear separ
 
 The letters beside each window are its **alias**. Type those letters while holding Command, then release Command to jump directly to that window. Aliases are assigned automatically from English app names, stay unique across windows, and are remembered when Winlane restarts. Additional window aliases may change when the target app closes and creates new windows.
 
+### Connect Bluetooth devices
+
+Search for **bluetooth** or **bt**, select a paired device, then press **Enter** to connect or disconnect it. Search by device name; **Command + R** refreshes the list and **Esc** closes it. You can assign a direct shortcut in **Settings → Shortcuts → Command shortcuts**. See [Bluetooth devices](docs/bluetooth.md) for permissions and connection behavior.
+
 ### Reopen a VS Code project
 
 Search for **projects** or **vscode** and select **Open recent VS Code projects**. Browse recent folders and workspaces, filter by project name or path, then press Enter to open one in VS Code. This also works when the project has no open window or VS Code is not running. Press Esc to close the picker, or **Command + R** to refresh the projects. See [recent projects](docs/projects.md) for supported locations and caching.

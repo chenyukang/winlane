@@ -50,17 +50,24 @@ impl Delegate {
         } else {
             None
         };
+        let bluetooth_matches = state.bluetooth_matches.borrow();
+        let bluetooth_error = state.bluetooth_error.borrow();
+        let bluetooth_pending = state.bluetooth_pending.borrow();
+        let in_bluetooth = self.searching_bluetooth();
+        let bluetooth_loading = in_bluetooth
+            && (self.bluetooth_busy() || state.scoped_refresh_timer.borrow().is_some());
         let project_matches = state.project_matches.borrow();
         let project_cache = state.project_cache.borrow();
         let in_projects = self.searching_projects();
         let projects_loading = in_projects
             && (state.project_receiver.borrow().is_some()
                 || state.scoped_refresh_timer.borrow().is_some());
-        if projects_loading && ui.project_progress.isHidden() {
+        let scope_loading = projects_loading || bluetooth_loading;
+        if scope_loading && ui.project_progress.isHidden() {
             ui.project_progress.setHidden(false);
             // SAFETY: This main-thread AppKit action accepts a nil sender.
             unsafe { ui.project_progress.startAnimation(None) };
-        } else if !projects_loading && !ui.project_progress.isHidden() {
+        } else if !scope_loading && !ui.project_progress.isHidden() {
             // SAFETY: This main-thread AppKit action accepts a nil sender.
             unsafe { ui.project_progress.stopAnimation(None) };
             ui.project_progress.setHidden(true);
@@ -73,7 +80,8 @@ impl Delegate {
             + quicklink_matches.len()
             + launch_matches.len()
             + project_matches.len()
-            + open_url.len();
+            + open_url.len()
+            + bluetooth_matches.len();
         let quicklink_input = state.quicklink_input.borrow();
         let inline = quicklink_input.is_some();
         let trusted = accessibility::is_trusted();
@@ -175,7 +183,9 @@ impl Delegate {
         }
         ui.input.setHidden(switching || inline);
         ui.scope_back.setHidden(!self.scoped_search() || inline);
-        ui.scope_back.setTitle(&NSString::from_str(if in_clipboard {
+        ui.scope_back.setTitle(&NSString::from_str(if in_bluetooth {
+            tr!("‹ 蓝牙", "‹ Bluetooth")
+        } else if in_clipboard {
             tr!("‹ 剪贴板", "‹ Clipboard")
         } else if in_open_url {
             tr!("‹ 网址", "‹ URLs")
@@ -188,7 +198,7 @@ impl Delegate {
         }));
         ui.clipboard_actions.setHidden(!in_clipboard);
         ui.shortcut_label
-            .setHidden(in_clipboard || inline || projects_loading);
+            .setHidden(in_clipboard || inline || scope_loading);
         if let Some(item) = ui.clipboard_actions.itemAtIndex(3) {
             item.setTitle(&NSString::from_str(
                 if state.config.borrow().clipboard.enabled {
@@ -400,6 +410,37 @@ impl Delegate {
                         ),
                     )
                 }
+            } else if in_bluetooth {
+                if bluetooth_loading {
+                    (
+                        tr!("正在读取蓝牙设备…", "Loading Bluetooth devices…"),
+                        tr!(
+                            "首次使用时，请允许 Winlane 访问蓝牙。",
+                            "On first use, allow Winlane to access Bluetooth."
+                        ),
+                    )
+                } else if bluetooth_error.is_some() {
+                    (
+                        tr!("无法读取蓝牙设备", "Could not load Bluetooth devices"),
+                        bluetooth_error.as_deref().unwrap(),
+                    )
+                } else if state.bluetooth_devices.borrow().is_empty() {
+                    (
+                        tr!("没有已配对的蓝牙设备", "No paired Bluetooth devices"),
+                        tr!(
+                            "先在系统设置 → 蓝牙中配对设备，再按 ⌘R 刷新。",
+                            "Pair a device in System Settings → Bluetooth, then press ⌘R to refresh."
+                        ),
+                    )
+                } else {
+                    (
+                        tr!("没有匹配的蓝牙设备", "No matching Bluetooth devices"),
+                        tr!(
+                            "按设备名称搜索，或按 Esc 关闭。",
+                            "Search by device name, or press Esc to close."
+                        ),
+                    )
+                }
             } else if in_projects {
                 if state.project_receiver.borrow().is_some()
                     || state.scoped_refresh_timer.borrow().is_some()
@@ -522,7 +563,13 @@ impl Delegate {
             ui.empty_labels.replace(vec![heading, detail]);
         }
         for position in 0..count {
-            let content = if let Some(page) = open_url.get(position) {
+            let content = if let Some(device) = bluetooth_matches.get(position) {
+                let pending = bluetooth_pending
+                    .as_ref()
+                    .filter(|(address, _)| *address == device.address)
+                    .map(|(_, connected)| *connected);
+                RowContent::Bluetooth(device.clone(), pending)
+            } else if let Some(page) = open_url.get(position) {
                 RowContent::OpenUrl(page.clone())
             } else if let Some(project) = project_matches.get(position) {
                 RowContent::Project(project.clone())
@@ -560,6 +607,20 @@ impl Delegate {
             let row = &mut rows[position];
             if row.content.as_ref() != Some(&content) {
                 let tooltip = match &content {
+                    RowContent::Bluetooth(device, pending) => {
+                        let status = super::bluetooth::device_status(device, *pending);
+                        set_label(&row.app, status);
+                        set_label(&row.title, &device.name);
+                        set_label(&row.alias, if device.connected { "●" } else { "○" });
+                        row.icon.setImage(
+                            NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                                &NSString::from_str("antenna.radiowaves.left.and.right"),
+                                Some(&NSString::from_str(tr!("蓝牙设备", "Bluetooth device"))),
+                            )
+                            .as_deref(),
+                        );
+                        format!("{} — {} — {}", device.name, status, device.address)
+                    }
                     RowContent::Command(id) => {
                         let command = id.definition();
                         set_label(&row.title, command.title());
@@ -746,7 +807,25 @@ impl Delegate {
         let clipboard_error = clipboard
             .as_ref()
             .and_then(|clipboard| clipboard.error.as_ref());
-        let status = if inline {
+        let status = if in_bluetooth {
+            bluetooth_error.clone().unwrap_or_else(|| {
+                if state.bluetooth_permission.borrow().is_some() {
+                    tr!(
+                        "请在系统提示中允许 Winlane 访问蓝牙。",
+                        "Allow Winlane to access Bluetooth in the system prompt."
+                    )
+                    .into()
+                } else if bluetooth_loading {
+                    tr!("正在更新蓝牙设备…", "Updating Bluetooth devices…").into()
+                } else {
+                    trf!(
+                        "{} 个设备 · ↵ 连接／断开 · ⌘R 刷新 · Esc 关闭",
+                        "{} devices · ↵ connect / disconnect · ⌘R refresh · Esc close",
+                        bluetooth_matches.len()
+                    )
+                }
+            })
+        } else if inline {
             tr!(
                 "Tab 切换参数 · ↵ 打开 · Esc 关闭",
                 "Tab next field · ↵ open · Esc close"
@@ -864,6 +943,7 @@ impl Delegate {
                 || !trusted
                 || (in_clipboard && clipboard_error.is_some())
                 || (in_projects && project_cache.error.is_some())
+                || (in_bluetooth && bluetooth_error.is_some())
                 || (in_open_url && url_history.error.is_some()));
         ui.footer.setHidden(!show_hints && !has_error);
     }

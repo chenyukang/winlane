@@ -79,6 +79,7 @@ pub(super) fn verify_scoped_loading(mtm: MainThreadMarker) {
 
 fn verify_scope_backspace(mtm: MainThreadMarker) {
     for command in [
+        CommandId::Bluetooth,
         CommandId::Projects,
         CommandId::OpenUrl,
         CommandId::Quicklinks,
@@ -118,6 +119,7 @@ fn verify_scope_backspace(mtm: MainThreadMarker) {
 
 fn verify_scope_escape(mtm: MainThreadMarker) {
     for command in [
+        CommandId::Bluetooth,
         CommandId::Projects,
         CommandId::OpenUrl,
         CommandId::Quicklinks,

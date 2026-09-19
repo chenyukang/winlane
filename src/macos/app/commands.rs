@@ -2,6 +2,7 @@ use super::*;
 
 pub(super) fn command_scope(command: CommandId) -> Option<SearchScope> {
     match command {
+        CommandId::Bluetooth => Some(SearchScope::Bluetooth),
         CommandId::OpenUrl => Some(SearchScope::OpenUrl),
         CommandId::Projects => Some(SearchScope::Projects),
         CommandId::Quicklinks => Some(SearchScope::Quicklinks),
