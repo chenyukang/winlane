@@ -7,7 +7,7 @@ use winlane::{tr, trf};
 
 use crate::main_wake::MainWake;
 use objc2::rc::{Retained, Weak};
-use objc2::runtime::{AnyObject, ProtocolObject, Sel};
+use objc2::runtime::{AnyClass, AnyObject, ProtocolObject, Sel};
 use objc2::{AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::*;
 use objc2_foundation::{
@@ -56,7 +56,7 @@ struct PanelUi {
     display_id: u32,
     shortcut_label: Retained<NSTextField>,
     panel: Retained<SearchPanel>,
-    backdrop: Retained<NSVisualEffectView>,
+    backdrop: PanelBackdrop,
     input: Retained<NSSearchField>,
     scroll: Retained<NSScrollView>,
     list: Retained<ListView>,
@@ -1495,8 +1495,9 @@ impl Delegate {
         };
         panel.setContentView(Some(&root));
         panel.setInitialFirstResponder(Some(&root));
-        let backdrop = panel_backdrop(root.bounds(), mtm);
-        root.addSubview(&backdrop);
+        let backdrop = PanelBackdrop::new(root.bounds(), mtm);
+        root.addSubview(backdrop.view());
+        let root = &backdrop.content;
 
         let shortcut = label(
             &self.ivars().config.borrow().shortcut.display(),
@@ -3368,9 +3369,7 @@ impl Delegate {
             .render_passes
             .set(self.ivars().render_passes.get() + 1);
         let opacity = f64::from(self.ivars().config.borrow().background_opacity) / 100.0;
-        if ui.backdrop.alphaValue() != opacity {
-            ui.backdrop.setAlphaValue(opacity);
-        }
+        ui.backdrop.set_opacity(opacity);
         let query = self.ivars().query.borrow();
         // The field's value can include uncommitted pinyin while the shared
         // query still contains the last committed text. A background refresh
@@ -5512,7 +5511,77 @@ fn panel_height(
     };
     (header + footer + content).clamp(280.0, HEIGHT)
 }
-pub(crate) fn panel_backdrop(frame: NSRect, mtm: MainThreadMarker) -> Retained<NSVisualEffectView> {
+pub(crate) fn glass_available() -> bool {
+    AnyClass::get(c"NSGlassEffectView").is_some()
+}
+
+enum PanelMaterial {
+    Glass(Retained<NSGlassEffectView>),
+    Frosted {
+        container: Retained<NSView>,
+        blur: Retained<NSVisualEffectView>,
+    },
+}
+
+pub(crate) struct PanelBackdrop {
+    pub(crate) content: Retained<NSView>,
+    material: PanelMaterial,
+}
+
+impl PanelBackdrop {
+    pub(crate) fn new(frame: NSRect, mtm: MainThreadMarker) -> Self {
+        Self::with_glass(frame, mtm, glass_available())
+    }
+
+    fn with_glass(frame: NSRect, mtm: MainThreadMarker, glass: bool) -> Self {
+        let resize = NSAutoresizingMaskOptions::ViewWidthSizable
+            | NSAutoresizingMaskOptions::ViewHeightSizable;
+        let bounds = NSRect::new(NSPoint::ZERO, frame.size);
+        let content = NSView::initWithFrame(NSView::alloc(mtm), bounds);
+        content.setAutoresizingMask(resize);
+        let material = if glass {
+            // Resolve availability before touching the class on older macOS.
+            let view = NSGlassEffectView::initWithFrame(NSGlassEffectView::alloc(mtm), frame);
+            view.setStyle(NSGlassEffectViewStyle::Regular);
+            view.setCornerRadius(18.0);
+            view.setContentView(Some(&content));
+            PanelMaterial::Glass(view)
+        } else {
+            let container = NSView::initWithFrame(NSView::alloc(mtm), frame);
+            let blur = frosted_backdrop(bounds, mtm);
+            container.addSubview(&blur);
+            container.addSubview(&content);
+            PanelMaterial::Frosted { container, blur }
+        };
+        let backdrop = Self { content, material };
+        backdrop.view().setAutoresizingMask(resize);
+        backdrop
+    }
+
+    pub(crate) fn view(&self) -> &NSView {
+        match &self.material {
+            PanelMaterial::Glass(view) => view,
+            PanelMaterial::Frosted { container, .. } => container,
+        }
+    }
+
+    pub(crate) fn set_opacity(&self, opacity: f64) {
+        // Glass owns the content; fading that view would also fade text and icons.
+        if let PanelMaterial::Frosted { blur, .. } = &self.material
+            && blur.alphaValue() != opacity
+        {
+            blur.setAlphaValue(opacity);
+        }
+    }
+
+    pub(crate) fn blend_within_window(&self) {
+        if let PanelMaterial::Frosted { blur, .. } = &self.material {
+            blur.setBlendingMode(NSVisualEffectBlendingMode::WithinWindow);
+        }
+    }
+}
+
+fn frosted_backdrop(frame: NSRect, mtm: MainThreadMarker) -> Retained<NSVisualEffectView> {
     let backdrop = NSVisualEffectView::initWithFrame(NSVisualEffectView::alloc(mtm), frame);
     backdrop.setMaterial(NSVisualEffectMaterial::Popover);
     backdrop.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);

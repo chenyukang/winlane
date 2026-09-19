@@ -332,7 +332,7 @@ pub struct SettingsWindow {
     opacity_slider: Retained<NSSlider>,
     opacity_input: Retained<NSTextField>,
     switch_delay: Retained<NSTextField>,
-    opacity_preview: Retained<NSVisualEffectView>,
+    opacity_preview: crate::app::PanelBackdrop,
     usage_hints: Retained<NSButton>,
     minimized: Retained<NSButton>,
     excluded: Retained<NSTextField>,
@@ -612,11 +612,19 @@ impl SettingsWindow {
             196.0,
             mtm,
         );
+        let glass = crate::app::glass_available();
         opacity.addSubview(&hint(
-            tr!(
-                "降低百分比可透出更多背景；文字和图标保持清晰。",
-                "Lower values reveal more background. Text and icons stay clear."
-            ),
+            if glass {
+                tr!(
+                    "正在使用 Liquid Glass，透明度由 macOS 自动调整。",
+                    "Liquid Glass is active. macOS adjusts its transparency automatically."
+                )
+            } else {
+                tr!(
+                    "降低百分比可透出更多背景；文字和图标保持清晰。",
+                    "Lower values reveal more background. Text and icons stay clear."
+                )
+            },
             rect(20.0, 148.0, 700.0, 30.0),
             mtm,
         ));
@@ -638,6 +646,8 @@ impl SettingsWindow {
         ))));
         set_action(&opacity_slider, target, sel!(changeBackgroundOpacity:));
         set_action(&opacity_input, target, sel!(commitBackgroundOpacity:));
+        opacity_slider.setEnabled(!glass);
+        opacity_input.setEnabled(!glass);
         opacity.addSubview(&opacity_slider);
         opacity.addSubview(&opacity_input);
         opacity.addSubview(&label("%", 13.0, rect(700.0, 109.0, 20.0, 24.0), mtm));
@@ -652,10 +662,10 @@ impl SettingsWindow {
             tile.setFillColor(&color.colorWithAlphaComponent(0.35));
             sample.addSubview(&tile);
         }
-        let opacity_preview = crate::app::panel_backdrop(sample.bounds(), mtm);
-        opacity_preview.setBlendingMode(NSVisualEffectBlendingMode::WithinWindow);
-        sample.addSubview(&opacity_preview);
-        sample.addSubview(&label(
+        let opacity_preview = crate::app::PanelBackdrop::new(sample.bounds(), mtm);
+        opacity_preview.blend_within_window();
+        sample.addSubview(opacity_preview.view());
+        opacity_preview.content.addSubview(&label(
             tr!(
                 "预览 · 搜索和切换面板",
                 "Preview · Search and switch panels"
@@ -1131,7 +1141,7 @@ impl SettingsWindow {
         self.opacity_slider.setDoubleValue(f64::from(value));
         self.opacity_input
             .setStringValue(&NSString::from_str(&value.to_string()));
-        self.opacity_preview.setAlphaValue(f64::from(value) / 100.0);
+        self.opacity_preview.set_opacity(f64::from(value) / 100.0);
     }
 
     pub fn opacity_slider_changed(&self) {

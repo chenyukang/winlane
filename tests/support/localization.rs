@@ -194,7 +194,9 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
         settings.opacity_slider.setDoubleValue(67.4);
         settings.opacity_slider_changed();
         assert_eq!(settings.opacity_input.stringValue().to_string(), "67");
-        assert_eq!(settings.opacity_preview.alphaValue(), 0.67);
+        crate::app::verify_backdrop_opacity(&settings.opacity_preview, 0.67);
+        assert_eq!(settings.opacity_slider.isEnabled(), !crate::app::glass_available());
+        assert_eq!(settings.opacity_input.isEnabled(), !crate::app::glass_available());
         assert_eq!(settings.candidate().unwrap().background_opacity, 67);
         for value in [0, 50, 100] {
             settings
@@ -202,10 +204,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
                 .setStringValue(&NSString::from_str(&value.to_string()));
             settings.opacity_input_changed().unwrap();
             assert_eq!(settings.opacity_slider.doubleValue(), f64::from(value));
-            assert_eq!(
-                settings.opacity_preview.alphaValue(),
-                f64::from(value) / 100.0
-            );
+            crate::app::verify_backdrop_opacity(&settings.opacity_preview, f64::from(value) / 100.0);
             let config = settings.candidate().unwrap();
             settings.fill(&Config::from_json(&config.to_json().unwrap()).unwrap());
             assert_eq!(settings.candidate().unwrap().background_opacity, value);
@@ -218,7 +217,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
             assert!(settings.candidate().is_err());
         }
         settings.fill(&Config::default());
-        assert_eq!(settings.opacity_preview.alphaValue(), 1.0);
+        crate::app::verify_backdrop_opacity(&settings.opacity_preview, 1.0);
         verify_multiple_search_controls(&settings);
         if let Ok(directory) = std::env::var("WINLANE_PREVIEW_DIR") {
             settings.set_opacity(65);

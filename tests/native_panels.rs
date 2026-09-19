@@ -334,6 +334,61 @@ mod app {
         })
     }
 
+    pub fn verify_backdrop_opacity(backdrop: &PanelBackdrop, opacity: f64) {
+        assert_eq!(backdrop.view().alphaValue(), 1.0);
+        assert_eq!(backdrop.content.alphaValue(), 1.0);
+        assert_eq!(backdrop.content.frame(), backdrop.view().bounds());
+        match &backdrop.material {
+            PanelMaterial::Glass(view) => {
+                assert_eq!(view.contentView(), Some(backdrop.content.clone()));
+                assert_eq!(view.style(), NSGlassEffectViewStyle::Regular);
+                assert_eq!(view.cornerRadius(), 18.0);
+                assert!(view.tintColor().is_none());
+                assert!(backdrop.content.subviews().iter().all(|view| {
+                    view.downcast_ref::<NSVisualEffectView>().is_none()
+                        && view.downcast_ref::<PanelSurface>().is_none()
+                }));
+            }
+            PanelMaterial::Frosted { container, blur } => {
+                assert_eq!(blur.alphaValue(), opacity);
+                assert_eq!(blur.frame(), container.bounds());
+                assert_eq!(blur.subviews().objectAtIndex(0).frame(), blur.bounds());
+                assert_eq!(
+                    unsafe { backdrop.content.superview() },
+                    Some(container.clone())
+                );
+            }
+        }
+    }
+
+    fn verify_panel_materials(mtm: MainThreadMarker) {
+        for glass in [false, true] {
+            if glass && !glass_available() {
+                continue;
+            }
+            let backdrop = PanelBackdrop::with_glass(rect(0.0, 0.0, WIDTH, HEIGHT), mtm, glass);
+            let text = label("Search", 14.0, rect(20.0, 20.0, 160.0, 24.0), mtm);
+            backdrop.content.addSubview(&text);
+            for appearance in unsafe { [NSAppearanceNameAqua, NSAppearanceNameDarkAqua] } {
+                backdrop
+                    .view()
+                    .setAppearance(NSAppearance::appearanceNamed(appearance).as_deref());
+                for height in [280.0, HEIGHT, 420.0] {
+                    backdrop.view().setFrameSize(NSSize::new(WIDTH, height));
+                    backdrop.view().layoutSubtreeIfNeeded();
+                    for opacity in [0.0, 0.5, 1.0] {
+                        backdrop.set_opacity(opacity);
+                        verify_backdrop_opacity(&backdrop, opacity);
+                        assert_eq!(text.alphaValue(), 1.0);
+                    }
+                }
+            }
+        }
+        println!(
+            "Panel materials: glass content, legacy opacity, resizing and light/dark appearances verified without showing windows."
+        );
+    }
+
     pub fn verify_hidden_panels() {
         let mtm = MainThreadMarker::new().expect("native checks must run on the main thread");
         let screens = NSScreen::screens(mtm);
@@ -343,6 +398,7 @@ mod app {
         }
         let app = NSApplication::sharedApplication(mtm);
         app.setActivationPolicy(NSApplicationActivationPolicy::Prohibited);
+        verify_panel_materials(mtm);
         verify_main_wake(mtm);
         verify_switch_alias_prefix(mtm);
         verify_distinct_window_aliases(mtm);
@@ -574,14 +630,13 @@ mod app {
                     assert!(!ui.panel.isOpaque());
                     assert_eq!(ui.panel.alphaValue(), 1.0);
                     assert_eq!(root.alphaValue(), 1.0);
-                    assert_eq!(ui.backdrop.alphaValue(), f64::from(percent) / 100.0);
-                    assert_eq!(ui.backdrop.frame(), root.bounds());
-                    assert_eq!(
-                        ui.backdrop.subviews().objectAtIndex(0).frame(),
-                        ui.backdrop.bounds()
-                    );
+                    verify_backdrop_opacity(&ui.backdrop, f64::from(percent) / 100.0);
+                    assert_eq!(ui.backdrop.view().frame(), root.bounds());
                     assert_eq!(ui.input.alphaValue(), 1.0);
-                    assert_eq!(unsafe { ui.input.superview() }, Some(root.clone()));
+                    assert_eq!(
+                        unsafe { ui.input.superview() },
+                        Some(ui.backdrop.content.clone())
+                    );
                     for row in ui.rows.borrow().iter() {
                         assert_eq!(row.button.alphaValue(), 1.0);
                         assert_eq!(row.title.alphaValue(), 1.0);
@@ -872,7 +927,9 @@ mod app {
                         mode != PanelMode::Switch || !show_hints
                     );
                     let root = ui.panel.contentView().unwrap();
-                    let settings = root
+                    let settings = ui
+                        .backdrop
+                        .content
                         .subviews()
                         .into_iter()
                         .filter_map(|view| view.downcast::<NSButton>().ok())
