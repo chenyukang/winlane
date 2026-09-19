@@ -12,12 +12,24 @@ define_class!(
         fn can_become_key(&self) -> bool { true }
         #[unsafe(method(canBecomeMainWindow))]
         fn can_become_main(&self) -> bool { false }
+        #[unsafe(method(contextMenuKeyDown:))]
+        fn context_menu_key_down(&self, event: &NSEvent) {
+            let composing = self.firstResponder()
+                .and_then(|responder| responder.downcast::<NSTextView>().ok())
+                .is_some_and(|editor| NSTextInputClient::hasMarkedText(&*editor));
+            let delegate: Option<Retained<Delegate>> = unsafe { msg_send![self, delegate] };
+            if let Some(delegate) = delegate
+                && delegate.is_open_url_input_key(event, composing)
+            {
+                // macOS routes Control-Return here before sendEvent:. Reuse that
+                // path so submission stays behind any buffered input-source keys.
+                self.sendEvent(event);
+                return;
+            }
+            unsafe { let _: () = msg_send![super(self), contextMenuKeyDown: event]; }
+        }
         #[unsafe(method(sendEvent:))]
         fn send_event(&self, event: &NSEvent) {
-            if event.r#type() == NSEventType::LeftMouseDown {
-                let delegate: Option<Retained<Delegate>> = unsafe { msg_send![self, delegate] };
-                if let Some(delegate) = delegate { delegate.focus_open_url_input_at(self, event.locationInWindow()); }
-            }
             if event.r#type() == NSEventType::KeyDown {
                 if i64::from(event.keyCode()) != winlane::core::shortcuts::ESCAPE {
                     let delegate: Option<Retained<Delegate>> = unsafe { msg_send![self, delegate] };
@@ -26,6 +38,11 @@ define_class!(
                 let composing = self.firstResponder()
                     .and_then(|responder| responder.downcast::<NSTextView>().ok())
                     .is_some_and(|editor| NSTextInputClient::hasMarkedText(&*editor));
+                let delegate: Option<Retained<Delegate>> = unsafe { msg_send![self, delegate] };
+                if let Some(delegate) = delegate && delegate.is_open_url_input_key(event, composing) {
+                    delegate.submit_open_url(true);
+                    return;
+                }
                 if i64::from(event.keyCode()) == SPACE {
                     let delegate: Option<Retained<Delegate>> = unsafe { msg_send![self, delegate] };
                     if let Some(delegate) = delegate {

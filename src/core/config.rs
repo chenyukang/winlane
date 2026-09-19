@@ -450,24 +450,51 @@ impl Config {
             )
             .into());
         }
-        if searches
-            .iter()
-            .any(|search| search.conflicts_with_switch(switch))
-        {
-            return Err(tr!(
-                "搜索和切换快捷键不能相同，也不能占用切换模式的 Shift 反向组合。",
-                "Search and switch shortcuts must differ, including Shift for reverse switching."
-            )
-            .into());
+        let mut assigned = Vec::new();
+        let mut assign =
+            |shortcut: &Shortcut, binding: crate::core::shortcuts::Binding, owner: String| {
+                if let Some((_, existing)) = assigned.iter().find(|(key, _)| *key == binding) {
+                    return Err(trf!(
+                        "快捷键 {} 冲突：{} 与 {}。请选择其他组合。",
+                        "Shortcut {} conflicts: {} and {}. Choose another combination.",
+                        shortcut.display(),
+                        existing,
+                        owner
+                    ));
+                }
+                assigned.push((binding, owner));
+                Ok(())
+            };
+        assign(
+            &self.switch_shortcut,
+            switch,
+            tr!("切换模式", "Switch mode").into(),
+        )?;
+        if !self.switch_shortcut.shift {
+            let reverse = Shortcut {
+                shift: true,
+                ..self.switch_shortcut.clone()
+            };
+            assign(
+                &reverse,
+                reverse.app_binding()?,
+                tr!("切换模式（反向）", "Switch mode (reverse)").into(),
+            )?;
         }
-        for (index, binding) in searches.iter().enumerate() {
-            if searches[..index].contains(binding) {
-                return Err(trf!(
-                    "第 {} 个搜索快捷键重复，请选择不同的组合。",
-                    "Search shortcut {} is duplicated. Choose a different combination.",
+        for (index, (shortcut, binding)) in std::iter::once(&self.shortcut)
+            .chain(&self.additional_search_shortcuts)
+            .zip(searches)
+            .enumerate()
+        {
+            assign(
+                shortcut,
+                binding,
+                trf!(
+                    "搜索模式（快捷键 {}）",
+                    "Search mode (shortcut {})",
                     index + 1
-                ));
-            }
+                ),
+            )?;
         }
         if self.app_shortcuts.len() > 32 {
             return Err(tr!(
@@ -476,42 +503,23 @@ impl Config {
             )
             .into());
         }
-        let mut assigned = Vec::new();
-        for (index, item) in self.app_shortcuts.iter().enumerate() {
+        for item in &self.app_shortcuts {
             item.application.validate()?;
-            let binding = item.shortcut.app_binding()?;
-            if searches.contains(&binding) || binding.conflicts_with_switch(switch) {
-                return Err(trf!(
-                    "第 {} 个应用快捷键与搜索或切换快捷键冲突。",
-                    "App shortcut {} conflicts with the search or switch shortcut.",
-                    index + 1
-                ));
-            }
-            if assigned.contains(&binding) {
-                return Err(trf!(
-                    "第 {} 个应用快捷键重复，请选择不同的组合。",
-                    "App shortcut {} is duplicated. Choose a different combination.",
-                    index + 1
-                ));
-            }
-            assigned.push(binding);
+            assign(
+                &item.shortcut,
+                item.shortcut.app_binding()?,
+                trf!("应用“{}”", "App “{}”", item.application.name),
+            )?;
         }
         for link in &self.quicklinks {
             let Some(shortcut) = &link.shortcut else {
                 continue;
             };
-            let binding = shortcut.app_binding()?;
-            if searches.contains(&binding)
-                || binding.conflicts_with_switch(switch)
-                || assigned.contains(&binding)
-            {
-                return Err(trf!(
-                    "快捷链接“{}”的快捷键与其他快捷键冲突，请选择不同的组合。",
-                    "The shortcut for quicklink “{}” conflicts with another shortcut. Choose a different combination.",
-                    link.name
-                ));
-            }
-            assigned.push(binding);
+            assign(
+                shortcut,
+                shortcut.app_binding()?,
+                trf!("快捷链接“{}”", "Quicklink “{}”", link.name),
+            )?;
         }
         let mut commands = Vec::new();
         for item in &self.command_shortcuts {
@@ -523,19 +531,12 @@ impl Config {
                     name
                 ));
             }
-            let binding = item.shortcut.app_binding()?;
-            if searches.contains(&binding)
-                || binding.conflicts_with_switch(switch)
-                || assigned.contains(&binding)
-            {
-                return Err(trf!(
-                    "命令“{}”的快捷键与其他快捷键冲突，请选择不同的组合。",
-                    "The shortcut for command “{}” conflicts with another shortcut. Choose a different combination.",
-                    name
-                ));
-            }
+            assign(
+                &item.shortcut,
+                item.shortcut.app_binding()?,
+                trf!("命令“{}”", "Command “{}”", name),
+            )?;
             commands.push(item.command);
-            assigned.push(binding);
         }
         if self.excluded_apps.len() > 100
             || self

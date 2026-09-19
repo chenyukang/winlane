@@ -45,10 +45,11 @@ pub fn verify_editor(mtm: MainThreadMarker) {
         .shortcut
         .fill_optional(Some(&Default::default()));
     editor.ui().shortcut.notify_changed();
-    assert!(
-        !editor.ui().message.stringValue().is_empty(),
-        "conflicts must be visible"
-    );
+    let error = editor.ui().message.stringValue().to_string();
+    assert!(error.contains(tr!("快捷链接“Search”", "Quicklink “Search”")));
+    assert!(error.contains(tr!("搜索模式（快捷键 1）", "Search mode (shortcut 1)")));
+    assert!(error.contains("⌃I"));
+    assert_eq!(editor.ui().message.toolTip().unwrap().to_string(), error);
     assert_eq!(
         saved.borrow()[0].shortcut.as_ref(),
         Some(&shortcut),
@@ -58,6 +59,7 @@ pub fn verify_editor(mtm: MainThreadMarker) {
     editor.ui().shortcut.notify_changed();
     assert!(saved.borrow()[0].shortcut.is_none());
     assert!(editor.ui().message.stringValue().is_empty());
+    assert!(editor.ui().message.toolTip().is_none());
     editor.ui().shortcut.fill_optional(Some(&shortcut));
     editor.ui().shortcut.notify_changed();
     editor

@@ -220,19 +220,6 @@ impl Delegate {
         if count == 0 {
             return;
         }
-        if self.searching_open_url() && !self.ivars().query.borrow().trim().is_empty() {
-            let state = self.ivars();
-            let current = if state.open_url_input_active.get() {
-                0
-            } else {
-                state.selected.get() + 1
-            };
-            let next = (current as isize + direction).rem_euclid(count as isize + 1) as usize;
-            state.open_url_input_active.set(next == 0);
-            state.selected.set(next.saturating_sub(1));
-            self.render();
-            return;
-        }
         self.ivars().selected.set(
             (self.ivars().selected.get() as isize + direction).rem_euclid(count as isize) as usize,
         );

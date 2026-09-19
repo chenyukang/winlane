@@ -95,6 +95,15 @@ pub fn verify_autosave_target(
             .to_string()
             .starts_with("Not saved:")
     );
+    let error = window.message.stringValue().to_string();
+    for expected in [
+        "App “Editor”",
+        "App “Chat”",
+        &valid.app_shortcuts[0].shortcut.display(),
+    ] {
+        assert!(error.contains(expected), "{error}");
+    }
+    assert_eq!(window.message.toolTip().unwrap().to_string(), error);
     // Removing the conflicting draft restores a valid candidate without changing its binding.
     unsafe {
         incomplete.remove.sendAction_to(

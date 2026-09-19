@@ -202,10 +202,16 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
                 .all(|control| control.action() == Some(sel!(settingsChanged:)))
         );
         controls.fill_optional(Some(&config.shortcut));
-        assert!(
-            settings.candidate().is_err(),
-            "command shortcut conflicts must prevent saving"
-        );
+        let error = settings
+            .candidate()
+            .expect_err("command shortcut conflicts must prevent saving");
+        assert!(error.contains("open-url"));
+        assert!(error.contains(tr!("搜索模式（快捷键 1）", "Search mode (shortcut 1)")));
+        assert!(error.contains(&config.shortcut.display()));
+        settings.report(&error, true);
+        assert_eq!(settings.message.toolTip().unwrap().to_string(), error);
+        settings.report("", false);
+        assert!(settings.message.toolTip().is_none());
         controls.fill_optional(None);
         assert!(settings.candidate().unwrap().command_shortcuts.is_empty());
         config.command_shortcuts.clear();

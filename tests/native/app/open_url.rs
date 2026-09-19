@@ -2,6 +2,7 @@ use super::*;
 use winlane::features::open_url::{History, InputTarget, Page};
 
 pub(super) fn verify_open_url(mtm: MainThreadMarker) {
+    verify_context_menu_key(mtm);
     let delegate = Delegate::new(mtm);
     let state = delegate.ivars();
     state.catalog_checked.set(Some(Instant::now()));
@@ -40,7 +41,10 @@ pub(super) fn verify_open_url(mtm: MainThreadMarker) {
     state.query.replace("文档".into());
     delegate.filter();
     assert!(
-        matches!(delegate.open_url_target(), Some(InputTarget::Search(_))),
+        matches!(
+            delegate.open_url_target(false),
+            Some(InputTarget::Search(_))
+        ),
         "input can search even while history loads"
     );
     tx.send(History {
@@ -55,42 +59,78 @@ pub(super) fn verify_open_url(mtm: MainThreadMarker) {
         1,
         "typing during loading must filter the arriving result"
     );
-    assert!(
-        delegate.selected_url().is_none(),
-        "loading results must not select a URL over typed input"
+    assert_eq!(
+        delegate.selected_url(),
+        Some(pages[0].clone()),
+        "matching results should select the first URL even when they arrive after typing"
     );
     assert!(
         delegate
             .panels()
             .iter()
-            .all(|ui| ui.rows.borrow()[0].selected == Some(false))
+            .all(|ui| ui.rows.borrow()[0].selected == Some(true))
     );
     delegate.move_selection(1);
     assert_eq!(delegate.selected_url(), Some(pages[0].clone()));
     assert_eq!(
-        delegate.open_url_target(),
+        delegate.open_url_target(false),
         Some(InputTarget::Url(pages[0].url.clone()))
     );
     delegate.move_selection(-1);
-    assert!(matches!(
-        delegate.open_url_target(),
-        Some(InputTarget::Search(_))
-    ));
-    delegate.move_selection(-1);
     assert_eq!(delegate.selected_url(), Some(pages[0].clone()));
     let ui = delegate.panels()[0].clone();
-    let input_point = ui.input.convertPoint_toView(NSPoint::new(20.0, 10.0), None);
-    delegate.focus_open_url_input_at(&ui.panel, input_point);
-    assert!(
-        delegate.selected_url().is_none(),
-        "clicking the input clears the history selection"
+    assert!(matches!(
+        delegate.open_url_target(true),
+        Some(InputTarget::Search(_))
+    ));
+    assert_eq!(
+        delegate.selected_url(),
+        Some(pages[0].clone()),
+        "using input does not change selection"
     );
-    delegate.move_selection(1);
+    verify_input_keys(&delegate, &ui);
+
+    state.query.replace("example.com".into());
     delegate.filter();
-    assert!(
-        delegate.selected_url().is_none(),
-        "editing returns Enter to the input"
+    assert_eq!(
+        delegate.open_url_target(false),
+        Some(InputTarget::Url(pages[0].url.clone()))
     );
+    assert_eq!(
+        delegate.open_url_target(true),
+        Some(InputTarget::Url("https://example.com/".into()))
+    );
+    state.query.replace("example".into());
+    delegate.filter();
+    assert_eq!(delegate.selected_url(), Some(pages[0].clone()));
+    delegate.move_selection(1);
+    assert_eq!(delegate.selected_url(), Some(pages[1].clone()));
+    assert_eq!(
+        delegate.open_url_target(false),
+        Some(InputTarget::Url(pages[1].url.clone()))
+    );
+    assert!(matches!(
+        delegate.open_url_target(true),
+        Some(InputTarget::Search(_))
+    ));
+    delegate.move_selection(1);
+    assert_eq!(
+        delegate.selected_url(),
+        Some(pages[0].clone()),
+        "arrows wrap between rows without an input-only slot"
+    );
+    state.query.replace("文档".into());
+    delegate.filter();
+    assert_eq!(
+        delegate.selected_url(),
+        Some(pages[0].clone()),
+        "editing selects the first matching URL"
+    );
+    assert!(
+        ui.panel.makeFirstResponder(Some(&ui.input)),
+        "focusing the input must keep the matched URL selected"
+    );
+    assert_eq!(delegate.selected_url(), Some(pages[0].clone()));
     assert!(state.matches.borrow().is_empty());
     assert!(state.command_matches.borrow().is_empty());
     assert!(state.project_matches.borrow().is_empty());
@@ -116,6 +156,12 @@ pub(super) fn verify_open_url(mtm: MainThreadMarker) {
     }
     state.query.borrow_mut().clear();
     delegate.filter();
+    assert!(
+        delegate.open_url_target(true).is_none(),
+        "Ctrl+Enter with empty input does nothing"
+    );
+    delegate.submit_open_url(true);
+    assert!(delegate.searching_open_url());
     delegate.move_selection(1);
     let (tx, rx) = mpsc::channel();
     state.open_url_receiver.replace(Some(rx));
@@ -183,7 +229,7 @@ pub(super) fn verify_open_url(mtm: MainThreadMarker) {
     state.query.replace("absent".into());
     delegate.filter();
     assert!(matches!(
-        delegate.open_url_target(),
+        delegate.open_url_target(false),
         Some(InputTarget::Search(_))
     ));
     assert!(delegate.panels().iter().all(|ui| {
@@ -195,13 +241,18 @@ pub(super) fn verify_open_url(mtm: MainThreadMarker) {
     state.query.replace("example.com/new?q=中文&x=1".into());
     delegate.filter();
     assert_eq!(
-        delegate.open_url_target(),
+        delegate.open_url_target(false),
         Some(InputTarget::Url(
             "https://example.com/new?q=%E4%B8%AD%E6%96%87&x=1".into()
         ))
     );
     assert!(delegate.searching_open_url());
     assert_eq!(delegate.match_count(), 0);
+    assert_eq!(
+        delegate.open_url_target(false),
+        delegate.open_url_target(true),
+        "both actions use input when nothing matches"
+    );
     delegate.cancel_search();
     assert_eq!(state.query.borrow().as_str(), "open-url");
     assert_eq!(delegate.selected_command(), Some(CommandId::OpenUrl));
@@ -327,4 +378,205 @@ pub(super) fn verify_open_url(mtm: MainThreadMarker) {
     println!(
         "Open URL: cached entry, asynchronous refresh, MRU search, selection retention, error display, late completion and row cleanup; no browser opened."
     );
+}
+
+fn verify_input_keys(delegate: &Delegate, ui: &PanelUi) {
+    let key = |code, flags| {
+        NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
+            NSEventType::KeyDown, NSPoint::ZERO, flags, 0.0, ui.panel.windowNumber(),
+            None, ns_string!("\r"), ns_string!("\r"), false, code,
+        ).unwrap()
+    };
+    let control = NSEventModifierFlags::Control;
+    for code in [36, 76] {
+        let event = key(code, control);
+        assert!(delegate.is_open_url_input_key(&event, false));
+        assert!(
+            !delegate.is_open_url_input_key(&event, true),
+            "IME composition owns Return"
+        );
+        assert!(matches!(
+            delegate.open_url_target(delegate.is_open_url_input_key(&event, false)),
+            Some(InputTarget::Search(_))
+        ));
+        for flags in [
+            NSEventModifierFlags::empty(),
+            NSEventModifierFlags::Command,
+            NSEventModifierFlags::Option,
+            control | NSEventModifierFlags::Command,
+            control | NSEventModifierFlags::Shift,
+            control | NSEventModifierFlags::Option,
+        ] {
+            assert!(!delegate.is_open_url_input_key(&key(code, flags), false));
+        }
+        assert!(
+            delegate
+                .is_open_url_input_key(&key(code, control | NSEventModifierFlags::CapsLock), false)
+        );
+    }
+    assert!(!delegate.is_open_url_input_key(&key(48, control), false));
+    let state = delegate.ivars();
+    for scope in [
+        None,
+        Some(SearchScope::Projects),
+        Some(SearchScope::Quicklinks),
+        Some(SearchScope::Snippets),
+        Some(SearchScope::Clipboard),
+    ] {
+        state.search_scope.set(scope);
+        assert!(
+            !delegate.is_open_url_input_key(&key(36, control), false),
+            "Ctrl+Enter is scoped to open-url"
+        );
+        assert!(delegate.open_url_target(true).is_none());
+    }
+    state.search_scope.set(Some(SearchScope::OpenUrl));
+}
+
+define_class!(
+    // SAFETY: This test-only editor prevents native menu tracking in hidden checks.
+    #[unsafe(super = NSTextView)]
+    #[thread_kind = MainThreadOnly]
+    struct ContextMenuTestEditor;
+    unsafe impl NSObjectProtocol for ContextMenuTestEditor {}
+    impl ContextMenuTestEditor {
+        #[unsafe(method(showContextMenuForSelection:))]
+        fn show_context_menu(&self, _: Option<&AnyObject>) {}
+        #[unsafe(method(menuForEvent:))]
+        fn menu(&self, _: &NSEvent) -> *mut NSMenu { std::ptr::null_mut() }
+    }
+);
+
+fn verify_context_menu_key(mtm: MainThreadMarker) {
+    use objc2_foundation::{NSNotFound, NSRange};
+
+    let delegate = Delegate::new(mtm);
+    let state = delegate.ivars();
+    state.mode.set(Some(PanelMode::Search));
+    state.search_scope.set(Some(SearchScope::OpenUrl));
+    delegate.sync_displays();
+    let ui = delegate.panels()[0].clone();
+    let test_editor: Retained<ContextMenuTestEditor> = unsafe {
+        msg_send![super(ContextMenuTestEditor::alloc(mtm).set_ivars(())), initWithFrame: NSRect::ZERO]
+    };
+    let editor: &NSTextView = &test_editor;
+    ui.panel.contentView().unwrap().addSubview(editor);
+    assert!(ui.panel.makeFirstResponder(Some(editor)));
+    // SAFETY: The panel outlives this editor; use the normal editor-to-window chain.
+    unsafe {
+        editor.setNextResponder(Some(&ui.panel));
+    }
+    if !editor.respondsToSelector(sel!(contextMenuKeyDown:)) {
+        return;
+    }
+    let key = |code, flags, text: &NSString| {
+        NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
+            NSEventType::KeyDown, NSPoint::ZERO, flags, 0.0, ui.panel.windowNumber(),
+            None, text, text, false, code,
+        ).unwrap()
+    };
+    let control = NSEventModifierFlags::Control;
+    for code in [36, 76] {
+        let event = key(code, control, ns_string!("\r"));
+        editor.contextMenuKeyDown(&event);
+        assert!(
+            state.launch_receiver.borrow().is_none(),
+            "empty input must not launch anything"
+        );
+
+        // Input still starting: submit must stay behind the letters already queued.
+        state.changing_displays.set(true);
+        state
+            .input_gate
+            .borrow_mut()
+            .begin(Some("test.pending-input".into()));
+        ui.panel
+            .sendEvent(&key(0, NSEventModifierFlags::empty(), ns_string!("a")));
+        editor.contextMenuKeyDown(&event);
+        let queued = state.input_gate.borrow_mut().finish(None, true).unwrap();
+        assert_eq!(
+            queued
+                .iter()
+                .map(|event| event.keyCode())
+                .collect::<Vec<_>>(),
+            [0, code]
+        );
+        delegate.cancel_input_start();
+        state.changing_displays.set(false);
+    }
+
+    state.changing_displays.set(true);
+    for scope in [
+        None,
+        Some(SearchScope::Projects),
+        Some(SearchScope::Quicklinks),
+        Some(SearchScope::Snippets),
+        Some(SearchScope::Clipboard),
+    ] {
+        state.search_scope.set(scope);
+        state
+            .input_gate
+            .borrow_mut()
+            .begin(Some("test.pending-input".into()));
+        editor.contextMenuKeyDown(&key(36, control, ns_string!("\r")));
+        assert!(
+            state
+                .input_gate
+                .borrow_mut()
+                .finish(None, true)
+                .unwrap()
+                .is_empty(),
+            "other scopes must not queue a URL submission"
+        );
+    }
+    state.search_scope.set(Some(SearchScope::OpenUrl));
+    state
+        .input_gate
+        .borrow_mut()
+        .begin(Some("test.pending-input".into()));
+    editor.contextMenuKeyDown(&key(36, NSEventModifierFlags::Option, ns_string!("\r")));
+    assert!(
+        state
+            .input_gate
+            .borrow_mut()
+            .finish(None, true)
+            .unwrap()
+            .is_empty(),
+        "a customized system menu shortcut must not queue a URL submission"
+    );
+    unsafe {
+        NSTextInputClient::setMarkedText_selectedRange_replacementRange(
+            editor,
+            ns_string!("ni"),
+            NSRange::new(2, 0),
+            NSRange::new(NSNotFound as usize, 0),
+        );
+    }
+    assert!(NSTextInputClient::hasMarkedText(editor));
+    assert!(ui.panel.makeFirstResponder(Some(editor)));
+    state
+        .input_gate
+        .borrow_mut()
+        .begin(Some("test.pending-input".into()));
+    editor.contextMenuKeyDown(&key(36, control, ns_string!("\r")));
+    assert!(
+        state
+            .input_gate
+            .borrow_mut()
+            .finish(None, true)
+            .unwrap()
+            .is_empty(),
+        "composition must not queue a URL submission"
+    );
+    assert!(NSTextInputClient::hasMarkedText(editor));
+    assert!(state.launch_receiver.borrow().is_none());
+    delegate.cancel_input_start();
+    state.changing_displays.set(false);
+    ui.panel.makeFirstResponder(None);
+    unsafe {
+        editor.setNextResponder(None);
+    }
+    editor.removeFromSuperview();
+    assert!(!ui.panel.isVisible());
+    ui.panel.close();
 }

@@ -438,7 +438,10 @@ impl SettingsWindow {
             NSColor::secondaryLabelColor()
         };
         self.message.setTextColor(Some(&color));
-        self.message.setStringValue(&NSString::from_str(message));
+        let text = NSString::from_str(message);
+        self.message.setStringValue(&text);
+        self.message
+            .setToolTip((!message.is_empty()).then_some(&text));
     }
 
     pub fn show(&self, config: &Config) {

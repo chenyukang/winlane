@@ -233,9 +233,11 @@ impl QuicklinkEditor {
         self.fill();
     }
     fn report(&self, message: &str) {
+        let text = NSString::from_str(message);
+        self.ui().message.setStringValue(&text);
         self.ui()
             .message
-            .setStringValue(&NSString::from_str(message));
+            .setToolTip((!message.is_empty()).then_some(&text));
     }
     fn fill(&self) {
         self.ivars().filling.set(true);

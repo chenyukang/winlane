@@ -279,7 +279,9 @@ impl AppShortcutsWindow {
                         row.shortcut.notify_changed();
                     }
                     Err(error) => {
-                        message.setStringValue(&NSString::from_str(&error));
+                        let text = NSString::from_str(&error);
+                        message.setStringValue(&text);
+                        message.setToolTip(Some(&text));
                         message.setTextColor(Some(&NSColor::systemRedColor()));
                     }
                 }
@@ -303,7 +305,10 @@ impl AppShortcutsWindow {
     }
 
     pub fn report(&self, text: &str, error: bool) {
-        self.message.setStringValue(&NSString::from_str(text));
+        let message = NSString::from_str(text);
+        self.message.setStringValue(&message);
+        self.message
+            .setToolTip((!text.is_empty()).then_some(&message));
         let color = if error {
             NSColor::systemRedColor()
         } else {

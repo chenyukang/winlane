@@ -369,7 +369,6 @@ define_class!(
         fn quick_select(&self, sender: &NSMenuItem) {
             if !self.any_panel_visible() { return; }
             if (sender.tag() as usize) < self.match_count() {
-                self.ivars().open_url_input_active.set(false);
                 self.ivars().selected.set(sender.tag() as usize);
                 self.render(); self.activate_selected();
             }
@@ -402,7 +401,6 @@ define_class!(
         #[unsafe(method(pickWindow:))]
         fn pick(&self, sender: &NSButton) {
             if let Some(window) = sender.window() { self.remember_panel_display(&window); }
-            self.ivars().open_url_input_active.set(false);
             self.ivars().selected.set(sender.tag() as usize);
             self.render();
             self.activate_selected();

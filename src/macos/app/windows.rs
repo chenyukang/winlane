@@ -10,7 +10,7 @@ impl Delegate {
             return;
         }
         if self.searching_open_url() {
-            self.open_selected_url();
+            self.submit_open_url(false);
             return;
         }
         if self.searching_projects() {

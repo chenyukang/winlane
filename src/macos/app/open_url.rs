@@ -1,20 +1,17 @@
 use super::*;
 
 impl Delegate {
-    pub(super) fn focus_open_url_input_at(&self, panel: &SearchPanel, point: NSPoint) {
-        if !self.searching_open_url() || self.ivars().query.borrow().trim().is_empty() {
-            return;
-        }
-        if self.panels().iter().any(|ui| {
-            std::ptr::eq(&*ui.panel, panel)
-                && objc2_foundation::NSPointInRect(
-                    ui.input.convertPoint_fromView(point, None),
-                    ui.input.bounds(),
-                )
-        }) {
-            self.ivars().open_url_input_active.set(true);
-            self.render();
-        }
+    pub(super) fn is_open_url_input_key(&self, event: &NSEvent, composing: bool) -> bool {
+        self.searching_open_url()
+            && !composing
+            && event.r#type() == NSEventType::KeyDown
+            && matches!(event.keyCode(), 36 | 76)
+            && event.modifierFlags().intersection(
+                NSEventModifierFlags::Command
+                    | NSEventModifierFlags::Control
+                    | NSEventModifierFlags::Option
+                    | NSEventModifierFlags::Shift,
+            ) == NSEventModifierFlags::Control
     }
 
     pub(super) fn refresh_open_url(&self) {
@@ -82,8 +79,6 @@ impl Delegate {
     }
 
     pub(super) fn clear_open_url_matches(&self) {
-        let state = self.ivars();
-        state.open_url_input_active.set(false);
         self.ivars().open_url_matches.borrow_mut().clear();
         for ui in self.panels() {
             for row in ui.rows.borrow_mut().iter_mut() {
@@ -109,9 +104,6 @@ impl Delegate {
         } else {
             None
         };
-        state
-            .open_url_input_active
-            .set(selected.is_none() && !state.query.borrow().trim().is_empty());
         state.matches.borrow_mut().clear();
         state.launch_matches.borrow_mut().clear();
         state.command_matches.borrow_mut().clear();
@@ -126,7 +118,7 @@ impl Delegate {
     }
 
     pub(super) fn selected_url(&self) -> Option<winlane::features::open_url::Page> {
-        if !self.searching_open_url() || self.ivars().open_url_input_active.get() {
+        if !self.searching_open_url() {
             return None;
         }
         self.ivars()
@@ -136,17 +128,21 @@ impl Delegate {
             .cloned()
     }
 
-    pub(super) fn open_url_target(&self) -> Option<winlane::features::open_url::InputTarget> {
+    pub(super) fn open_url_target(
+        &self,
+        use_input: bool,
+    ) -> Option<winlane::features::open_url::InputTarget> {
         if !self.searching_open_url() {
             return None;
         }
-        self.selected_url()
-            .map(|page| winlane::features::open_url::InputTarget::Url(page.url))
-            .or_else(|| winlane::features::open_url::input_target(&self.ivars().query.borrow()))
+        if !use_input && let Some(page) = self.selected_url() {
+            return Some(winlane::features::open_url::InputTarget::Url(page.url));
+        }
+        winlane::features::open_url::input_target(&self.ivars().query.borrow())
     }
 
-    pub(super) fn open_selected_url(&self) {
-        let Some(target) = self.open_url_target() else {
+    pub(super) fn submit_open_url(&self, use_input: bool) {
+        let Some(target) = self.open_url_target(use_input) else {
             return;
         };
         match crate::macos::platform::open_url::PreparedPage::new(target.url()) {

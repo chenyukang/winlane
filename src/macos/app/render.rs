@@ -45,7 +45,7 @@ impl Delegate {
         let open_url = state.open_url_matches.borrow();
         let url_history = state.open_url_history.borrow();
         let in_open_url = self.searching_open_url();
-        let url_input_target = if in_open_url && state.open_url_input_active.get() {
+        let url_input_target = if in_open_url && open_url.is_empty() {
             winlane::features::open_url::input_target(&state.query.borrow())
         } else {
             None
@@ -539,9 +539,7 @@ impl Delegate {
                     .clone(),
                 )
             };
-            let selected = position == state.selected.get()
-                && !unmatched_alias
-                && !(in_open_url && state.open_url_input_active.get());
+            let selected = position == state.selected.get() && !unmatched_alias;
             if rows.len() <= position {
                 rows.push(self.create_row(position, density));
             }
@@ -744,15 +742,9 @@ impl Delegate {
             url_history.error.clone().unwrap_or_else(|| {
                 if let Some(target) = &url_input_target {
                     if matches!(target, winlane::features::open_url::InputTarget::Url(_)) {
-                        tr!(
-                            "↵ 打开输入的网址 · ↓ 选择历史记录 · Esc 返回",
-                            "↵ open typed URL · ↓ choose history · Esc back"
-                        )
+                        tr!("↵ 打开输入的网址 · Esc 返回", "↵ open typed URL · Esc back")
                     } else {
-                        tr!(
-                            "↵ Google 搜索 · ↓ 选择历史记录 · Esc 返回",
-                            "↵ search Google · ↓ choose history · Esc back"
-                        )
+                        tr!("↵ Google 搜索 · Esc 返回", "↵ search Google · Esc back")
                     }
                     .into()
                 } else if state.open_url_receiver.borrow().is_some()
@@ -761,8 +753,8 @@ impl Delegate {
                     tr!("正在更新浏览记录…", "Updating browsing history…").into()
                 } else {
                     trf!(
-                        "{} 个网址 · ↵ 用 Chrome 打开 · ⌘R 刷新 · Esc 返回",
-                        "{} URLs · ↵ open in Chrome · ⌘R refresh · Esc back",
+                        "{} 个网址 · ↵ 打开 · ⌃↵ 使用输入 · ⌘R 刷新 · Esc 返回",
+                        "{} URLs · ↵ open · ⌃↵ use input · ⌘R refresh · Esc back",
                         open_url.len()
                     )
                 }

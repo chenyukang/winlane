@@ -228,7 +228,6 @@ struct AppState {
     command_matches: RefCell<Vec<CommandId>>,
     snippet_matches: RefCell<Vec<winlane::features::snippets::Snippet>>,
     open_url_matches: RefCell<Vec<winlane::features::open_url::Page>>,
-    open_url_input_active: Cell<bool>,
     open_url_history: RefCell<winlane::features::open_url::History>,
     open_url_receiver: RefCell<Option<Receiver<winlane::features::open_url::History>>>,
     project_matches: RefCell<Vec<winlane::features::projects::Project>>,

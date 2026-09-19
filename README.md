@@ -61,7 +61,7 @@ Search for **projects** or **vscode** and select **Open recent VS Code projects*
 
 ### Open a URL or search the web
 
-Search for **open-url** and select **Open URL or search Google**. Enter a URL and press Enter to open it in Chrome, or type keywords to search Google. Use Down to select a matching history item before pressing Enter. **Command + R** refreshes; Esc returns to window search. History loads in the background only after entering the command. Assign a direct shortcut in **Settings → Shortcuts → Command shortcuts**; other built-in commands support shortcuts there too. See [Open URL](docs/open-url.md) for profile support and limits.
+Search for **open-url** and select **Open URL or search Google**. The first matching history item is selected automatically; press Enter to open it, or use the arrow keys to select another. **Control + Enter** uses your input directly: open a URL in Chrome or search keywords on Google. Enter also uses your input when nothing matches. **Command + R** refreshes; Esc returns to window search. History loads in the background only after entering the command. Assign a direct shortcut in **Settings → Shortcuts → Command shortcuts**; other built-in commands support shortcuts there too. See [Open URL](docs/open-url.md) for profile support and limits.
 
 ### Open saved links
 
