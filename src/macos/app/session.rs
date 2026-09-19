@@ -42,9 +42,20 @@ impl Delegate {
     }
 
     pub(super) fn prepare_panel(&self, mode: PanelMode, session: u64, direction: i8) {
+        self.prepare_panel_in_scope(mode, session, direction, None);
+    }
+
+    pub(super) fn prepare_panel_in_scope(
+        &self,
+        mode: PanelMode,
+        session: u64,
+        direction: i8,
+        scope: Option<SearchScope>,
+    ) {
         self.ivars().preparing_panel.set(true);
+        self.cancel_scoped_refresh();
         self.clear_quicklink_input();
-        self.ivars().search_scope.set(None);
+        self.ivars().search_scope.set(scope);
         if let Some(timer) = self.ivars().snippet_paste_timer.take() {
             timer.invalidate();
         }
@@ -104,7 +115,8 @@ impl Delegate {
         if mode == PanelMode::Switch {
             self.ivars().current_app_only.set(false);
         }
-        self.filter_preserving(preserve);
+        self.schedule_scoped_refresh();
+        self.filter_preserving(if scope.is_some() { None } else { preserve });
         self.prepare_switch_selection();
         if !self.ivars().demo.get() {
             self.refresh();
@@ -173,17 +185,61 @@ impl Delegate {
         self.prepare_search_field();
         self.ivars().search_scope.set(Some(scope));
         self.ivars().query.borrow_mut().clear();
-        if scope == SearchScope::OpenUrl {
-            self.refresh_open_url();
-        }
-        if scope == SearchScope::Projects {
-            self.refresh_projects(false);
-        }
+        self.schedule_scoped_refresh();
         self.filter();
         self.focus_search();
     }
 
+    pub(super) fn cancel_scoped_refresh(&self) {
+        if let Some(timer) = self.ivars().scoped_refresh_timer.take() {
+            timer.invalidate();
+        }
+    }
+
+    pub(super) fn schedule_scoped_refresh(&self) {
+        self.cancel_scoped_refresh();
+        let needs_refresh = (self.searching_projects()
+            && self.ivars().project_receiver.borrow().is_none())
+            || (self.searching_open_url() && self.ivars().open_url_receiver.borrow().is_none());
+        if !needs_refresh {
+            return;
+        }
+        // Yield to AppKit before starting discovery. Both command shortcuts and
+        // in-panel entry render cached rows (or a loading state) on this turn.
+        let timer = unsafe {
+            NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
+                0.0,
+                self,
+                sel!(refreshSearchScope:),
+                None,
+                false,
+            )
+        };
+        unsafe { NSRunLoop::mainRunLoop().addTimer_forMode(&timer, NSRunLoopCommonModes) };
+        self.ivars().scoped_refresh_timer.replace(Some(timer));
+    }
+
+    pub(super) fn refresh_search_scope(&self, timer: &NSTimer) {
+        if !self
+            .ivars()
+            .scoped_refresh_timer
+            .borrow()
+            .as_ref()
+            .is_some_and(|pending| std::ptr::eq(&**pending, timer))
+        {
+            return;
+        }
+        self.cancel_scoped_refresh();
+        if self.searching_projects() {
+            self.refresh_projects(false);
+        } else if self.searching_open_url() {
+            self.refresh_open_url();
+        }
+        self.render();
+    }
+
     pub(super) fn leave_scoped_search(&self) {
+        self.cancel_scoped_refresh();
         if let Some(input) = self.ivars().quicklink_input.take() {
             self.prepare_search_field();
             let id = input.link.id;
@@ -244,11 +300,12 @@ impl Delegate {
     }
 
     pub(super) fn end_session(&self) {
+        self.cancel_scoped_refresh();
         self.clear_quicklink_input();
         let clipboard = self.searching_clipboard();
         let projects = self.searching_projects();
         let open_url = self.searching_open_url();
-        self.clear_open_url();
+        self.clear_open_url_matches();
         self.ivars().search_scope.set(None);
         if clipboard || projects || open_url {
             self.ivars().clipboard_matches.borrow_mut().clear();

@@ -163,6 +163,10 @@ define_class!(
         }
     }
     impl Delegate {
+        #[unsafe(method(refreshSearchScope:))]
+        fn refresh_search_scope_action(&self, timer: &NSTimer) {
+            self.refresh_search_scope(timer);
+        }
         #[unsafe(method(presentSwitch:))]
         fn present_switch(&self, timer: &NSTimer) {
             self.drain_shortcut_actions();

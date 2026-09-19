@@ -10,7 +10,7 @@ impl Delegate {
             self.filter_open_url(selected_id);
             return;
         }
-        self.clear_open_url();
+        self.clear_open_url_matches();
         if self.searching_projects() {
             self.filter_projects(selected_id);
             return;

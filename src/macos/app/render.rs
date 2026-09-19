@@ -343,7 +343,9 @@ impl Delegate {
                             "Press Enter to open in a new Chrome tab."
                         ),
                     )
-                } else if state.open_url_receiver.borrow().is_some() {
+                } else if state.open_url_receiver.borrow().is_some()
+                    || state.scoped_refresh_timer.borrow().is_some()
+                {
                     (
                         tr!("正在读取 Chrome 历史…", "Loading Chrome history…"),
                         tr!("可以继续输入搜索。", "You can keep typing."),
@@ -385,7 +387,9 @@ impl Delegate {
                     )
                 }
             } else if in_projects {
-                if state.project_receiver.borrow().is_some() {
+                if state.project_receiver.borrow().is_some()
+                    || state.scoped_refresh_timer.borrow().is_some()
+                {
                     (
                         tr!("正在读取项目…", "Loading projects…"),
                         tr!("可以继续输入搜索。", "You can keep typing."),
@@ -751,7 +755,9 @@ impl Delegate {
                         )
                     }
                     .into()
-                } else if state.open_url_receiver.borrow().is_some() {
+                } else if state.open_url_receiver.borrow().is_some()
+                    || state.scoped_refresh_timer.borrow().is_some()
+                {
                     tr!("正在更新浏览记录…", "Updating browsing history…").into()
                 } else {
                     trf!(
@@ -763,7 +769,9 @@ impl Delegate {
             })
         } else if in_projects {
             project_cache.error.clone().unwrap_or_else(|| {
-                if state.project_receiver.borrow().is_some() {
+                if state.project_receiver.borrow().is_some()
+                    || state.scoped_refresh_timer.borrow().is_some()
+                {
                     tr!("正在更新项目…", "Updating projects…").into()
                 } else {
                     trf!(

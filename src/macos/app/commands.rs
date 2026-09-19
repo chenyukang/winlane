@@ -42,11 +42,10 @@ impl Delegate {
         let Some(scope) = command_scope(command) else {
             return false;
         };
-        self.prepare_panel(PanelMode::Search, session, 0);
+        self.prepare_panel_in_scope(PanelMode::Search, session, 0, Some(scope));
         if let Some(tap) = self.ivars().shortcut_tap.borrow().as_ref() {
             tap.resume_search(session);
         }
-        self.enter_scoped_search(scope);
         true
     }
 

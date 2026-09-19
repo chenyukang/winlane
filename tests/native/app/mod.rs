@@ -10,6 +10,7 @@ mod projects;
 mod quicklink_search;
 mod recency;
 mod responsiveness;
+mod scoped_loading;
 mod settings;
 mod snippet_search;
 mod window_search;
@@ -79,6 +80,7 @@ pub fn verify_hidden_panels() {
     verify_catalog_refresh(mtm);
     verify_launch_search(mtm);
     verify_command_search(mtm);
+    scoped_loading::verify_scoped_loading(mtm);
     verify_snippet_search(mtm);
     verify_quicklink_search(mtm);
     verify_projects_search(mtm);

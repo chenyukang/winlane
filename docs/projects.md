@@ -15,6 +15,8 @@ Winlane reads the stable Visual Studio Code app's existing history locally. It p
 
 The history's most-recent-first order is preserved when filtering. Backup and profile metadata from `globalStorage/storage.json` can supply additional projects; these appear after recorded recent projects because that metadata does not provide reliable recency. Duplicate paths are removed, with a limit of 500 projects.
 
-History loads on a background thread when you enter the project list or request a refresh. Subsequent visits reuse an in-memory cache if the source files and SQLite write-ahead log have not changed. Typing searches only the loaded list. Winlane does not scan project folders, poll VS Code continuously, modify its history, or save another copy to disk.
+The panel opens immediately with the last in-memory results, or a loading message on the first visit. VS Code discovery and history reads run in the background after the panel is prepared. Each visit checks for changes to the source files and SQLite write-ahead log; **Command + R** forces a reload. You can keep typing or selecting cached projects during a refresh, and the updated list preserves your query and selected project.
+
+Leaving the list keeps its cache and lets any in-flight read finish for the next visit. A failed read keeps the previous results and shows an error. The cache lasts until Winlane quits. Winlane does not scan project folders, poll VS Code continuously, modify its history, or save another copy to disk.
 
 This version supports local projects in the stable VS Code app's default data location. Remote SSH, WSL and container projects, VS Code Insiders, custom `--user-data-dir` locations, and individual recently opened files are not included.

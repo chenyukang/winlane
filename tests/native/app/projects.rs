@@ -161,15 +161,19 @@ pub(super) fn verify_projects_search(mtm: MainThreadMarker) {
             .as_bool()
     );
     assert!(!delegate.scoped_search());
-    tx.send(Cache::default()).unwrap();
+    let mut cache = Cache::default();
+    cache.projects = projects.clone();
+    tx.send(cache).unwrap();
+    let before = state.render_passes.get();
     delegate.poll_projects();
     assert_eq!(
         delegate.selected_command(),
         Some(CommandId::Projects),
         "late completion must not reopen the project list"
     );
+    assert_eq!(state.render_passes.get(), before);
+    assert_eq!(state.project_cache.borrow().projects, projects);
     assert!(state.project_matches.borrow().is_empty());
-    state.project_cache.borrow_mut().projects = projects;
     let (_tx, rx) = mpsc::channel();
     state.project_receiver.replace(Some(rx));
     delegate.activate_selected();

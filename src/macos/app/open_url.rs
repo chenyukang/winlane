@@ -19,7 +19,11 @@ impl Delegate {
 
     pub(super) fn refresh_open_url(&self) {
         let state = self.ivars();
-        if !self.searching_open_url() || state.open_url_receiver.borrow().is_some() {
+        if !self.searching_open_url() {
+            return;
+        }
+        self.cancel_scoped_refresh();
+        if state.open_url_receiver.borrow().is_some() {
             return;
         }
         let Some(home) = std::env::var_os("HOME") else {
@@ -59,27 +63,28 @@ impl Delegate {
             },
             _ => return,
         };
-        self.ivars().open_url_receiver.take();
+        let state = self.ivars();
+        state.open_url_receiver.take();
+        let selected = self.selected_result();
+        {
+            let mut cached = state.open_url_history.borrow_mut();
+            // Keep usable cached rows on a failed read, but accept an empty
+            // successful read so clearing Chrome history clears our cache too.
+            if !history.pages.is_empty() || history.error.is_none() {
+                cached.pages = history.pages;
+            }
+            cached.error = history.error;
+            cached.access_denied = history.access_denied;
+        }
         if self.searching_open_url() {
-            let selected = self.selected_result();
-            self.ivars().open_url_history.replace(history);
             self.filter_preserving(selected);
         }
     }
 
-    pub(super) fn clear_open_url(&self) {
+    pub(super) fn clear_open_url_matches(&self) {
         let state = self.ivars();
         state.open_url_input_active.set(false);
-        if state.open_url_receiver.borrow().is_none()
-            && state.open_url_matches.borrow().is_empty()
-            && state.open_url_history.borrow().pages.is_empty()
-            && state.open_url_history.borrow().error.is_none()
-        {
-            return;
-        }
-        self.ivars().open_url_receiver.take();
         self.ivars().open_url_matches.borrow_mut().clear();
-        self.ivars().open_url_history.replace(Default::default());
         for ui in self.panels() {
             for row in ui.rows.borrow_mut().iter_mut() {
                 if matches!(row.content, Some(RowContent::OpenUrl(_))) {

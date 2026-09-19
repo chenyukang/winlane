@@ -168,6 +168,7 @@ struct AppState {
     panels: RefCell<Vec<Rc<PanelUi>>>,
     query: RefCell<String>,
     search_scope: Cell<Option<SearchScope>>,
+    scoped_refresh_timer: RefCell<Option<Retained<NSTimer>>>,
     current_app_only: Cell<bool>,
     keyboard_display: Cell<Option<u32>>,
     changing_displays: Cell<bool>,

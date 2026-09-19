@@ -3,7 +3,11 @@ use super::*;
 impl Delegate {
     pub(super) fn refresh_projects(&self, force: bool) {
         let state = self.ivars();
-        if !self.searching_projects() || state.project_receiver.borrow().is_some() {
+        if !self.searching_projects() {
+            return;
+        }
+        self.cancel_scoped_refresh();
+        if state.project_receiver.borrow().is_some() {
             return;
         }
         let Some(home) = std::env::var_os("HOME") else {
@@ -11,12 +15,14 @@ impl Delegate {
                 Some(tr!("找不到用户主目录。", "Home directory unavailable.").into());
             return;
         };
-        let application = crate::macos::platform::project_open::application_path();
         let mut cache = state.project_cache.borrow().clone();
         let (tx, rx) = mpsc::channel();
         state.project_receiver.replace(Some(rx));
         let wake = state.wake.get().unwrap().handle();
         std::thread::spawn(move || {
+            let application = objc2::rc::autoreleasepool(|_| {
+                crate::macos::platform::project_open::application_path()
+            });
             let sources = winlane::features::projects::Sources::vscode(
                 std::path::Path::new(&home),
                 application.as_deref(),

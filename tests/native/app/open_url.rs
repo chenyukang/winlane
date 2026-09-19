@@ -205,7 +205,7 @@ pub(super) fn verify_open_url(mtm: MainThreadMarker) {
     delegate.cancel_search();
     assert_eq!(state.query.borrow().as_str(), "open-url");
     assert_eq!(delegate.selected_command(), Some(CommandId::OpenUrl));
-    assert!(state.open_url_history.borrow().pages.is_empty());
+    assert_eq!(state.open_url_history.borrow().pages.len(), 2);
     assert!(
         delegate
             .panels()
@@ -240,27 +240,65 @@ pub(super) fn verify_open_url(mtm: MainThreadMarker) {
             .as_bool()
     );
     assert!(!delegate.scoped_search());
-    assert!(
-        tx.send(History::default()).is_err(),
-        "leaving must discard the pending history load"
-    );
+    tx.send(History {
+        pages: pages.clone(),
+        ..History::default()
+    })
+    .unwrap();
+    let before = state.render_passes.get();
     delegate.poll_open_url();
     assert_eq!(delegate.selected_command(), Some(CommandId::OpenUrl));
-    let (_tx, rx) = mpsc::channel();
+    assert_eq!(
+        state.render_passes.get(),
+        before,
+        "late completion only updates the cache"
+    );
+    assert_eq!(state.open_url_history.borrow().pages, pages);
+    let (tx, rx) = mpsc::channel();
     state.open_url_receiver.replace(Some(rx));
     delegate.activate_selected();
-    state.open_url_history.borrow_mut().pages = pages.clone();
-    delegate.filter();
+    assert_eq!(
+        delegate.match_count(),
+        2,
+        "show cached rows while refreshing"
+    );
+    assert_eq!(delegate.selected_url(), Some(pages[0].clone()));
+    tx.send(History {
+        error: Some("History temporarily unavailable".into()),
+        access_denied: true,
+        ..History::default()
+    })
+    .unwrap();
+    delegate.poll_open_url();
+    assert_eq!(state.open_url_history.borrow().pages, pages);
+    assert_eq!(delegate.selected_url(), Some(pages[0].clone()));
+    assert!(
+        delegate
+            .panels()
+            .iter()
+            .all(|ui| !ui.history_permissions_button.isHidden())
+    );
+    let (tx, rx) = mpsc::channel();
+    state.open_url_receiver.replace(Some(rx));
     delegate.end_session();
-    assert!(state.open_url_history.borrow().pages.is_empty());
+    assert_eq!(state.open_url_history.borrow().pages, pages);
     assert!(state.open_url_matches.borrow().is_empty());
-    assert!(state.open_url_receiver.borrow().is_none());
+    assert!(state.open_url_receiver.borrow().is_some());
     assert!(
         delegate
             .panels()
             .iter()
             .all(|ui| ui.rows.borrow().is_empty())
     );
+    tx.send(History::default()).unwrap();
+    delegate.poll_open_url();
+    assert!(
+        state.open_url_history.borrow().pages.is_empty(),
+        "a successful empty refresh clears old history"
+    );
+    assert!(state.open_url_history.borrow().error.is_none());
+    assert!(!state.open_url_history.borrow().access_denied);
+    assert!(state.open_url_receiver.borrow().is_none());
     state.mode.set(Some(PanelMode::Switch));
     delegate.filter();
     assert!(state.open_url_matches.borrow().is_empty());
@@ -287,6 +325,6 @@ pub(super) fn verify_open_url(mtm: MainThreadMarker) {
     );
     assert!(delegate.panels().iter().all(|ui| !ui.panel.isVisible()));
     println!(
-        "Open URL: explicit scope, asynchronous load, MRU search, selection retention, error display, back/Escape and memory cleanup; no browser opened."
+        "Open URL: cached entry, asynchronous refresh, MRU search, selection retention, error display, late completion and row cleanup; no browser opened."
     );
 }
