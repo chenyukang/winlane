@@ -1,0 +1,357 @@
+use crate::{tr, trf};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+
+pub const MAX_ITEM_BYTES: usize = 64 * 1024;
+pub const MAX_HISTORY_BYTES: usize = 4 * 1024 * 1024;
+pub const MAX_IMAGE_BYTES: usize = 32 * 1024 * 1024;
+pub const MAX_IMAGE_HISTORY_BYTES: usize = 128 * 1024 * 1024;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ImageFormat {
+    Png,
+    Tiff,
+}
+impl ImageFormat {
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::Png => "png",
+            Self::Tiff => "tiff",
+        }
+    }
+    pub fn pasteboard_type(self) -> &'static str {
+        match self {
+            Self::Png => "public.png",
+            Self::Tiff => "public.tiff",
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ImageInfo {
+    pub key: String,
+    pub format: ImageFormat,
+    pub bytes: usize,
+    pub width: u32,
+    pub height: u32,
+    #[serde(skip)]
+    pub asset: Option<Arc<crate::features::clipboard::assets::ImageAsset>>,
+}
+impl PartialEq for ImageInfo {
+    fn eq(&self, other: &Self) -> bool {
+        self.key == other.key
+            && self.format == other.format
+            && self.bytes == other.bytes
+            && self.width == other.width
+            && self.height == other.height
+    }
+}
+impl Eq for ImageInfo {}
+impl ImageInfo {
+    pub fn valid(&self) -> bool {
+        self.key.len() == 64
+            && self
+                .key
+                .bytes()
+                .all(|ch| ch.is_ascii_digit() || (b'a'..=b'f').contains(&ch))
+            && (1..=MAX_IMAGE_BYTES).contains(&self.bytes)
+            && self.width > 0
+            && self.height > 0
+            && u64::from(self.width) * u64::from(self.height) <= 100_000_000
+    }
+    pub fn filename(&self) -> String {
+        format!("{}.{}", self.key, self.format.extension())
+    }
+    pub fn thumbnail_filename(&self) -> String {
+        format!("{}.thumb.png", self.key)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ClipboardSettings {
+    pub enabled: bool,
+    pub persistent: bool,
+    pub max_items: usize,
+    pub retention_days: u16,
+}
+impl Default for ClipboardSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            persistent: true,
+            max_items: 200,
+            retention_days: 7,
+        }
+    }
+}
+impl ClipboardSettings {
+    pub fn validate(&self) -> Result<(), String> {
+        if !(1..=1000).contains(&self.max_items) || !(1..=365).contains(&self.retention_days) {
+            return Err(tr!(
+                "剪贴板历史上限为 1–1000 条，保留时间为 1–365 天。",
+                "Clipboard history allows 1–1000 entries and 1–365 days."
+            )
+            .into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Entry {
+    pub id: u64,
+    #[serde(default)]
+    pub text: Arc<str>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<ImageInfo>,
+    pub copied_at: u64,
+    pub source: String,
+}
+impl Entry {
+    pub fn preview(&self) -> String {
+        if let Some(image) = &self.image {
+            return trf!(
+                "图片 · {} × {} · {:.1} MB",
+                "Image · {} × {} · {:.1} MB",
+                image.width,
+                image.height,
+                image.bytes as f64 / 1_048_576.0
+            );
+        }
+        let mut result = String::new();
+        let mut whitespace = false;
+        let mut length = 0;
+        for ch in self.text.chars() {
+            if ch.is_whitespace() {
+                whitespace = !result.is_empty();
+                continue;
+            }
+            if whitespace {
+                result.push(' ');
+                length += 1;
+                whitespace = false;
+            }
+            result.push(ch);
+            length += 1;
+            if length >= 180 {
+                break;
+            }
+        }
+        result
+    }
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize)]
+pub struct History {
+    pub entries: Vec<Entry>,
+}
+impl History {
+    pub fn record(
+        &mut self,
+        text: &str,
+        source: &str,
+        now: u64,
+        settings: &ClipboardSettings,
+    ) -> bool {
+        if !settings.enabled || text.trim().is_empty() || text.len() > MAX_ITEM_BYTES {
+            return false;
+        }
+        let existing = self
+            .entries
+            .iter()
+            .find(|entry| &*entry.text == text)
+            .map(|entry| entry.id);
+        let id = existing.unwrap_or_else(|| {
+            self.entries
+                .iter()
+                .map(|entry| entry.id)
+                .max()
+                .unwrap_or(0)
+                .saturating_add(1)
+        });
+        self.entries.retain(|entry| &*entry.text != text);
+        self.entries.insert(
+            0,
+            Entry {
+                id,
+                text: Arc::from(text),
+                image: None,
+                copied_at: now,
+                source: source.chars().take(100).collect(),
+            },
+        );
+        self.prune(now, settings);
+        true
+    }
+    pub fn record_image(
+        &mut self,
+        image: ImageInfo,
+        source: &str,
+        now: u64,
+        settings: &ClipboardSettings,
+    ) -> bool {
+        if !settings.enabled || !image.valid() {
+            return false;
+        }
+        let existing = self
+            .entries
+            .iter()
+            .find(|entry| entry.image.as_ref().is_some_and(|old| old.key == image.key))
+            .map(|entry| entry.id);
+        let id = existing.unwrap_or_else(|| {
+            self.entries
+                .iter()
+                .map(|entry| entry.id)
+                .max()
+                .unwrap_or(0)
+                .saturating_add(1)
+        });
+        self.entries
+            .retain(|entry| entry.image.as_ref().is_none_or(|old| old.key != image.key));
+        self.entries.insert(
+            0,
+            Entry {
+                id,
+                text: Arc::from(""),
+                image: Some(image),
+                copied_at: now,
+                source: source.chars().take(100).collect(),
+            },
+        );
+        self.prune(now, settings);
+        true
+    }
+    pub fn prune(&mut self, now: u64, settings: &ClipboardSettings) -> bool {
+        let before = self.entries.len();
+        let cutoff = now.saturating_sub(u64::from(settings.retention_days) * 86400);
+        let mut bytes = 0usize;
+        let mut count = 0usize;
+        let mut image_bytes = 0usize;
+        self.entries.retain(|entry| {
+            if entry.copied_at < cutoff
+                || count >= settings.max_items
+                || bytes.saturating_add(entry.text.len()) > MAX_HISTORY_BYTES
+                || image_bytes.saturating_add(entry.image.as_ref().map_or(0, |image| image.bytes))
+                    > MAX_IMAGE_HISTORY_BYTES
+            {
+                return false;
+            }
+            bytes += entry.text.len();
+            image_bytes += entry.image.as_ref().map_or(0, |image| image.bytes);
+            count += 1;
+            true
+        });
+        before != self.entries.len()
+    }
+    pub fn get(&self, id: u64) -> Option<&Entry> {
+        self.entries.iter().find(|entry| entry.id == id)
+    }
+    pub fn remove(&mut self, id: u64) -> bool {
+        let before = self.entries.len();
+        self.entries.retain(|entry| entry.id != id);
+        before != self.entries.len()
+    }
+    pub fn matching(&self, query: &str) -> Vec<u64> {
+        let query = query.trim().to_lowercase();
+        let terms: Vec<_> = query.split_whitespace().collect();
+        self.entries
+            .iter()
+            .filter(|entry| {
+                if terms.is_empty() {
+                    return true;
+                }
+                let text = if let Some(image) = &entry.image {
+                    format!(
+                        "image picture screenshot 图片 图像 截图 {} {}",
+                        image.width, image.height
+                    )
+                } else {
+                    entry.text.to_lowercase()
+                };
+                let source = entry.source.to_lowercase();
+                terms
+                    .iter()
+                    .all(|term| text.contains(term) || source.contains(term))
+            })
+            .map(|entry| entry.id)
+            .collect()
+    }
+    pub fn from_json(bytes: &[u8], now: u64, settings: &ClipboardSettings) -> Result<Self, String> {
+        let mut history: Self = serde_json::from_slice(bytes).map_err(|_| {
+            tr!(
+                "剪贴板历史无法读取，原文件已保留。",
+                "Clipboard history could not be read. The original file was preserved."
+            )
+        })?;
+        let mut ids = std::collections::HashSet::new();
+        let mut texts = std::collections::HashSet::new();
+        let mut images = std::collections::HashSet::new();
+        if history.entries.len() > 1000
+            || history.entries.iter().any(|entry| {
+                entry.id == 0
+                    || entry.id == u64::MAX
+                    || entry.image.as_ref().map_or_else(
+                        || entry.text.trim().is_empty() || !texts.insert(entry.text.clone()),
+                        |image| {
+                            !image.valid()
+                                || !entry.text.is_empty()
+                                || !images.insert(image.key.clone())
+                        },
+                    )
+                    || entry.text.len() > MAX_ITEM_BYTES
+                    || entry.source.chars().count() > 100
+                    || !ids.insert(entry.id)
+            })
+        {
+            return Err(tr!(
+                "剪贴板历史文件无效，原文件已保留。",
+                "Invalid clipboard history file. The original file was preserved."
+            )
+            .into());
+        }
+        history
+            .entries
+            .sort_by_key(|entry| std::cmp::Reverse(entry.copied_at));
+        history.prune(now, settings);
+        Ok(history)
+    }
+}
+
+pub fn ignored(types: &[String], bundle_id: &str) -> bool {
+    types.iter().any(|kind| {
+        matches!(
+            kind.as_str(),
+            "org.nspasteboard.ConcealedType"
+                | "org.nspasteboard.TransientType"
+                | "org.nspasteboard.AutoGeneratedType"
+                | "com.agilebits.onepassword"
+                | "de.petermaurer.TransientPasteboardType"
+                | "Pasteboard generator type"
+        )
+    }) || matches!(
+        bundle_id,
+        "com.apple.Passwords"
+            | "com.apple.keychainaccess"
+            | "com.agilebits.onepassword7"
+            | "com.1password.1password"
+            | "com.bitwarden.desktop"
+            | "org.keepassxc.keepassxc"
+            | "com.lastpass.LastPass"
+            | "com.dashlane.Dashlane"
+    )
+}
+
+pub fn entry_count(count: usize, paused: bool) -> String {
+    if paused {
+        trf!(
+            "{} 条历史 · 已暂停记录",
+            "{} entries · Recording paused",
+            count
+        )
+    } else {
+        trf!("{} 条历史", "{} entries", count)
+    }
+}
+
+pub mod assets;
+pub mod store;

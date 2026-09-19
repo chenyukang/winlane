@@ -1,57 +1,11 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 #[cfg(target_os = "macos")]
-mod accessibility;
-#[cfg(target_os = "macos")]
-mod alias_rules;
-#[cfg(target_os = "macos")]
-mod app;
-#[cfg(target_os = "macos")]
-mod app_shortcuts;
-#[cfg(target_os = "macos")]
-mod clipboard_image;
-#[cfg(target_os = "macos")]
-mod clipboard_runtime;
-#[cfg(target_os = "macos")]
-mod clipboard_settings;
-#[cfg(target_os = "macos")]
-mod focus_observer;
-#[cfg(target_os = "macos")]
-mod input_source;
-#[cfg(target_os = "macos")]
-mod installed_apps;
-#[cfg(target_os = "macos")]
-mod main_wake;
-#[cfg(target_os = "macos")]
-mod menu_bar;
-#[cfg(target_os = "macos")]
-mod project_open;
-#[cfg(target_os = "macos")]
-mod quicklink_input;
-#[cfg(target_os = "macos")]
-mod quicklink_ui;
-#[cfg(target_os = "macos")]
-mod recency_trace;
-#[cfg(target_os = "macos")]
-mod settings;
-#[cfg(target_os = "macos")]
-mod shortcut_tap;
-#[cfg(target_os = "macos")]
-mod snippet_paste;
-#[cfg(target_os = "macos")]
-mod snippet_placeholder;
-#[cfg(target_os = "macos")]
-mod snippet_ui;
-#[cfg(target_os = "macos")]
-mod system_commands;
-#[cfg(target_os = "macos")]
-mod updater;
-#[cfg(target_os = "macos")]
-mod window_server;
+mod macos;
 
 fn main() {
     #[cfg(target_os = "macos")]
-    app::run();
+    macos::app::run();
     #[cfg(not(target_os = "macos"))]
     eprintln!("Winlane requires macOS 14 or later.");
 }

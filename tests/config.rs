@@ -1,7 +1,7 @@
-use winlane::config::{
+use winlane::core::config::{
     Appearance, Config, DisplayDensity, KEYS, Shortcut, SortOrder, parse_excluded, visible_matches,
 };
-use winlane::search::WindowInfo;
+use winlane::core::search::WindowInfo;
 
 fn windows() -> Vec<WindowInfo> {
     [
@@ -520,7 +520,7 @@ fn switch_delay_migrates_and_bounds_the_hold_interval() {
 
 #[test]
 fn additional_search_shortcuts_migrate_persist_and_validate_every_conflict() {
-    use winlane::config::{AppShortcut, ApplicationTarget, MAX_SEARCH_SHORTCUTS};
+    use winlane::core::config::{AppShortcut, ApplicationTarget, MAX_SEARCH_SHORTCUTS};
     let mut config =
         Config::from_json(r#"{"shortcut":{"control":false,"command":true,"key":"Space"}}"#)
             .unwrap();

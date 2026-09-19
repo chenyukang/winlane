@@ -1,4 +1,4 @@
-use winlane::commands::{COMMANDS, CommandId, matching_commands};
+use winlane::core::commands::{COMMANDS, CommandId, matching_commands};
 
 #[test]
 fn appearance_toggle_matches_both_modes_and_languages() {

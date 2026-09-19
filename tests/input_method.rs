@@ -1,5 +1,5 @@
-use winlane::config::Config;
-use winlane::input_method::{InputGate, InputMethod, InputSession};
+use winlane::core::config::Config;
+use winlane::core::input_method::{InputGate, InputMethod, InputSession};
 
 #[test]
 fn missing_input_policy_defaults_to_english_and_saved_choices_survive_restart() {

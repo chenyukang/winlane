@@ -1,5 +1,5 @@
-use winlane::config::{AppShortcut, ApplicationTarget, Config, Shortcut, key_label};
-use winlane::shortcuts::*;
+use winlane::core::config::{AppShortcut, ApplicationTarget, Config, Shortcut, key_label};
+use winlane::core::shortcuts::*;
 
 fn shortcut(key: &str) -> Shortcut {
     Shortcut {

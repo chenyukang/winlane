@@ -1,6 +1,6 @@
 use std::collections::HashSet;
-use winlane::app_catalog::{InstalledApp, matching_apps};
-use winlane::config::ApplicationTarget;
+use winlane::core::app_catalog::{InstalledApp, matching_apps};
+use winlane::core::config::ApplicationTarget;
 
 fn app(id: &str, name: &str, other_names: &[&str]) -> InstalledApp {
     InstalledApp {

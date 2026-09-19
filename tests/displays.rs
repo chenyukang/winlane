@@ -1,4 +1,4 @@
-use winlane::displays::{Display, Rect, placements};
+use winlane::core::displays::{Display, Rect, placements};
 
 fn display(id: u32, x: f64, y: f64, width: f64, height: f64) -> Display {
     Display {

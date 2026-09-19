@@ -1,8 +1,8 @@
-use winlane::shortcuts::*;
+use winlane::core::shortcuts::*;
 
 #[test]
 fn panel_navigation_handles_arrows_while_command_is_still_held() {
-    use winlane::shortcuts::{PanelCommand, panel_command};
+    use winlane::core::shortcuts::{PanelCommand, panel_command};
     for flags in [0, COMMAND] {
         assert_eq!(panel_command(125, flags, false), Some(PanelCommand::Next));
         assert_eq!(
@@ -21,7 +21,7 @@ fn panel_navigation_handles_arrows_while_command_is_still_held() {
 
 #[test]
 fn panel_navigation_preserves_composition_text_editing_and_system_shortcuts() {
-    use winlane::shortcuts::panel_command;
+    use winlane::core::shortcuts::panel_command;
     for key in [125, 126, TAB, 36, ESCAPE] {
         assert_eq!(panel_command(key, 0, true), None, "IME key {key}");
         assert_eq!(panel_command(key, CONTROL, false), None);

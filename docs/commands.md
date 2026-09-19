@@ -31,9 +31,9 @@ The picker closes before a system command executes. These commands do not change
 
 ## Add a command
 
-1. Add a stable `CommandId` variant and a `Command` entry in `src/commands.rs`. Supply its name, English and Chinese labels, SF Symbol, and search keywords.
-2. For a system action, handle the new ID in `PreparedCommand::prepare` and its execution in `src/system_commands.rs`. Commands that navigate within the picker, such as `snippet`, `clipboard`, `quicklink`, and `projects`, are handled in `src/app.rs` before system dispatch. Keep specialized native operations in separate modules where needed. Preparation must not perform the action. The shared handler in `src/app.rs` dismisses the picker only after preparation succeeds and reports errors through `selection_failed`.
-3. Add matching tests in `tests/commands.rs` and interaction coverage alongside `tests/support/commands.rs`. Tests should not change the user's desktop unless explicitly invoked for that purpose.
+1. Add a stable `CommandId` variant and a `Command` entry in `src/core/commands.rs`. Supply its name, English and Chinese labels, SF Symbol, and search keywords.
+2. For a system action, handle the new ID in `PreparedCommand::prepare` and its execution in `src/macos/platform/system_commands.rs`. Commands that navigate within the picker, such as `snippet`, `clipboard`, `quicklink`, and `projects`, are handled in `src/macos/app/commands.rs` before system dispatch. Keep specialized native operations in separate modules where needed. Preparation must not perform the action. The shared handler in `src/macos/app/commands.rs` dismisses the picker only after preparation succeeds and reports errors through `selection_failed` in `src/macos/app/windows.rs`.
+3. Add matching tests in `tests/commands.rs` and interaction coverage in `tests/native/app/commands.rs`. Tests should not change the user's desktop unless explicitly invoked for that purpose.
 
 Result rendering, keyboard selection, mouse selection, and selection preservation are shared across commands. Adding a new command does not require a new result layout.
 

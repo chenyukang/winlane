@@ -2,6 +2,8 @@
 
 Winlane uses Rust for window discovery, search, aliases, and shortcut routing, with native AppKit controls for its interface. Build and run it on macOS with a Rust toolchain and Xcode Command Line Tools installed.
 
+See [code structure](architecture.md) for module responsibilities and the files to change for each feature.
+
 ## Development signing
 
 Use the same signing identity, bundle identifier, and installation path across builds. An ad hoc signature changes with the executable and can invalidate the app's Accessibility authorization. A stable certificate lets debug and release builds share an identity.

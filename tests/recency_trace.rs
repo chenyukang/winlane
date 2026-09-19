@@ -1,7 +1,7 @@
 #![cfg(unix)]
 #![allow(dead_code)]
 
-include!("../src/recency_trace.rs");
+include!("../src/macos/platform/recency_trace.rs");
 
 struct Directory(PathBuf);
 

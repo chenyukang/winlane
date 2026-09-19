@@ -1,0 +1,187 @@
+use super::*;
+
+pub(super) fn verify_snippet_search(mtm: MainThreadMarker) {
+    let delegate = Delegate::new(mtm);
+    let state = delegate.ivars();
+    state.catalog_checked.set(Some(Instant::now()));
+    state.mode.set(Some(PanelMode::Search));
+    state.config.borrow_mut().snippets = vec![
+        winlane::features::snippets::Snippet {
+            id: "rust-notes".into(),
+            name: "Rust notes".into(),
+            body: "Hi {argument name=\"Name\"}".into(),
+        },
+        winlane::features::snippets::Snippet {
+            id: "greeting".into(),
+            name: "Greeting".into(),
+            body: "Hello".into(),
+        },
+    ];
+    delegate.install_windows(vec![WindowInfo {
+        id: 700,
+        pid: -700,
+        app: "Code".into(),
+        title: "rust: main.rs".into(),
+        minimized: false,
+    }]);
+    state.aliases.replace(Aliases::from_json(r#"{"apps":{"com.example.code":"r"},"windows":{"700":{"app":"com.example.code","alias":"r"}}}"#).unwrap());
+    delegate.sync_displays();
+    state.query.replace("r".into());
+    delegate.filter();
+    assert!(
+        state.snippet_matches.borrow().is_empty(),
+        "ordinary alias search must not include snippets"
+    );
+    assert_eq!(delegate.selected_window().unwrap().id, 700);
+    assert!(delegate.panels().iter().all(|ui| ui.scope_back.isHidden()));
+    state.previous_pid.set(-700);
+    state.session.set(41);
+    state.query.replace("snippet".into());
+    delegate.filter();
+    assert_eq!(delegate.selected_command(), Some(CommandId::Snippets));
+    assert!(
+        state.snippet_matches.borrow().is_empty(),
+        "entry requires explicit selection"
+    );
+    delegate.activate_selected();
+    assert!(delegate.searching_snippets());
+    assert_eq!(
+        state.previous_pid.get(),
+        -700,
+        "entering a scope must retain the paste destination"
+    );
+    assert_eq!(state.session.get(), 41);
+    assert!(state.query.borrow().is_empty());
+    assert_eq!(
+        delegate.match_count(),
+        2,
+        "empty snippet search lists all snippets"
+    );
+    assert!(state.matches.borrow().is_empty());
+    assert!(state.launch_matches.borrow().is_empty());
+    assert!(state.command_matches.borrow().is_empty());
+    state.config.borrow_mut().show_usage_hints = false;
+    delegate.render();
+    for ui in delegate.panels() {
+        assert!(!ui.scope_back.isHidden());
+        assert!(
+            ui.scope_back.frame().origin.x + ui.scope_back.frame().size.width
+                < ui.input.frame().origin.x
+        );
+        assert_eq!(ui.rows.borrow()[0].alias.stringValue().to_string(), "{}");
+    }
+    delegate.move_selection(1);
+    assert_eq!(delegate.selected_snippet().unwrap().id, "greeting");
+    delegate.filter_preserving(delegate.selected_result());
+    assert_eq!(delegate.selected_snippet().unwrap().id, "greeting");
+    state.catalog_checked.set(None);
+    state.query.replace("r".into());
+    delegate.filter();
+    delegate.ensure_app_catalog();
+    assert!(
+        state.catalog_receiver.borrow().is_none(),
+        "snippet search must not scan applications"
+    );
+    assert_eq!(delegate.match_count(), 2);
+    assert_eq!(delegate.selected_snippet().unwrap().id, "rust-notes");
+    state.query.replace("hello".into());
+    delegate.filter();
+    assert_eq!(delegate.match_count(), 1);
+    assert_eq!(delegate.selected_snippet().unwrap().id, "greeting");
+    let (tx, rx) = mpsc::channel();
+    state.catalog_receiver.replace(Some(rx));
+    tx.send(vec![InstalledApp {
+        target: ApplicationTarget {
+            bundle_id: "com.example.hello".into(),
+            name: "Hello".into(),
+            path: "/Applications/Hello.app".into(),
+        },
+        names: vec!["Hello".into()],
+    }])
+    .unwrap();
+    delegate.poll_app_catalog();
+    assert_eq!(
+        delegate.match_count(),
+        1,
+        "background catalog completion must not mix apps into snippet results"
+    );
+    assert_eq!(delegate.selected_snippet().unwrap().id, "greeting");
+    state.query.replace("sleep".into());
+    delegate.filter();
+    assert_eq!(delegate.match_count(), 0);
+    assert!(delegate.selected_command().is_none());
+    delegate.activate_selected();
+    assert!(
+        delegate.searching_snippets(),
+        "Enter with no result must leave the search open"
+    );
+    assert!(
+        delegate
+            .panels()
+            .iter()
+            .all(|ui| ui.empty_labels.borrow()[0].stringValue().to_string()
+                == tr!("没有匹配的片段", "No matching snippets"))
+    );
+    state.catalog_checked.set(Some(Instant::now()));
+    delegate.cancel_search();
+    assert!(!delegate.searching_snippets());
+    assert_eq!(*state.query.borrow(), "snippet");
+    assert_eq!(delegate.selected_command(), Some(CommandId::Snippets));
+    assert_eq!(state.mode.get(), Some(PanelMode::Search));
+    delegate.activate_selected();
+    state.query.replace(" ".into());
+    delegate.filter();
+    delegate.toggle_mode(0);
+    assert!(
+        delegate.searching_snippets(),
+        "Space belongs to the snippet query"
+    );
+    state.query.borrow_mut().clear();
+    let ui = delegate.panels()[0].clone();
+    let editor = NSTextView::initWithFrame(NSTextView::alloc(mtm), rect(0.0, 0.0, 100.0, 30.0));
+    assert!(
+        delegate
+            .text_command(
+                sel!(control:textView:doCommandBySelector:),
+                &ui.input,
+                &editor,
+                sel!(deleteBackward:)
+            )
+            .as_bool()
+    );
+    assert!(
+        !delegate.searching_snippets(),
+        "empty Backspace returns to window search"
+    );
+    delegate.activate_selected();
+    delegate.display_search(state.session.get());
+    assert!(
+        !delegate.searching_snippets(),
+        "opening ordinary search resets the scope"
+    );
+    state.query.replace("snippet".into());
+    delegate.filter();
+    delegate.activate_selected();
+    state.config.borrow_mut().snippets.clear();
+    delegate.filter();
+    assert_eq!(delegate.match_count(), 0);
+    assert!(
+        delegate
+            .panels()
+            .iter()
+            .all(|ui| ui.empty_labels.borrow()[0].stringValue().to_string()
+                == tr!("还没有片段", "No snippets yet"))
+    );
+    delegate.cancel_search();
+    delegate.cancel_search();
+    assert_eq!(state.mode.get(), None);
+    assert!(state.search_scope.get().is_none());
+    state.mode.set(Some(PanelMode::Switch));
+    delegate.filter();
+    assert!(state.snippet_matches.borrow().is_empty());
+    assert!(state.command_matches.borrow().is_empty());
+    assert!(delegate.panels().iter().all(|ui| !ui.panel.isVisible()));
+    println!(
+        "Snippet scope checks passed: alias isolation, explicit entry, empty list, name/content matching, navigation, back/Escape, lifecycle, and catalog isolation."
+    );
+}

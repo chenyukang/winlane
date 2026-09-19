@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
-use winlane::aliases::{AliasMatch, Aliases, AppIdentity};
-use winlane::config::{AliasRule, ApplicationTarget, Config};
-use winlane::search::WindowInfo;
+use winlane::core::aliases::{AliasMatch, Aliases, AppIdentity};
+use winlane::core::config::{AliasRule, ApplicationTarget, Config};
+use winlane::core::search::WindowInfo;
 
 fn rule(alias: &str, app: &str, title: &str) -> AliasRule {
     AliasRule {

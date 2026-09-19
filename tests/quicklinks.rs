@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use winlane::quicklinks::{self, Quicklink, Template};
+use winlane::features::quicklinks::{self, Quicklink, Template};
 
 fn link(name: &str, address: &str) -> Quicklink {
     Quicklink {
@@ -140,14 +140,14 @@ fn search_and_config_roundtrip_preserve_links() {
     assert_eq!(quicklinks::matching(&links, " search "), vec![1, 2]);
     assert_eq!(quicklinks::matching(&links, "RUST docs"), vec![0]);
     assert_eq!(quicklinks::matching(&links, ""), vec![0, 1, 2]);
-    let old = winlane::config::Config::from_json("{}").unwrap();
+    let old = winlane::core::config::Config::from_json("{}").unwrap();
     assert!(old.quicklinks.is_empty());
-    let config = winlane::config::Config {
+    let config = winlane::core::config::Config {
         quicklinks: links,
         ..old
     };
     assert_eq!(
-        winlane::config::Config::from_json(&config.to_json().unwrap()).unwrap(),
+        winlane::core::config::Config::from_json(&config.to_json().unwrap()).unwrap(),
         config
     );
 }

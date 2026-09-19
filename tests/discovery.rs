@@ -1,10 +1,10 @@
-use winlane::config::{Config, visible_matches};
-use winlane::discovery::{
+use winlane::core::config::{Config, visible_matches};
+use winlane::core::discovery::{
     AX_CANNOT_COMPLETE, AX_NO_VALUE, FocusRead, finish_application_scan, merge_window_sources,
     normal_window_surface, read_focused_window, read_published_windows, read_with_retry,
     remote_window_token, switchable_window,
 };
-use winlane::search::WindowInfo;
+use winlane::core::search::WindowInfo;
 
 #[test]
 fn backing_surfaces_must_be_normal_visible_sized_windows() {

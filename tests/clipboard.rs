@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 use std::time::Duration;
-use winlane::clipboard::{ClipboardSettings, History, MAX_HISTORY_BYTES, MAX_ITEM_BYTES, ignored};
-use winlane::clipboard_store::Store;
+use winlane::features::clipboard::store::Store;
+use winlane::features::clipboard::{
+    ClipboardSettings, History, MAX_HISTORY_BYTES, MAX_ITEM_BYTES, ignored,
+};
 
 const NOW: u64 = 2_000_000;
 
@@ -96,7 +98,7 @@ fn expired_entries_do_not_consume_the_retained_capacity() {
 
 #[test]
 fn clipboard_file_validation_and_legacy_settings_defaults() {
-    let config = winlane::config::Config::from_json("{}").unwrap();
+    let config = winlane::core::config::Config::from_json("{}").unwrap();
     assert_eq!(config.clipboard, ClipboardSettings::default());
     for (max_items, retention_days) in [(0, 7), (1001, 7), (200, 0), (200, 366)] {
         assert!(
@@ -279,10 +281,10 @@ fn memory_only_mode_removes_disk_history() {
     assert!(!temp.path().exists());
 }
 
-fn image_info(bytes: &[u8]) -> winlane::clipboard::ImageInfo {
-    winlane::clipboard::ImageInfo {
-        key: winlane::clipboard_assets::digest(bytes),
-        format: winlane::clipboard::ImageFormat::Png,
+fn image_info(bytes: &[u8]) -> winlane::features::clipboard::ImageInfo {
+    winlane::features::clipboard::ImageInfo {
+        key: winlane::features::clipboard::assets::digest(bytes),
+        format: winlane::features::clipboard::ImageFormat::Png,
         bytes: bytes.len(),
         width: 256,
         height: 128,
@@ -330,7 +332,7 @@ fn image_disk_budget_drops_oldest_images() {
     let mut history = History::default();
     for n in 0..6 {
         let mut image = image_info(&[n]);
-        image.bytes = winlane::clipboard::MAX_IMAGE_BYTES;
+        image.bytes = winlane::features::clipboard::MAX_IMAGE_BYTES;
         assert!(history.record_image(image, "", NOW + u64::from(n), &settings));
     }
     assert_eq!(history.entries.len(), 4);
@@ -338,7 +340,7 @@ fn image_disk_budget_drops_oldest_images() {
 }
 #[test]
 fn images_survive_restart_and_clear_removes_persistent_and_temporary_copies() {
-    use winlane::clipboard_assets::image_bytes;
+    use winlane::features::clipboard::assets::image_bytes;
     let temp = Temp::new();
     let settings = ClipboardSettings::default();
     let store = temp.store(settings.clone());
@@ -411,7 +413,7 @@ fn stale_session_cleanup_keeps_active_and_unrelated_directories() {
         std::fs::create_dir(path).unwrap();
         std::fs::write(path.join("test"), b"fixture").unwrap();
     }
-    winlane::clipboard_assets::cleanup_stale_sessions(&temp.0);
+    winlane::features::clipboard::assets::cleanup_stale_sessions(&temp.0);
     assert!(active.exists());
     assert!(!stale.exists());
     assert!(unrelated.exists());

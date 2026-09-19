@@ -151,4 +151,4 @@ RUSTC_WRAPPER= cargo clippy --locked --all-targets -- -D warnings
 cargo fmt --all -- --check
 ```
 
-CI runs formatting, Clippy, tests, and packaging checks on Apple Silicon and Intel macOS runners. See the [development guide](docs/development.md) for local signing and diagnostics, and the [release guide](docs/releasing.md) for binary distribution and Apple notarization.
+CI runs formatting, Clippy, tests, and packaging checks on Apple Silicon and Intel macOS runners. See the [code structure](docs/architecture.md) for module responsibilities, the [development guide](docs/development.md) for local signing and diagnostics, and the [release guide](docs/releasing.md) for binary distribution and Apple notarization.

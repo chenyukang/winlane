@@ -1,5 +1,5 @@
-use winlane::config::{AppShortcut, ApplicationTarget, Config, Shortcut, SortOrder};
-use winlane::i18n::{Language, Locale};
+use winlane::core::config::{AppShortcut, ApplicationTarget, Config, Shortcut, SortOrder};
+use winlane::core::i18n::{Language, Locale};
 
 #[test]
 fn system_language_uses_the_first_supported_preference() {
@@ -58,7 +58,7 @@ fn language_migration_and_round_trip_preserve_existing_preferences() {
 #[test]
 fn text_and_formatted_messages_change_together() {
     for locale in [Locale::English, Locale::Chinese, Locale::English] {
-        winlane::i18n::set_locale(locale);
+        winlane::core::i18n::set_locale(locale);
         let name = "Example";
         let text = winlane::tr!("设置", "Settings");
         let message = winlane::trf!("启动 {name} · {}", "Launch {name} · {}", 3);

@@ -1,4 +1,4 @@
-use winlane::search::{WindowInfo, rank};
+use winlane::core::search::{WindowInfo, rank};
 
 fn window(id: u64, app: &str, title: &str) -> WindowInfo {
     WindowInfo {

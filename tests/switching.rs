@@ -1,5 +1,5 @@
-use winlane::config::{Config, KEYS, Shortcut};
-use winlane::shortcuts::*;
+use winlane::core::config::{Config, KEYS, Shortcut};
+use winlane::core::shortcuts::*;
 
 fn router() -> ShortcutRouter {
     ShortcutRouter::new(
@@ -467,8 +467,8 @@ fn command_space_search_saves_and_routes_without_switching_modes() {
         invalid_switch.validate().is_err(),
         "Space remains reserved for mode changes in the switcher"
     );
-    let conflicting_app = winlane::config::AppShortcut {
-        application: winlane::config::ApplicationTarget {
+    let conflicting_app = winlane::core::config::AppShortcut {
+        application: winlane::core::config::ApplicationTarget {
             name: "Example".into(),
             bundle_id: "com.example.app".into(),
             path: "/Applications/Example.app".into(),

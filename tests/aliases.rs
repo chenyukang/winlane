@@ -1,8 +1,8 @@
 use std::collections::{BTreeSet, HashMap};
-use winlane::aliases::{AliasInput, AliasMatch, Aliases, AppIdentity};
-use winlane::config::{Config, Shortcut, visible_matches};
-use winlane::search::WindowInfo;
-use winlane::shortcuts::*;
+use winlane::core::aliases::{AliasInput, AliasMatch, Aliases, AppIdentity};
+use winlane::core::config::{Config, Shortcut, visible_matches};
+use winlane::core::search::WindowInfo;
+use winlane::core::shortcuts::*;
 
 fn app(id: &str, name: &str) -> AppIdentity {
     AppIdentity {
