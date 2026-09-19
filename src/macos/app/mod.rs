@@ -6,6 +6,7 @@ mod input;
 mod launch;
 mod layout;
 mod menus;
+mod open_url;
 mod panel;
 mod preferences;
 mod projects;
@@ -75,6 +76,7 @@ const APP_CATALOG_TTL: Duration = Duration::from_secs(10 * 60);
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SearchScope {
     Projects,
+    OpenUrl,
     Quicklinks,
     Snippets,
     Clipboard,
@@ -93,6 +95,7 @@ struct PanelUi {
     demo_button: Retained<NSButton>,
     refresh_button: Retained<NSButton>,
     settings_button: Retained<NSButton>,
+    history_permissions_button: Retained<NSButton>,
     scope_back: Retained<NSButton>,
     clipboard_actions: Retained<NSPopUpButton>,
     quicklink_bar: RefCell<crate::macos::ui::quicklinks::input::Bar>,
@@ -115,6 +118,7 @@ struct RowUi {
 #[derive(Clone, PartialEq, Eq)]
 enum RowContent {
     Project(winlane::features::projects::Project),
+    OpenUrl(winlane::features::open_url::Page),
     Command(CommandId),
     Snippet(winlane::features::snippets::Snippet),
     Quicklink(winlane::features::quicklinks::Quicklink),
@@ -125,6 +129,7 @@ enum RowContent {
 
 enum SelectedResult {
     Project(std::path::PathBuf),
+    OpenUrl(String),
     Command(CommandId),
     Snippet(String),
     Quicklink(String),
@@ -219,6 +224,10 @@ struct AppState {
     launch_matches: RefCell<Vec<usize>>,
     command_matches: RefCell<Vec<CommandId>>,
     snippet_matches: RefCell<Vec<winlane::features::snippets::Snippet>>,
+    open_url_matches: RefCell<Vec<winlane::features::open_url::Page>>,
+    open_url_input_active: Cell<bool>,
+    open_url_history: RefCell<winlane::features::open_url::History>,
+    open_url_receiver: RefCell<Option<Receiver<winlane::features::open_url::History>>>,
     project_matches: RefCell<Vec<winlane::features::projects::Project>>,
     project_cache: RefCell<winlane::features::projects::Cache>,
     project_receiver: RefCell<Option<Receiver<winlane::features::projects::Cache>>>,

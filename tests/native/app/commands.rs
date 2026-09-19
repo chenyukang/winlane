@@ -1,6 +1,7 @@
 use super::*;
 
 pub(super) fn verify_command_search(mtm: MainThreadMarker) {
+    verify_command_shortcut_scope(mtm);
     let delegate = Delegate::new(mtm);
     let state = delegate.ivars();
     state.catalog_checked.set(Some(Instant::now()));
@@ -125,4 +126,51 @@ pub(super) fn verify_command_search(mtm: MainThreadMarker) {
     delegate.filter_preserving(delegate.selected_result());
     assert_eq!(delegate.selected_command(), Some(CommandId::ShowMenu));
     assert!(delegate.panels().iter().all(|ui| !ui.panel.isVisible()));
+}
+
+fn verify_command_shortcut_scope(mtm: MainThreadMarker) {
+    let delegate = Delegate::new(mtm);
+    let state = delegate.ivars();
+    state.demo.set(true);
+    state.catalog_checked.set(Some(Instant::now()));
+    for (command, scope) in [
+        (CommandId::OpenUrl, SearchScope::OpenUrl),
+        (CommandId::Projects, SearchScope::Projects),
+        (CommandId::Quicklinks, SearchScope::Quicklinks),
+        (CommandId::Snippets, SearchScope::Snippets),
+        (CommandId::Clipboard, SearchScope::Clipboard),
+    ] {
+        assert!(super::super::commands::command_scope(command) == Some(scope));
+    }
+    for (command, policy) in [
+        (CommandId::Quicklinks, InputMethod::English),
+        (CommandId::Quicklinks, InputMethod::Chinese),
+        (CommandId::Snippets, InputMethod::Current),
+        (CommandId::Snippets, InputMethod::LastUsed),
+    ] {
+        state.config.borrow_mut().input_method = policy;
+        let expected = input_source::preferred(policy, mtm).and_then(|source| source.id());
+        state.mode.set(Some(PanelMode::Switch));
+        state.query.replace("old query".into());
+        assert!(delegate.prepare_command_search(command, 99));
+        assert_eq!(state.mode.get(), Some(PanelMode::Search));
+        assert_eq!(state.session.get(), 99);
+        assert!(state.query.borrow().is_empty());
+        assert!(state.switch_selection.borrow().is_none());
+        assert!(state.search_scope.get() == super::super::commands::command_scope(command));
+        assert_eq!(state.input_gate.borrow().target(), expected.as_deref());
+        assert!(delegate.panels().iter().all(|ui| !ui.panel.isVisible()));
+        delegate.end_session();
+    }
+    for command in winlane::core::commands::COMMANDS.iter().map(|c| c.id) {
+        if super::super::commands::command_scope(command).is_none() {
+            assert!(!delegate.prepare_command_search(command, 100));
+            assert!(state.mode.get().is_none());
+        }
+        delegate.run_command_shortcut(command, 101);
+        assert!(
+            state.mode.get().is_none(),
+            "removed bindings must not run queued command actions"
+        );
+    }
 }

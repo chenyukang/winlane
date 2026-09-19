@@ -6,6 +6,11 @@ impl Delegate {
     }
 
     pub(super) fn filter_preserving(&self, selected_id: Option<SelectedResult>) {
+        if self.searching_open_url() {
+            self.filter_open_url(selected_id);
+            return;
+        }
+        self.clear_open_url();
         if self.searching_projects() {
             self.filter_projects(selected_id);
             return;
@@ -168,7 +173,12 @@ impl Delegate {
                         })
                         .map(|index| extra_count + index)
                 }),
-            Some(SelectedResult::Clipboard(_) | SelectedResult::Project(_)) | None => None,
+            Some(
+                SelectedResult::Clipboard(_)
+                | SelectedResult::Project(_)
+                | SelectedResult::OpenUrl(_),
+            )
+            | None => None,
         }
         .unwrap_or(0);
         let visible_paths: HashSet<_> = launch_matches
@@ -210,6 +220,19 @@ impl Delegate {
         if count == 0 {
             return;
         }
+        if self.searching_open_url() && !self.ivars().query.borrow().trim().is_empty() {
+            let state = self.ivars();
+            let current = if state.open_url_input_active.get() {
+                0
+            } else {
+                state.selected.get() + 1
+            };
+            let next = (current as isize + direction).rem_euclid(count as isize + 1) as usize;
+            state.open_url_input_active.set(next == 0);
+            state.selected.set(next.saturating_sub(1));
+            self.render();
+            return;
+        }
         self.ivars().selected.set(
             (self.ivars().selected.get() as isize + direction).rem_euclid(count as isize) as usize,
         );
@@ -249,6 +272,9 @@ impl Delegate {
     }
 
     pub(super) fn selected_result(&self) -> Option<SelectedResult> {
+        if let Some(page) = self.selected_url() {
+            return Some(SelectedResult::OpenUrl(page.url));
+        }
         if let Some(project) = self.selected_project() {
             return Some(SelectedResult::Project(project.path));
         }
@@ -280,5 +306,6 @@ impl Delegate {
             + self.ivars().launch_matches.borrow().len()
             + self.ivars().quicklink_matches.borrow().len()
             + self.ivars().project_matches.borrow().len()
+            + self.ivars().open_url_matches.borrow().len()
     }
 }

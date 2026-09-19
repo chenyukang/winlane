@@ -83,6 +83,41 @@ pub(super) fn verify_input_language_is_prepared_before_focus(mtm: MainThreadMark
             target.as_deref(),
             "activation notifications must not remove the guard before the panel becomes key"
         );
+        delegate.enter_scoped_search(SearchScope::Snippets);
+        assert_eq!(
+            delegate.ivars().input_gate.borrow().target(),
+            target.as_deref(),
+            "opening a command search before presentation must preserve the configured input source: {policy:?}"
+        );
+        assert_eq!(
+            delegate
+                .ivars()
+                .input_target
+                .borrow()
+                .as_ref()
+                .and_then(Source::id),
+            target,
+        );
+        assert!(!delegate.ivars().input_session.borrow().focused);
+        assert!(delegate.ivars().input_start_timer.borrow().is_none());
+        for ui in delegate.panels() {
+            let cell = ui
+                .input
+                .cell()
+                .unwrap()
+                .downcast::<NSTextFieldCell>()
+                .unwrap();
+            assert_eq!(
+                cell.allowedInputSourceLocales()
+                    .as_ref()
+                    .map(|locales| locales
+                        .iter()
+                        .map(|locale| locale.to_string())
+                        .collect::<Vec<_>>()),
+                expected.as_ref().map(|locale| vec![locale.clone()]),
+                "command searches must retain the same startup language constraint as search"
+            );
+        }
         delegate.clear_input_start_locales();
         assert_eq!(
             delegate.ivars().input_gate.borrow().target(),

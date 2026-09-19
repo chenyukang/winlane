@@ -213,18 +213,13 @@ impl Delegate {
         let bindings_changed = candidate.shortcut != previous.shortcut
             || candidate.additional_search_shortcuts != previous.additional_search_shortcuts
             || candidate.switch_shortcut != previous.switch_shortcut
-            || candidate.app_bindings()? != previous.app_bindings()?;
+            || candidate.app_bindings()? != previous.app_bindings()?
+            || candidate.quicklink_bindings()? != previous.quicklink_bindings()?
+            || candidate.command_bindings()? != previous.command_bindings()?;
         let registration = if bindings_changed {
             Some(ShortcutTap::new(
                 self.mtm(),
-                candidate.shortcut.binding()?,
-                candidate
-                    .additional_search_shortcuts
-                    .iter()
-                    .map(winlane::core::config::Shortcut::binding)
-                    .collect::<Result<_, _>>()?,
-                candidate.switch_shortcut.binding()?,
-                candidate.app_bindings()?,
+                &candidate,
                 self.ivars().wake.get().unwrap().handle(),
             )?)
         } else {
@@ -246,6 +241,7 @@ impl Delegate {
         }
         if let Some(settings) = self.settings_window() {
             settings.set_app_shortcuts(&candidate.app_shortcuts);
+            settings.set_command_shortcuts(&candidate.command_shortcuts);
             settings.set_alias_rules(&candidate.alias_rules);
             settings.set_snippets(&candidate.snippets);
             settings.set_quicklinks(&candidate.quicklinks);

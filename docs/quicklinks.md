@@ -4,6 +4,12 @@ Quicklinks open saved websites, app links, files, and folders. Add or edit them 
 
 Type a link's name or part of its address in ordinary search, then select it and press Enter. Matching windows come first, so window aliases keep their priority. Search for **quicklink** (or **快捷链接**) and select that command to browse only links. An empty query in this view lists all saved links. Esc, the back button, or Backspace in an empty query returns to ordinary search. Quicklinks do not appear in switch mode.
 
+## Global shortcuts
+
+Select a link in **Settings → Quicklinks** and configure **Global shortcut** in its details. Choose at least one modifier (Control, Option, or Command) and a key. Valid changes take effect immediately; select **Not set** to remove the binding. Conflicts with search shortcuts, forward/reverse switching, app shortcuts, or another Quicklink are rejected, keeping the last saved binding active.
+
+While Winlane is running, the shortcut works from other apps. Links without input fields open immediately using **Open with**. Links with parameters open the existing search panel with those fields ready to fill; press Enter to open the destination. Clipboard placeholders capture the copied text when invoked; dates are expanded when opening the link. New and imported links have no shortcut until you assign one.
+
 ## Link templates
 
 | Template | Behavior |

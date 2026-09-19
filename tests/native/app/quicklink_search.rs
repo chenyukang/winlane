@@ -10,6 +10,7 @@ pub(super) fn verify_quicklink_search(mtm: MainThreadMarker) {
         name: "Rust docs".into(),
         link: "https://example.com/{Query}".into(),
         open_with: String::new(),
+        shortcut: None,
     }];
     delegate.install_windows(vec![WindowInfo {
         id: 701,
@@ -59,7 +60,7 @@ pub(super) fn verify_quicklink_search(mtm: MainThreadMarker) {
     delegate.cancel_search();
     assert!(!delegate.scoped_search());
     assert_eq!(state.query.borrow().as_str(), "quicklink");
-    delegate.enter_snippet_search();
+    delegate.enter_scoped_search(SearchScope::Snippets);
     assert!(state.quicklink_matches.borrow().is_empty());
     delegate.enter_scoped_search(SearchScope::Clipboard);
     assert!(state.quicklink_matches.borrow().is_empty());
@@ -92,9 +93,59 @@ pub(super) fn verify_quicklink_search(mtm: MainThreadMarker) {
     assert!(!settings.window.isVisible());
     crate::macos::ui::quicklinks::tests::verify_editor(mtm);
     verify_inline_quicklink(mtm);
+    verify_quicklink_shortcut_input(mtm);
     println!(
         "Quicklink search: alias priority, row selection, scope, back, empty results, and switch-mode isolation."
     );
+}
+
+fn verify_quicklink_shortcut_input(mtm: MainThreadMarker) {
+    let delegate = Delegate::new(mtm);
+    let state = delegate.ivars();
+    state.demo.set(true);
+    state.catalog_checked.set(Some(Instant::now()));
+    let link = winlane::features::quicklinks::Quicklink {
+        id: "shortcut-search".into(),
+        name: "Search Example".into(),
+        link: "https://example.com/?q={Query}&lang={argument name=\"Language\" default=\"en\"}"
+            .into(),
+        open_with: String::new(),
+        shortcut: Some(winlane::core::config::Shortcut {
+            command: true,
+            option: true,
+            control: false,
+            shift: false,
+            key: "KeyG".into(),
+        }),
+    };
+    state.config.borrow_mut().quicklinks = vec![link.clone()];
+    state.mode.set(Some(PanelMode::Switch));
+    state.query.replace("old query".into());
+    state.search_scope.set(Some(SearchScope::Clipboard));
+    let template = winlane::features::quicklinks::Template::parse(&link.link).unwrap();
+    let expected = input_source::preferred(state.config.borrow().input_method, mtm)
+        .and_then(|source| source.id());
+    delegate.prepare_quicklink_shortcut_input(link, template, 77);
+    assert_eq!(state.input_gate.borrow().target(), expected.as_deref());
+    assert_eq!(state.session.get(), 77);
+    assert_eq!(state.mode.get(), Some(PanelMode::Search));
+    assert!(state.search_scope.get().is_none());
+    assert!(state.query.borrow().is_empty());
+    assert!(state.switch_selection.borrow().is_none());
+    assert_eq!(delegate.selected_quicklink().unwrap().id, "shortcut-search");
+    assert_eq!(delegate.match_count(), 1);
+    let ui = &delegate.panels()[0];
+    assert_eq!(ui.quicklink_bar.borrow().value(1).unwrap(), "en");
+    assert!(delegate.panels().iter().all(|ui| !ui.panel.isVisible()));
+    delegate.end_session();
+    delegate.open_quicklink_shortcut("deleted-id", 78);
+    state.config.borrow_mut().quicklinks[0].shortcut = None;
+    delegate.open_quicklink_shortcut("shortcut-search", 79);
+    assert!(
+        state.mode.get().is_none(),
+        "stale actions for removed or disabled shortcuts must do nothing"
+    );
+    assert!(delegate.panels().iter().all(|ui| !ui.panel.isVisible()));
 }
 
 fn inline_control(ui: &PanelUi, index: usize) -> Retained<NSControl> {
@@ -119,6 +170,7 @@ fn verify_inline_quicklink(mtm: MainThreadMarker) {
         link: "https://example.com/?q={Query}&lang={argument name=\"Language\" default=\"en\"}"
             .into(),
         open_with: String::new(),
+        shortcut: None,
     }];
     state.previous_pid.set(-700);
     state.session.set(42);
@@ -323,6 +375,7 @@ fn verify_inline_quicklink(mtm: MainThreadMarker) {
             name: "Several parameters".into(),
             link: format!("https://example.com/{}", placeholders.join("/")),
             open_with: String::new(),
+            shortcut: None,
         };
         delegate.begin_quicklink_input(
             link.clone(),
@@ -345,7 +398,7 @@ fn verify_inline_quicklink(mtm: MainThreadMarker) {
         assert_eq!(state.quicklink_input.borrow().as_ref().unwrap().active, 6);
         delegate.cancel_search();
     }
-    let link = winlane::features::quicklinks::Quicklink { id: "choice".into(), name: "Choice".into(), link: r#"https://example.com/{argument name="Tone" type="choice" options="Friendly\nFormal" default="Formal"}"#.into(), open_with: String::new() };
+    let link = winlane::features::quicklinks::Quicklink { id: "choice".into(), name: "Choice".into(), link: r#"https://example.com/{argument name="Tone" type="choice" options="Friendly\nFormal" default="Formal"}"#.into(), open_with: String::new(), shortcut: None };
     delegate.begin_quicklink_input(
         link.clone(),
         winlane::features::quicklinks::Template::parse(&link.link).unwrap(),

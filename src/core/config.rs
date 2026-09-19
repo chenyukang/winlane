@@ -102,8 +102,8 @@ impl Shortcut {
         use crate::core::shortcuts::{Binding, COMMAND, CONTROL, OPTION, SHIFT};
         if !self.command && !self.control && !self.option {
             return Err(tr!(
-                "应用快捷键需要包含 Command、Control 或 Option。",
-                "App shortcuts must include Command, Control, or Option."
+                "快捷键需要包含 Command、Control 或 Option。",
+                "Shortcuts must include Command, Control, or Option."
             )
             .into());
         }
@@ -303,6 +303,12 @@ pub struct AppShortcut {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandShortcut {
+    pub command: crate::core::commands::CommandId,
+    pub shortcut: Shortcut,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AliasRule {
     pub alias: String,
     pub application: ApplicationTarget,
@@ -318,6 +324,8 @@ pub struct Config {
     pub additional_search_shortcuts: Vec<Shortcut>,
     pub switch_shortcut: Shortcut,
     pub app_shortcuts: Vec<AppShortcut>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub command_shortcuts: Vec<CommandShortcut>,
     pub alias_rules: Vec<AliasRule>,
     pub snippets: Vec<crate::features::snippets::Snippet>,
     pub quicklinks: Vec<crate::features::quicklinks::Quicklink>,
@@ -341,6 +349,7 @@ impl Default for Config {
             additional_search_shortcuts: Vec::new(),
             switch_shortcut: Shortcut::switch_default(),
             app_shortcuts: Vec::new(),
+            command_shortcuts: Vec::new(),
             alias_rules: Vec::new(),
             snippets: Vec::new(),
             quicklinks: Vec::new(),
@@ -487,6 +496,47 @@ impl Config {
             }
             assigned.push(binding);
         }
+        for link in &self.quicklinks {
+            let Some(shortcut) = &link.shortcut else {
+                continue;
+            };
+            let binding = shortcut.app_binding()?;
+            if searches.contains(&binding)
+                || binding.conflicts_with_switch(switch)
+                || assigned.contains(&binding)
+            {
+                return Err(trf!(
+                    "快捷链接“{}”的快捷键与其他快捷键冲突，请选择不同的组合。",
+                    "The shortcut for quicklink “{}” conflicts with another shortcut. Choose a different combination.",
+                    link.name
+                ));
+            }
+            assigned.push(binding);
+        }
+        let mut commands = Vec::new();
+        for item in &self.command_shortcuts {
+            let name = item.command.definition().name;
+            if commands.contains(&item.command) {
+                return Err(trf!(
+                    "命令“{}”只能设置一个快捷键。",
+                    "Command “{}” can have only one shortcut.",
+                    name
+                ));
+            }
+            let binding = item.shortcut.app_binding()?;
+            if searches.contains(&binding)
+                || binding.conflicts_with_switch(switch)
+                || assigned.contains(&binding)
+            {
+                return Err(trf!(
+                    "命令“{}”的快捷键与其他快捷键冲突，请选择不同的组合。",
+                    "The shortcut for command “{}” conflicts with another shortcut. Choose a different combination.",
+                    name
+                ));
+            }
+            commands.push(item.command);
+            assigned.push(binding);
+        }
         if self.excluded_apps.len() > 100
             || self
                 .excluded_apps
@@ -506,6 +556,40 @@ impl Config {
         self.app_shortcuts
             .iter()
             .map(|item| item.shortcut.app_binding())
+            .collect()
+    }
+
+    pub fn command_bindings(
+        &self,
+    ) -> Result<
+        Vec<(
+            crate::core::commands::CommandId,
+            crate::core::shortcuts::Binding,
+        )>,
+        String,
+    > {
+        self.command_shortcuts
+            .iter()
+            .map(|item| {
+                item.shortcut
+                    .app_binding()
+                    .map(|binding| (item.command, binding))
+            })
+            .collect()
+    }
+
+    pub fn quicklink_bindings(
+        &self,
+    ) -> Result<Vec<(String, crate::core::shortcuts::Binding)>, String> {
+        self.quicklinks
+            .iter()
+            .filter_map(|link| {
+                link.shortcut.as_ref().map(|shortcut| {
+                    shortcut
+                        .app_binding()
+                        .map(|binding| (link.id.clone(), binding))
+                })
+            })
             .collect()
     }
 

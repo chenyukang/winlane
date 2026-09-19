@@ -7,6 +7,7 @@ fn link(name: &str, address: &str) -> Quicklink {
         name: name.into(),
         link: address.into(),
         open_with: String::new(),
+        shortcut: None,
     }
 }
 fn render(input: &str, clipboard: &str, values: &[(&str, &str)]) -> Result<String, String> {

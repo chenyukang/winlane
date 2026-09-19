@@ -7,14 +7,7 @@ impl Delegate {
             config.validate().and_then(|()| {
                 ShortcutTap::new(
                     self.mtm(),
-                    config.shortcut.binding()?,
-                    config
-                        .additional_search_shortcuts
-                        .iter()
-                        .map(winlane::core::config::Shortcut::binding)
-                        .collect::<Result<_, _>>()?,
-                    config.switch_shortcut.binding()?,
-                    config.app_bindings()?,
+                    &config,
                     self.ivars().wake.get().unwrap().handle(),
                 )
             })
@@ -113,6 +106,8 @@ impl Delegate {
     pub(super) fn shortcut_action(&self, action: Action) {
         match action.kind {
             ActionKind::LaunchApp(index) => self.launch_app_shortcut(index),
+            ActionKind::OpenQuicklink(id) => self.open_quicklink_shortcut(&id, action.session),
+            ActionKind::RunCommand(command) => self.run_command_shortcut(command, action.session),
             ActionKind::Search => {
                 if self.ivars().mode.get().is_some() && self.ivars().session.get() == action.session
                 {

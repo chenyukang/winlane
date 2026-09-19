@@ -54,6 +54,7 @@ impl PreparedCommand {
     ) -> Result<Self, String> {
         let operation = match command {
             CommandId::Projects
+            | CommandId::OpenUrl
             | CommandId::Snippets
             | CommandId::Clipboard
             | CommandId::Quicklinks => {

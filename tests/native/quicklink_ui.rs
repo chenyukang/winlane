@@ -8,6 +8,11 @@ pub fn verify_editor(mtm: MainThreadMarker) {
     let editor = QuicklinkEditor::new(
         Vec::new(),
         Box::new(move |links| {
+            winlane::core::config::Config {
+                quicklinks: links.clone(),
+                ..Default::default()
+            }
+            .validate()?;
             output.replace(links);
             Ok(())
         }),
@@ -25,6 +30,36 @@ pub fn verify_editor(mtm: MainThreadMarker) {
     editor.input_changed();
     assert_eq!(saved.borrow().len(), 1);
     assert!(editor.ui().message.stringValue().is_empty());
+    let shortcut = winlane::core::config::Shortcut {
+        command: true,
+        control: false,
+        option: true,
+        shift: false,
+        key: "KeyG".into(),
+    };
+    editor.ui().shortcut.fill_optional(Some(&shortcut));
+    editor.ui().shortcut.notify_changed();
+    assert_eq!(saved.borrow()[0].shortcut.as_ref(), Some(&shortcut));
+    editor
+        .ui()
+        .shortcut
+        .fill_optional(Some(&Default::default()));
+    editor.ui().shortcut.notify_changed();
+    assert!(
+        !editor.ui().message.stringValue().is_empty(),
+        "conflicts must be visible"
+    );
+    assert_eq!(
+        saved.borrow()[0].shortcut.as_ref(),
+        Some(&shortcut),
+        "a conflict must preserve the active binding"
+    );
+    editor.ui().shortcut.fill_optional(None);
+    editor.ui().shortcut.notify_changed();
+    assert!(saved.borrow()[0].shortcut.is_none());
+    assert!(editor.ui().message.stringValue().is_empty());
+    editor.ui().shortcut.fill_optional(Some(&shortcut));
+    editor.ui().shortcut.notify_changed();
     editor
         .ui()
         .link
@@ -35,6 +70,7 @@ pub fn verify_editor(mtm: MainThreadMarker) {
     let copy = QuicklinkEditor::new(Vec::new(), Box::new(|_| Ok(())), mtm);
     copy.copy_draft_from(&editor);
     assert_eq!(copy.ui().link.stringValue(), editor.ui().link.stringValue());
+    assert_eq!(copy.ui().shortcut.read_optional().unwrap(), Some(shortcut));
     assert!(copy.view().window().is_none());
     let path = std::env::temp_dir().join(format!(
         "winlane-quicklink-test-{}.json",
@@ -61,6 +97,10 @@ pub fn verify_editor(mtm: MainThreadMarker) {
     editor.delete(sel!(deleteQuicklink:), None);
     assert_eq!(saved.borrow().len(), 1);
     assert_eq!(saved.borrow()[0].name, "Docs");
+    assert!(
+        editor.ui().shortcut.read_optional().unwrap().is_none(),
+        "selection must not inherit the previous link's shortcut"
+    );
     let url = destination_url("https://example.com/?q=a%26b").unwrap();
     assert_eq!(
         url.absoluteString().unwrap().to_string(),

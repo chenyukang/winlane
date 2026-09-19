@@ -101,9 +101,11 @@ impl Binding {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ActionKind {
     LaunchApp(usize),
+    OpenQuicklink(String),
+    RunCommand(crate::core::commands::CommandId),
     Search,
     Switch { direction: i8, fresh: bool },
     Alias(char),
@@ -112,7 +114,7 @@ pub enum ActionKind {
     Cancel,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Action {
     pub session: u64,
     pub kind: ActionKind,
@@ -122,6 +124,8 @@ pub struct ShortcutRouter {
     search: Vec<Binding>,
     switch: Binding,
     app_shortcuts: Vec<Binding>,
+    quicklink_shortcuts: Vec<(String, Binding)>,
+    command_shortcuts: Vec<(crate::core::commands::CommandId, Binding)>,
     session: u64,
     mode: Option<PanelMode>,
     release_modifier: Option<u64>,
@@ -134,6 +138,8 @@ impl ShortcutRouter {
             search: vec![search],
             switch,
             app_shortcuts: Vec::new(),
+            quicklink_shortcuts: Vec::new(),
+            command_shortcuts: Vec::new(),
             session: 0,
             mode: None,
             release_modifier: None,
@@ -151,10 +157,23 @@ impl ShortcutRouter {
         self
     }
 
+    pub fn with_quicklink_shortcuts(mut self, bindings: Vec<(String, Binding)>) -> Self {
+        self.quicklink_shortcuts = bindings;
+        self
+    }
+
     fn matches_search(&self, key: i64, flags: u64) -> bool {
         self.search
             .iter()
             .any(|binding| binding.matches(key, flags, false))
+    }
+
+    pub fn with_command_shortcuts(
+        mut self,
+        bindings: Vec<(crate::core::commands::CommandId, Binding)>,
+    ) -> Self {
+        self.command_shortcuts = bindings;
+        self
     }
 
     fn action(&self, kind: ActionKind) -> Action {
@@ -241,10 +260,20 @@ impl ShortcutRouter {
             .app_shortcuts
             .iter()
             .position(|binding| binding.matches(key, flags, false));
+        let quicklink_shortcut = self
+            .quicklink_shortcuts
+            .iter()
+            .position(|(_, binding)| binding.matches(key, flags, false));
+        let command_shortcut = self
+            .command_shortcuts
+            .iter()
+            .position(|(_, binding)| binding.matches(key, flags, false));
         let navigation_repeat = repeat
             && self.consumed.contains(&key)
             && self.mode == Some(PanelMode::Switch)
             && app_shortcut.is_none()
+            && quicklink_shortcut.is_none()
+            && command_shortcut.is_none()
             && !self.matches_search(key, flags)
             && (self.switch.matches(key, flags, true) || matches!(key, TAB | 125 | 126));
         if self.consumed.contains(&key) && !navigation_repeat {
@@ -256,6 +285,8 @@ impl ShortcutRouter {
             && (letter_for_key(key).is_some() || key == 51);
         if repeat && !navigation_repeat {
             let consume = app_shortcut.is_some()
+                || quicklink_shortcut.is_some()
+                || command_shortcut.is_some()
                 || self.matches_search(key, flags)
                 || self.switch.matches(key, flags, true)
                 || (self.mode == Some(PanelMode::Switch)
@@ -266,7 +297,17 @@ impl ShortcutRouter {
             }
             return (consume, None);
         }
-        let action = if let Some(index) = app_shortcut {
+        let action = if let Some(index) = command_shortcut {
+            self.finish(self.session);
+            self.session = self.session.wrapping_add(1);
+            self.action(ActionKind::RunCommand(self.command_shortcuts[index].0))
+        } else if let Some(index) = quicklink_shortcut {
+            self.finish(self.session);
+            self.session = self.session.wrapping_add(1);
+            self.action(ActionKind::OpenQuicklink(
+                self.quicklink_shortcuts[index].0.clone(),
+            ))
+        } else if let Some(index) = app_shortcut {
             self.finish(self.session);
             self.session = self.session.wrapping_add(1);
             self.action(ActionKind::LaunchApp(index))

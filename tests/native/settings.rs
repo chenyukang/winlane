@@ -173,6 +173,42 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
             }
         }
         let mut config = Config::default();
+        use winlane::core::commands::CommandId;
+        use winlane::core::config::CommandShortcut;
+        let command_binding = Shortcut {
+            command: true,
+            option: true,
+            control: false,
+            shift: false,
+            key: "KeyU".into(),
+        };
+        config.command_shortcuts = vec![CommandShortcut {
+            command: CommandId::OpenUrl,
+            shortcut: command_binding.clone(),
+        }];
+        settings.fill(&config);
+        assert_eq!(settings.candidate().unwrap(), config);
+        let (_, controls) = settings
+            .command_shortcuts
+            .rows
+            .iter()
+            .find(|(id, _)| *id == CommandId::OpenUrl)
+            .unwrap();
+        assert_eq!(controls.key.action(), Some(sel!(settingsChanged:)));
+        assert!(
+            controls
+                .modifiers
+                .iter()
+                .all(|control| control.action() == Some(sel!(settingsChanged:)))
+        );
+        controls.fill_optional(Some(&config.shortcut));
+        assert!(
+            settings.candidate().is_err(),
+            "command shortcut conflicts must prevent saving"
+        );
+        controls.fill_optional(None);
+        assert!(settings.candidate().unwrap().command_shortcuts.is_empty());
+        config.command_shortcuts.clear();
         config.clipboard.enabled = false;
         config.clipboard.persistent = false;
         config.clipboard.max_items = 500;

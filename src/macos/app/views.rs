@@ -14,6 +14,10 @@ define_class!(
         fn can_become_main(&self) -> bool { false }
         #[unsafe(method(sendEvent:))]
         fn send_event(&self, event: &NSEvent) {
+            if event.r#type() == NSEventType::LeftMouseDown {
+                let delegate: Option<Retained<Delegate>> = unsafe { msg_send![self, delegate] };
+                if let Some(delegate) = delegate { delegate.focus_open_url_input_at(self, event.locationInWindow()); }
+            }
             if event.r#type() == NSEventType::KeyDown {
                 if i64::from(event.keyCode()) != winlane::core::shortcuts::ESCAPE {
                     let delegate: Option<Retained<Delegate>> = unsafe { msg_send![self, delegate] };
@@ -215,6 +219,7 @@ impl RowUi {
                     | RowContent::Snippet(_)
                     | RowContent::Quicklink(_)
                     | RowContent::Project(_)
+                    | RowContent::OpenUrl(_)
                     | RowContent::Clipboard(..)
             )
         );

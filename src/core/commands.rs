@@ -1,10 +1,14 @@
 use crate::core::i18n::Locale;
 use crate::tr;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum CommandId {
     Projects,
+    OpenUrl,
+    #[serde(rename = "quicklink")]
     Quicklinks,
+    #[serde(rename = "snippet")]
     Snippets,
     Clipboard,
     ShowMenu,
@@ -38,6 +42,21 @@ impl Command {
 }
 
 pub const COMMANDS: &[Command] = &[
+    Command {
+        id: CommandId::OpenUrl,
+        name: "open-url",
+        title_en: "Open URL or search Google",
+        title_zh: "打开网址或 Google 搜索",
+        symbol: "clock.arrow.circlepath",
+        keywords: &[
+            "open url",
+            "打开网址",
+            "history",
+            "最近网址",
+            "浏览记录",
+            "历史网址",
+        ],
+    },
     Command {
         id: CommandId::Projects,
         name: "projects",

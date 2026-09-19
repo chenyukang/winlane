@@ -6,6 +6,7 @@ pub(crate) mod input_source;
 pub(crate) mod installed_apps;
 pub(crate) mod main_wake;
 pub(crate) mod menu_bar;
+pub(crate) mod open_url;
 pub(crate) mod paste;
 pub(crate) mod preferences;
 pub(crate) mod project_open;

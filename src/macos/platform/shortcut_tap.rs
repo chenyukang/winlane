@@ -7,7 +7,8 @@ use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::ptr;
 use std::sync::mpsc::{self, Receiver, Sender};
-use winlane::core::shortcuts::{Action, Binding, FLAGS_CHANGED, KEY_DOWN, KEY_UP, ShortcutRouter};
+use winlane::core::config::Config;
+use winlane::core::shortcuts::{Action, FLAGS_CHANGED, KEY_DOWN, KEY_UP, ShortcutRouter};
 use winlane::tr;
 
 type EventRef = *mut c_void;
@@ -48,10 +49,7 @@ pub struct ShortcutTap {
 impl ShortcutTap {
     pub fn new(
         mtm: MainThreadMarker,
-        search: Binding,
-        additional_search: Vec<Binding>,
-        switch: Binding,
-        app_shortcuts: Vec<Binding>,
+        config: &Config,
         wake: WakeHandle,
     ) -> Result<(Self, Receiver<Action>), String> {
         if !crate::macos::platform::accessibility::is_trusted() {
@@ -61,13 +59,15 @@ impl ShortcutTap {
             )
             .into());
         }
+        let search = config.search_bindings()?;
+        let keys = ShortcutRouter::new(search[0], config.switch_shortcut.binding()?)
+            .with_additional_search_shortcuts(search.into_iter().skip(1).collect())
+            .with_app_shortcuts(config.app_bindings()?)
+            .with_quicklink_shortcuts(config.quicklink_bindings()?)
+            .with_command_shortcuts(config.command_bindings()?);
         let (actions, receiver) = mpsc::channel();
         let mut state = Box::new(TapState {
-            keys: RefCell::new(
-                ShortcutRouter::new(search, switch)
-                    .with_additional_search_shortcuts(additional_search)
-                    .with_app_shortcuts(app_shortcuts),
-            ),
+            keys: RefCell::new(keys),
             actions,
             wake,
             port: Cell::new(ptr::null_mut()),

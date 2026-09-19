@@ -11,6 +11,7 @@ src/
 │   ├── clipboard/          # History model, image assets, persistence
 │   ├── projects.rs         # Recent-project discovery and matching
 │   ├── quicklinks.rs       # URL templates, validation, imports
+│   ├── open_url/           # URL opening, Google search, Chrome history snapshots
 │   └── snippets.rs         # Snippet templates and placeholders
 └── macos/
     ├── app/                # Application state and feature coordination

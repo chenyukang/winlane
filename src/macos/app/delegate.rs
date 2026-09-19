@@ -356,6 +356,7 @@ define_class!(
         fn quick_select(&self, sender: &NSMenuItem) {
             if !self.any_panel_visible() { return; }
             if (sender.tag() as usize) < self.match_count() {
+                self.ivars().open_url_input_active.set(false);
                 self.ivars().selected.set(sender.tag() as usize);
                 self.render(); self.activate_selected();
             }
@@ -377,6 +378,7 @@ define_class!(
         }
         #[unsafe(method(refreshWindows:))]
         fn refresh_action(&self, _: Option<&AnyObject>) {
+            if self.searching_open_url() { self.refresh_open_url(); self.render(); return; }
             if self.searching_projects() { self.refresh_projects(true); self.render(); return; }
             if self.ivars().demo.get() { self.filter(); } else {
                 self.ivars().catalog_checked.set(None);
@@ -387,6 +389,7 @@ define_class!(
         #[unsafe(method(pickWindow:))]
         fn pick(&self, sender: &NSButton) {
             if let Some(window) = sender.window() { self.remember_panel_display(&window); }
+            self.ivars().open_url_input_active.set(false);
             self.ivars().selected.set(sender.tag() as usize);
             self.render();
             self.activate_selected();
@@ -404,6 +407,17 @@ define_class!(
             self.cancel_routing();
             self.end_session();
             if let Some(url) = NSURL::URLWithString(ns_string!("https://github.com/chenyukang/winlane/issues")) {
+                NSWorkspace::sharedWorkspace().openURL(&url);
+            }
+        }
+        #[unsafe(method(openHistoryPermissions:))]
+        fn history_permissions(&self, _: Option<&AnyObject>) {
+            if !self.searching_open_url() || !self.ivars().open_url_history.borrow().access_denied {
+                return;
+            }
+            self.cancel_routing();
+            self.end_session();
+            if let Some(url) = NSURL::URLWithString(ns_string!("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")) {
                 NSWorkspace::sharedWorkspace().openURL(&url);
             }
         }
@@ -442,6 +456,7 @@ define_class!(
             self.poll_app_launch();
             self.poll_app_catalog();
             self.poll_projects();
+            self.poll_open_url();
             let clipboard_changed = self.ivars().clipboard.borrow_mut().as_mut().is_some_and(|clipboard| clipboard.poll_storage());
             if clipboard_changed && self.searching_clipboard() { self.filter_preserving(self.selected_result()); }
             let result = self.ivars().receiver.borrow().as_ref().map(|rx| rx.try_recv());

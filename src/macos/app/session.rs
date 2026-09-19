@@ -149,6 +149,10 @@ impl Delegate {
             && self.ivars().mode.get() == Some(PanelMode::Search)
     }
 
+    pub(super) fn searching_open_url(&self) -> bool {
+        self.scoped_search() && self.ivars().search_scope.get() == Some(SearchScope::OpenUrl)
+    }
+
     pub(super) fn searching_projects(&self) -> bool {
         self.scoped_search() && self.ivars().search_scope.get() == Some(SearchScope::Projects)
     }
@@ -165,13 +169,12 @@ impl Delegate {
         self.scoped_search() && self.ivars().search_scope.get() == Some(SearchScope::Clipboard)
     }
 
-    pub(super) fn enter_snippet_search(&self) {
-        self.enter_scoped_search(SearchScope::Snippets);
-    }
-
     pub(super) fn enter_scoped_search(&self, scope: SearchScope) {
         self.ivars().search_scope.set(Some(scope));
         self.ivars().query.borrow_mut().clear();
+        if scope == SearchScope::OpenUrl {
+            self.refresh_open_url();
+        }
         if scope == SearchScope::Projects {
             self.refresh_projects(false);
         }
@@ -190,7 +193,9 @@ impl Delegate {
         if !self.scoped_search() {
             return;
         }
-        let command = if self.searching_projects() {
+        let command = if self.searching_open_url() {
+            CommandId::OpenUrl
+        } else if self.searching_projects() {
             CommandId::Projects
         } else if self.searching_quicklinks() {
             CommandId::Quicklinks
@@ -239,8 +244,10 @@ impl Delegate {
         self.clear_quicklink_input();
         let clipboard = self.searching_clipboard();
         let projects = self.searching_projects();
+        let open_url = self.searching_open_url();
+        self.clear_open_url();
         self.ivars().search_scope.set(None);
-        if clipboard || projects {
+        if clipboard || projects || open_url {
             self.ivars().clipboard_matches.borrow_mut().clear();
             self.ivars().project_matches.borrow_mut().clear();
             for ui in self.panels() {

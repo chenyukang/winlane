@@ -232,7 +232,11 @@ impl Delegate {
             return;
         }
         if !self.any_panel_key() {
-            self.cancel_input_start();
+            // Scoped commands prepare their input before presenting the panel.
+            // Only cancel here when an already-focused search loses focus.
+            if state.input_session.borrow().focused {
+                self.cancel_input_start();
+            }
             return;
         }
         let current = Source::current(self.mtm()).and_then(|source| source.id());

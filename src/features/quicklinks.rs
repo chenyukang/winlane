@@ -15,6 +15,8 @@ pub struct Quicklink {
     pub link: String,
     #[serde(default, rename = "openWith")]
     pub open_with: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shortcut: Option<crate::core::config::Shortcut>,
 }
 
 impl Quicklink {
@@ -31,6 +33,9 @@ impl Quicklink {
         }
         if self.open_with.len() > 1024 || self.open_with.chars().any(char::is_control) {
             return Err(tr!("打开方式无效。", "Invalid target application.").into());
+        }
+        if let Some(shortcut) = &self.shortcut {
+            shortcut.app_binding()?;
         }
         let template = Template::parse(&self.link)?;
         let values = template
@@ -382,6 +387,7 @@ pub fn import_json(existing: &[Quicklink], json: &str) -> Result<Import, String>
             name,
             link,
             open_with,
+            shortcut: None,
         };
         candidate.validate().map_err(|e| {
             trf!(

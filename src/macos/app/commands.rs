@@ -1,6 +1,55 @@
 use super::*;
 
+pub(super) fn command_scope(command: CommandId) -> Option<SearchScope> {
+    match command {
+        CommandId::OpenUrl => Some(SearchScope::OpenUrl),
+        CommandId::Projects => Some(SearchScope::Projects),
+        CommandId::Quicklinks => Some(SearchScope::Quicklinks),
+        CommandId::Snippets => Some(SearchScope::Snippets),
+        CommandId::Clipboard => Some(SearchScope::Clipboard),
+        _ => None,
+    }
+}
+
 impl Delegate {
+    pub(super) fn run_command_shortcut(&self, command: CommandId, session: u64) {
+        if !self
+            .ivars()
+            .config
+            .borrow()
+            .command_shortcuts
+            .iter()
+            .any(|item| item.command == command)
+        {
+            return;
+        }
+        if self.prepare_command_search(command, session) {
+            self.present_panels();
+            self.schedule_cache_warmup();
+        } else {
+            if self.ivars().mode.get().is_none() {
+                self.capture_panel_origin();
+                self.sync_displays();
+            }
+            if let Some(settings) = self.settings_window() {
+                settings.window.orderOut(None);
+            }
+            self.execute_command(command);
+        }
+    }
+
+    pub(super) fn prepare_command_search(&self, command: CommandId, session: u64) -> bool {
+        let Some(scope) = command_scope(command) else {
+            return false;
+        };
+        self.prepare_panel(PanelMode::Search, session, 0);
+        if let Some(tap) = self.ivars().shortcut_tap.borrow().as_ref() {
+            tap.resume_search(session);
+        }
+        self.enter_scoped_search(scope);
+        true
+    }
+
     pub(super) fn selected_command(&self) -> Option<CommandId> {
         self.ivars()
             .command_matches

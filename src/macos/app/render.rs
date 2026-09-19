@@ -42,6 +42,14 @@ impl Delegate {
         let apps = state.installed_apps.borrow();
         let snippet_matches = state.snippet_matches.borrow();
         let quicklink_matches = state.quicklink_matches.borrow();
+        let open_url = state.open_url_matches.borrow();
+        let url_history = state.open_url_history.borrow();
+        let in_open_url = self.searching_open_url();
+        let url_input_target = if in_open_url && state.open_url_input_active.get() {
+            winlane::features::open_url::input_target(&state.query.borrow())
+        } else {
+            None
+        };
         let project_matches = state.project_matches.borrow();
         let project_cache = state.project_cache.borrow();
         let in_projects = self.searching_projects();
@@ -52,7 +60,8 @@ impl Delegate {
             + matched.len()
             + quicklink_matches.len()
             + launch_matches.len()
-            + project_matches.len();
+            + project_matches.len()
+            + open_url.len();
         let quicklink_input = state.quicklink_input.borrow();
         let inline = quicklink_input.is_some();
         let trusted = accessibility::is_trusted();
@@ -152,6 +161,8 @@ impl Delegate {
         ui.scope_back.setHidden(!self.scoped_search() || inline);
         ui.scope_back.setTitle(&NSString::from_str(if in_clipboard {
             tr!("‹ 剪贴板", "‹ Clipboard")
+        } else if in_open_url {
+            tr!("‹ 网址", "‹ URLs")
         } else if in_projects {
             tr!("‹ 项目", "‹ Projects")
         } else if self.searching_quicklinks() {
@@ -171,7 +182,18 @@ impl Delegate {
             ));
         }
         ui.mode_label.setHidden(!show_mode_label);
-        ui.settings_button.setHidden(!show_hints);
+        let needs_history_access = in_open_url && url_history.access_denied;
+        ui.settings_button
+            .setHidden(!show_hints || needs_history_access);
+        ui.history_permissions_button
+            .setHidden(!needs_history_access);
+        let footer_size = NSSize::new(
+            WIDTH - if needs_history_access { 230.0 } else { 148.0 },
+            ui.footer.frame().size.height,
+        );
+        if ui.footer.frame().size != footer_size {
+            ui.footer.setFrameSize(footer_size);
+        }
         let config = state.config.borrow();
         ui.mode_label
             .setStringValue(&NSString::from_str(&if alias_query.is_empty() {
@@ -305,6 +327,60 @@ impl Delegate {
                         ),
                     )
                 }
+            } else if in_open_url {
+                if let Some(target) = &url_input_target {
+                    (
+                        if matches!(target, winlane::features::open_url::InputTarget::Url(_)) {
+                            tr!("用 Chrome 打开网址", "Open URL in Chrome")
+                        } else {
+                            tr!("用 Google 搜索", "Search Google")
+                        },
+                        tr!(
+                            "按 Enter 在 Chrome 新标签页中打开。",
+                            "Press Enter to open in a new Chrome tab."
+                        ),
+                    )
+                } else if state.open_url_receiver.borrow().is_some() {
+                    (
+                        tr!("正在读取 Chrome 历史…", "Loading Chrome history…"),
+                        tr!("可以继续输入搜索。", "You can keep typing."),
+                    )
+                } else if url_history.access_denied {
+                    (
+                        tr!(
+                            "需要访问 Chrome 浏览记录的权限",
+                            "Allow access to Chrome history"
+                        ),
+                        tr!(
+                            "在系统设置 → 隐私与安全性 → 完全磁盘访问权限中添加并开启 Winlane。\n授权后重启 Winlane，再运行 open-url。",
+                            "In System Settings → Privacy & Security → Full Disk Access, add and enable Winlane.\nRestart Winlane, then run open-url again."
+                        ),
+                    )
+                } else if url_history.error.is_some() {
+                    (
+                        tr!("无法读取浏览记录", "Could not load browsing history"),
+                        tr!(
+                            "按 ⌘R 重试，或按 Esc 返回。",
+                            "Press ⌘R to retry, or Esc to go back."
+                        ),
+                    )
+                } else if url_history.pages.is_empty() {
+                    (
+                        tr!("还没有最近网址", "No recent URLs"),
+                        tr!(
+                            "先在 Chrome 中访问网页，再按 ⌘R 刷新。",
+                            "Visit a page in Chrome, then press ⌘R to refresh."
+                        ),
+                    )
+                } else {
+                    (
+                        tr!("没有匹配的网址", "No matching URLs"),
+                        tr!(
+                            "按标题或网址搜索，或按 Esc 返回。",
+                            "Search by title or URL, or press Esc to go back."
+                        ),
+                    )
+                }
             } else if in_projects {
                 if state.project_receiver.borrow().is_some() {
                     (
@@ -425,7 +501,9 @@ impl Delegate {
             ui.empty_labels.replace(vec![heading, detail]);
         }
         for position in 0..count {
-            let content = if let Some(project) = project_matches.get(position) {
+            let content = if let Some(page) = open_url.get(position) {
+                RowContent::OpenUrl(page.clone())
+            } else if let Some(project) = project_matches.get(position) {
                 RowContent::Project(project.clone())
             } else if let Some(&command) = command_matches.get(position) {
                 RowContent::Command(command)
@@ -454,7 +532,9 @@ impl Delegate {
                     .clone(),
                 )
             };
-            let selected = position == state.selected.get() && !unmatched_alias;
+            let selected = position == state.selected.get()
+                && !unmatched_alias
+                && !(in_open_url && state.open_url_input_active.get());
             if rows.len() <= position {
                 rows.push(self.create_row(position, density));
             }
@@ -479,6 +559,23 @@ impl Delegate {
                             command.title(),
                             command.category()
                         )
+                    }
+                    RowContent::OpenUrl(page) => {
+                        let host = page.url.split_once("://").map_or("Chrome", |(_, rest)| {
+                            rest.split(['/', '?', '#']).next().unwrap_or("Chrome")
+                        });
+                        set_label(&row.app, host);
+                        let detail = format!("{} — {}", page.title, page.url);
+                        set_label(&row.title, &detail);
+                        set_label(&row.alias, "↗");
+                        row.icon.setImage(
+                            NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                                &NSString::from_str("globe"),
+                                Some(&NSString::from_str(tr!("最近网址", "Recent URL"))),
+                            )
+                            .as_deref(),
+                        );
+                        detail
                     }
                     RowContent::Project(project) => {
                         let path = project.path.to_string_lossy();
@@ -636,6 +733,31 @@ impl Delegate {
                 "Tab next field · ↵ open · Esc back"
             )
             .into()
+        } else if in_open_url {
+            url_history.error.clone().unwrap_or_else(|| {
+                if let Some(target) = &url_input_target {
+                    if matches!(target, winlane::features::open_url::InputTarget::Url(_)) {
+                        tr!(
+                            "↵ 打开输入的网址 · ↓ 选择历史记录 · Esc 返回",
+                            "↵ open typed URL · ↓ choose history · Esc back"
+                        )
+                    } else {
+                        tr!(
+                            "↵ Google 搜索 · ↓ 选择历史记录 · Esc 返回",
+                            "↵ search Google · ↓ choose history · Esc back"
+                        )
+                    }
+                    .into()
+                } else if state.open_url_receiver.borrow().is_some() {
+                    tr!("正在更新浏览记录…", "Updating browsing history…").into()
+                } else {
+                    trf!(
+                        "{} 个网址 · ↵ 用 Chrome 打开 · ⌘R 刷新 · Esc 返回",
+                        "{} URLs · ↵ open in Chrome · ⌘R refresh · Esc back",
+                        open_url.len()
+                    )
+                }
+            })
         } else if in_projects {
             project_cache.error.clone().unwrap_or_else(|| {
                 if state.project_receiver.borrow().is_some() {
@@ -721,7 +843,8 @@ impl Delegate {
                 || state.alias_error.borrow().is_some()
                 || !trusted
                 || (in_clipboard && clipboard_error.is_some())
-                || (in_projects && project_cache.error.is_some()));
+                || (in_projects && project_cache.error.is_some())
+                || (in_open_url && url_history.error.is_some()));
         ui.footer.setHidden(!show_hints && !has_error);
     }
 

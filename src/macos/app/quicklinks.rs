@@ -1,6 +1,59 @@
 use super::*;
 
 impl Delegate {
+    pub(super) fn open_quicklink_shortcut(&self, id: &str, session: u64) {
+        let link = self
+            .ivars()
+            .config
+            .borrow()
+            .quicklinks
+            .iter()
+            .find(|link| link.id == id && link.shortcut.is_some())
+            .cloned();
+        let Some(link) = link else { return };
+        let template = match winlane::features::quicklinks::Template::parse(&link.link) {
+            Ok(template) => template,
+            Err(error) => {
+                self.report_quicklink_shortcut_error(session, &error);
+                return;
+            }
+        };
+        if template.arguments.is_empty() {
+            if let Some(settings) = self.settings_window() {
+                settings.window.orderOut(None);
+            }
+            if let Err(error) = self.open_quicklink_destination(&link, &template) {
+                self.report_quicklink_shortcut_error(session, &error);
+            }
+        } else {
+            self.prepare_quicklink_shortcut_input(link, template, session);
+            self.present_panels();
+            self.schedule_cache_warmup();
+        }
+    }
+
+    fn report_quicklink_shortcut_error(&self, session: u64, error: &str) {
+        if let Some(tap) = self.ivars().shortcut_tap.borrow().as_ref() {
+            tap.resume_search(session);
+        }
+        self.show_mode(PanelMode::Search, session, 0);
+        self.report_switch_error(error);
+    }
+
+    pub(super) fn prepare_quicklink_shortcut_input(
+        &self,
+        link: winlane::features::quicklinks::Quicklink,
+        template: winlane::features::quicklinks::Template,
+        session: u64,
+    ) {
+        // Prepare the normal search/input-source session before showing its argument fields.
+        self.prepare_panel(PanelMode::Search, session, 0);
+        if let Some(tap) = self.ivars().shortcut_tap.borrow().as_ref() {
+            tap.resume_search(session);
+        }
+        self.begin_quicklink_input(link, template);
+    }
+
     pub(super) fn ensure_quicklink_editor(
         &self,
     ) -> Retained<crate::macos::ui::quicklinks::QuicklinkEditor> {
@@ -265,23 +318,25 @@ impl Delegate {
             self.begin_quicklink_input(link.clone(), template);
             return;
         }
+        if let Err(error) = self.open_quicklink_destination(link, &template) {
+            self.selection_failed(&error);
+        }
+    }
+
+    fn open_quicklink_destination(
+        &self,
+        link: &winlane::features::quicklinks::Quicklink,
+        template: &winlane::features::quicklinks::Template,
+    ) -> Result<(), String> {
         let clipboard = if template.uses_clipboard() {
             crate::macos::platform::template_context::clipboard()
         } else {
             String::new()
         };
-        let result =
-            crate::macos::platform::quicklinks::render(&template, &clipboard, &HashMap::new());
-        match result {
-            Ok(url) => {
-                self.cancel_routing();
-                self.end_session();
-                if let Err(error) = crate::macos::platform::quicklinks::open(&url, &link.open_with)
-                {
-                    self.selection_failed(&error);
-                }
-            }
-            Err(error) => self.selection_failed(&error),
-        }
+        let url =
+            crate::macos::platform::quicklinks::render(template, &clipboard, &HashMap::new())?;
+        self.cancel_routing();
+        self.end_session();
+        crate::macos::platform::quicklinks::open(&url, &link.open_with)
     }
 }

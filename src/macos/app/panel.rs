@@ -263,6 +263,13 @@ impl Delegate {
         settings_button.setBordered(false);
         settings_button.setContentTintColor(Some(&NSColor::labelColor()));
         root.addSubview(&settings_button);
+        let history_permissions_button = self.button(
+            tr!("打开访问权限设置…", "Open Access Settings…"),
+            sel!(openHistoryPermissions:),
+            rect(WIDTH - 206.0, 9.0, 190.0, 24.0),
+        );
+        history_permissions_button.setHidden(true);
+        root.addSubview(&history_permissions_button);
 
         Rc::new(PanelUi {
             display_id,
@@ -276,6 +283,7 @@ impl Delegate {
             demo_button,
             refresh_button: refresh,
             settings_button,
+            history_permissions_button,
             scope_back,
             clipboard_actions,
             quicklink_bar: RefCell::new(quicklink_bar),

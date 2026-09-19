@@ -1,9 +1,14 @@
 # Built-in commands
 
-Winlane's search accepts windows, installed applications, and built-in commands. A matching command appears before window and application results; an empty search and switch mode never list commands. Commands require explicit selection with Enter or a mouse click. Searching only looks up metadata and never executes an action.
+Winlane's search accepts windows, installed applications, and built-in commands. A matching command appears before window and application results; an empty search and switch mode never list commands. Select a command with Enter or a mouse click, or assign it a global shortcut. Searching only looks up metadata and never executes an action.
+
+In **Settings → Shortcuts → Command shortcuts**, find the command, select its modifiers and key, and the shortcut takes effect immediately. Choose **Not set** to remove it. Commands start without an assigned shortcut. Conflicts with search, switch (including reverse switching), apps, Quicklinks, and other commands are rejected without saving.
+
+For example, binding **Command + Option + U** to `open-url` opens its URL/search input directly. `projects`, `clipboard`, `snippet`, and `quicklink` also open their own lists. System commands such as `lock-screen` and `sleep` execute immediately when their configured shortcut is pressed. Holding the shortcut does not repeat the command.
 
 | Command | Search examples | Action |
 | --- | --- | --- |
+| `open-url` | `open-url`, `history`, `浏览记录`, `最近网址` | Browse Chrome history, open a typed URL, or search Google in Chrome. |
 | `projects` | `projects`, `vscode`, `vs code`, `最近项目`, `项目` | Browse recent local VS Code folders and workspaces, then open a project. |
 | `clipboard` | `clipboard`, `clip`, `剪贴板` | Open a dedicated list to search and paste clipboard history. |
 | `quicklink` | `quicklinks`, `links`, `快捷链接` | Browse and open saved links. |

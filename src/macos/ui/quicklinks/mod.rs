@@ -1,5 +1,6 @@
 use crate::macos::ui::controls::input;
 use crate::macos::ui::controls::{button, hint, label, rect};
+use crate::macos::ui::shortcut::ShortcutControls;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
@@ -28,6 +29,7 @@ struct EditorUi {
     name: Retained<NSTextField>,
     link: Retained<NSTextField>,
     application: Retained<NSTextField>,
+    shortcut: ShortcutControls,
     remove: Retained<NSButton>,
     message: Retained<NSTextField>,
 }
@@ -45,6 +47,8 @@ define_class!(
         fn changed(&self, _: &NSNotification) { self.input_changed(); }
     }
     impl QuicklinkEditor {
+        #[unsafe(method(quicklinkShortcutChanged:))]
+        fn shortcut_changed(&self, _: Option<&AnyObject>) { self.input_changed(); }
         #[unsafe(method(selectQuicklink:))]
         fn select(&self, sender: &NSButton) { self.ivars().selected.set(Some(sender.tag() as usize)); self.fill(); }
         #[unsafe(method(addQuicklink:))]
@@ -52,7 +56,7 @@ define_class!(
             let mut links = self.ivars().links.borrow_mut();
             if links.len() >= quicklinks::MAX_LINKS { self.report(tr!("最多保存 200 个快捷链接。", "You can save up to 200 quicklinks.")); return; }
             let index = links.iter().position(|q| q.name.is_empty() && q.link.is_empty()).unwrap_or_else(|| {
-                links.push(Quicklink { id: NSUUID::UUID().UUIDString().to_string(), name: String::new(), link: String::new(), open_with: String::new() }); links.len() - 1
+                links.push(Quicklink { id: NSUUID::UUID().UUIDString().to_string(), name: String::new(), link: String::new(), open_with: String::new(), shortcut: None }); links.len() - 1
             });
             drop(links); self.ivars().selected.set(Some(index)); self.fill();
             if let Some(window) = self.view().window() { window.makeFirstResponder(Some(&*self.ui().name)); }
@@ -161,17 +165,30 @@ impl QuicklinkEditor {
         let name = fields.remove(0);
         let link = fields.remove(0);
         let application = fields.remove(0);
+        let caption = label(
+            tr!("全局快捷键", "Global shortcut"),
+            13.0,
+            rect(236.0, 276.0, 488.0, 22.0),
+            mtm,
+        );
+        caption.setAutoresizingMask(NSAutoresizingMaskOptions::ViewMinYMargin);
+        root.addSubview(&caption);
+        let shortcut = ShortcutControls::optional_at(&root, 236.0, 244.0, mtm);
+        shortcut.on_change(&this, sel!(quicklinkShortcutChanged:));
         let help = hint(
             tr!(
                 "支持网址、应用链接、/绝对路径与 ~/路径。\n{Query} 输入参数 · {clipboard} 剪贴板\n网址参数自动编码；{clipboard | raw} 保留原文。",
                 "URLs, app links, /absolute paths and ~/paths.\n{Query} prompts for input · {clipboard} uses copied text\nURL values are encoded; {clipboard | raw} keeps them unchanged."
             ),
-            rect(236.0, 202.0, 488.0, 96.0),
+            rect(236.0, 134.0, 488.0, 96.0),
             mtm,
         );
         help.setMaximumNumberOfLines(0);
         root.addSubview(&help);
-        let message = hint("", rect(236.0, 88.0, 488.0, 96.0), mtm);
+        help.setAutoresizingMask(
+            NSAutoresizingMaskOptions::ViewMinYMargin | NSAutoresizingMaskOptions::ViewWidthSizable,
+        );
+        let message = hint("", rect(236.0, 52.0, 488.0, 76.0), mtm);
         root.addSubview(&message);
         root.addSubview(&button(
             tr!("导入 Raycast JSON…", "Import Raycast JSON…"),
@@ -190,6 +207,7 @@ impl QuicklinkEditor {
                 name,
                 link,
                 application,
+                shortcut,
                 remove,
                 message,
             })
@@ -244,6 +262,10 @@ impl QuicklinkEditor {
             field.setStringValue(&NSString::from_str(value));
         }
         self.ui().remove.setEnabled(link.is_some());
+        self.ui()
+            .shortcut
+            .fill_optional(link.as_ref().and_then(|link| link.shortcut.as_ref()));
+        self.ui().shortcut.set_enabled(link.is_some());
         self.ivars().filling.set(false);
         self.rebuild_list();
     }
@@ -289,6 +311,13 @@ impl QuicklinkEditor {
             links[i].name = self.ui().name.stringValue().to_string();
             links[i].link = self.ui().link.stringValue().to_string();
             links[i].open_with = self.ui().application.stringValue().to_string();
+            match self.ui().shortcut.read_optional() {
+                Ok(shortcut) => links[i].shortcut = shortcut,
+                Err(error) => {
+                    self.report(&error);
+                    return;
+                }
+            }
         }
         self.persist();
         self.rebuild_list();

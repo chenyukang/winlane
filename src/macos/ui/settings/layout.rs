@@ -150,6 +150,9 @@ impl SettingsWindow {
             mtm,
         ));
 
+        let command_shortcuts =
+            command_shortcuts::CommandShortcutControls::new(&shortcuts, target, mtm);
+
         let localization = settings_group(&general, tr!("语言", "Language"), 570.0, 80.0, mtm);
         row_text(
             &localization,
@@ -509,6 +512,7 @@ impl SettingsWindow {
             search_card,
             switch_card,
             app_shortcuts_card,
+            command_shortcuts,
             snippets_tab,
             quicklinks_tab,
             clipboard,

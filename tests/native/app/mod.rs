@@ -4,6 +4,7 @@ pub(crate) mod diagnostics;
 mod input_start;
 mod launch_search;
 mod main_wake;
+mod open_url;
 mod panels;
 mod projects;
 mod quicklink_search;
@@ -80,6 +81,7 @@ pub fn verify_hidden_panels() {
     verify_snippet_search(mtm);
     verify_quicklink_search(mtm);
     verify_projects_search(mtm);
+    open_url::verify_open_url(mtm);
     verify_clipboard_search(mtm);
     verify_clipboard_images(mtm);
     crate::macos::ui::snippets::tests::verify_editor(&delegate, mtm);
@@ -139,6 +141,13 @@ pub fn verify_hidden_panels() {
             !delegate.ivars().input_session.borrow().focused,
             "hidden panels must never change or remember input sources"
         );
+        assert_eq!(
+            delegate.ivars().input_gate.borrow().target(),
+            expected.as_deref(),
+            "the prepared source must survive until the panel first receives focus"
+        );
+        delegate.ivars().input_session.borrow_mut().focused = true;
+        delegate.complete_input_start();
         assert!(delegate.ivars().input_gate.borrow().target().is_none());
         assert!(delegate.ivars().input_start_timer.borrow().is_none());
         assert!(pending.as_ref().is_none_or(|timer| !timer.isValid()));

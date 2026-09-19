@@ -2,8 +2,15 @@ use super::*;
 
 impl Delegate {
     pub(super) fn activate_selected(&self) {
-        if self.selected_command() == Some(CommandId::Projects) {
-            self.enter_scoped_search(SearchScope::Projects);
+        if let Some(scope) = self
+            .selected_command()
+            .and_then(super::commands::command_scope)
+        {
+            self.enter_scoped_search(scope);
+            return;
+        }
+        if self.searching_open_url() {
+            self.open_selected_url();
             return;
         }
         if self.searching_projects() {
@@ -14,23 +21,11 @@ impl Delegate {
             self.submit_quicklink_input();
             return;
         }
-        if self.selected_command() == Some(CommandId::Quicklinks) {
-            self.enter_scoped_search(SearchScope::Quicklinks);
-            return;
-        }
         if self.searching_quicklinks() && self.match_count() == 0 {
-            return;
-        }
-        if self.selected_command() == Some(CommandId::Clipboard) {
-            self.enter_scoped_search(SearchScope::Clipboard);
             return;
         }
         if self.searching_clipboard() {
             self.use_clipboard(true);
-            return;
-        }
-        if self.selected_command() == Some(CommandId::Snippets) {
-            self.enter_snippet_search();
             return;
         }
         if self.searching_snippets() && self.match_count() == 0 {

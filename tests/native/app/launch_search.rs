@@ -447,6 +447,7 @@ pub(super) fn verify_typo_search(mtm: MainThreadMarker) {
         }
         match expected {
             SelectedResult::Project(_)
+            | SelectedResult::OpenUrl(_)
             | SelectedResult::Quicklink(_)
             | SelectedResult::Snippet(_)
             | SelectedResult::Clipboard(_) => panic!("unexpected snippet in launch test"),

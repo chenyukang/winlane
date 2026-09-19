@@ -1,3 +1,4 @@
+mod command_shortcuts;
 mod layout;
 mod navigation;
 
@@ -40,6 +41,7 @@ pub struct SettingsWindow {
     search_card: Retained<NSView>,
     switch_card: Retained<NSView>,
     app_shortcuts_card: Retained<NSView>,
+    command_shortcuts: command_shortcuts::CommandShortcutControls,
     snippets_tab: Retained<NSView>,
     quicklinks_tab: Retained<NSView>,
     clipboard: crate::macos::ui::clipboard_settings::ClipboardControls,
@@ -88,6 +90,7 @@ impl SettingsWindow {
         self.switch_delay
             .setStringValue(&NSString::from_str(&config.switch_delay_ms.to_string()));
         self.set_app_shortcuts(&config.app_shortcuts);
+        self.set_command_shortcuts(&config.command_shortcuts);
         self.set_alias_rules(&config.alias_rules);
         self.search_shortcut.fill(&config.shortcut);
         for row in self.search_rows.borrow_mut().drain(..) {
@@ -169,7 +172,7 @@ impl SettingsWindow {
             .shortcuts_scroll
             .contentSize()
             .height
-            .max(search_height + 208.0);
+            .max(search_height + 224.0 + self.command_shortcuts.view.frame().size.height);
         self.shortcuts_document
             .setFrameSize(NSSize::new(740.0, height));
         self.search_card
@@ -187,6 +190,10 @@ impl SettingsWindow {
             .setFrameOrigin(NSPoint::new(0.0, height - search_height - 120.0));
         self.app_shortcuts_card
             .setFrameOrigin(NSPoint::new(0.0, height - search_height - 200.0));
+        self.command_shortcuts.view.setFrameOrigin(NSPoint::new(
+            0.0,
+            height - search_height - 216.0 - self.command_shortcuts.view.frame().size.height,
+        ));
         self.add_search
             .setEnabled(rows.len() + 1 < winlane::core::config::MAX_SEARCH_SHORTCUTS);
     }
@@ -237,6 +244,7 @@ impl SettingsWindow {
                 .collect::<Result<_, _>>()?,
             switch_shortcut: self.switch_shortcut.read()?,
             app_shortcuts: self.app_shortcuts.borrow().clone(),
+            command_shortcuts: self.command_shortcuts.read()?,
             alias_rules: self.alias_rules.borrow().clone(),
             snippets: self.snippets.borrow().clone(),
             quicklinks: self.quicklinks.borrow().clone(),
@@ -417,6 +425,10 @@ impl SettingsWindow {
 
     pub fn set_app_shortcuts(&self, shortcuts: &[AppShortcut]) {
         self.app_shortcuts.replace(shortcuts.to_vec());
+    }
+
+    pub fn set_command_shortcuts(&self, shortcuts: &[winlane::core::config::CommandShortcut]) {
+        self.command_shortcuts.fill(shortcuts);
     }
 
     pub fn report(&self, message: &str, error: bool) {
