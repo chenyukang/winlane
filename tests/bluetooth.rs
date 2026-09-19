@@ -19,6 +19,7 @@ fn device(address: &str, name: &str, connected: bool) -> Device {
         address: address.into(),
         name: name.into(),
         connected,
+        is_audio: false,
     }
 }
 
@@ -103,5 +104,32 @@ fn actual_connection_state_determines_success() {
                 }
             }
         }
+    }
+}
+
+#[test]
+fn audio_devices_precede_connected_keyboards_and_mice() {
+    let mut headset = device("00-00-00-00-00-01", "Device A", false);
+    headset.is_audio = true;
+    let mut speaker = device("00-00-00-00-00-02", "Device Z", true);
+    speaker.is_audio = true;
+    let keyboard = device("00-00-00-00-00-03", "Device Keyboard", true);
+    let mouse = device("00-00-00-00-00-04", "Device Mouse", false);
+    let devices = [
+        keyboard.clone(),
+        headset.clone(),
+        mouse.clone(),
+        speaker.clone(),
+    ];
+    for query in ["", "device"] {
+        assert_eq!(
+            matching(&devices, query),
+            [
+                speaker.clone(),
+                headset.clone(),
+                keyboard.clone(),
+                mouse.clone()
+            ]
+        );
     }
 }

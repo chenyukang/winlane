@@ -91,12 +91,16 @@ fn devices() -> Result<Vec<Device>, String> {
         for device in devices.iter() {
             let address: Option<Retained<NSString>> = unsafe { msg_send![&*device, addressString] };
             let name: Option<Retained<NSString>> = unsafe { msg_send![&*device, nameOrAddress] };
+            // BluetoothAssignedNumbers.h identifies headsets, speakers and stereos
+            // with major device class 0x04; names may be user-customized.
+            let device_class: u32 = unsafe { msg_send![&*device, deviceClassMajor] };
             if let Some(address) = address {
                 let address = address.to_string();
                 result.push(Device {
                     name: name.map_or_else(|| address.clone(), |name| name.to_string()),
                     address,
                     connected: NativeConnection(device).connected(),
+                    is_audio: device_class == 0x04,
                 });
             }
         }

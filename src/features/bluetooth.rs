@@ -5,6 +5,7 @@ pub struct Device {
     pub address: String,
     pub name: String,
     pub connected: bool,
+    pub is_audio: bool,
 }
 
 #[derive(Default)]
@@ -25,6 +26,7 @@ pub fn matching(devices: &[Device], query: &str) -> Vec<Device> {
         .collect();
     devices.sort_by_cached_key(|device| {
         (
+            !device.is_audio,
             !device.connected,
             device.name.to_lowercase(),
             device.address.clone(),

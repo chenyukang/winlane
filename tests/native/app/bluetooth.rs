@@ -8,11 +8,13 @@ pub(super) fn verify_bluetooth(mtm: MainThreadMarker) {
             address: "00-00-00-00-00-01".into(),
             name: "Keyboard".into(),
             connected: true,
+            is_audio: false,
         },
         Device {
             address: "00-00-00-00-00-02".into(),
             name: "Headphones 耳机".into(),
             connected: false,
+            is_audio: true,
         },
     ];
     for cached in [false, true] {
@@ -69,7 +71,11 @@ pub(super) fn verify_bluetooth(mtm: MainThreadMarker) {
     }));
     state.query.borrow_mut().clear();
     delegate.filter();
-    delegate.move_selection(1);
+    assert_eq!(
+        delegate.selected_bluetooth(),
+        Some(devices[1].clone()),
+        "disconnected headphones should be selected ahead of the connected keyboard"
+    );
     let (tx, rx) = mpsc::channel();
     state.bluetooth_receiver.replace(Some(rx));
     state
@@ -79,7 +85,7 @@ pub(super) fn verify_bluetooth(mtm: MainThreadMarker) {
     delegate.activate_selected(); // Repeated Enter must not start a second worker.
     assert!(state.bluetooth_pending.borrow().as_ref().unwrap().1);
     assert!(delegate.panels().iter().all(|ui| matches!(
-        &ui.rows.borrow()[1].content,
+        &ui.rows.borrow()[0].content,
         Some(RowContent::Bluetooth(_, Some(true)))
     )));
     let mut updated = devices.clone();
@@ -93,7 +99,7 @@ pub(super) fn verify_bluetooth(mtm: MainThreadMarker) {
     assert_eq!(
         delegate.selected_bluetooth(),
         Some(updated[1].clone()),
-        "selection follows device identity after connected-first reordering"
+        "selection follows device identity after a connection update"
     );
     assert!(state.bluetooth_pending.borrow().is_none());
     assert_eq!(state.mode.get(), Some(PanelMode::Search));
@@ -150,6 +156,7 @@ fn verify_native_api() {
         sel!(nameOrAddress),
         sel!(addressString),
         sel!(isPaired),
+        sel!(deviceClassMajor),
         sel!(isConnected),
         sel!(closeConnection),
         sel!(openConnection:withPageTimeout:authenticationRequired:),

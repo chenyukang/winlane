@@ -1,6 +1,6 @@
 # Bluetooth devices
 
-Search for **bluetooth**, **bt**, or **蓝牙**, then select **Connect or disconnect Bluetooth devices**. The picker lists devices already paired with macOS, with connected devices first. Type a device name to filter, use the arrow keys to select, and press **Enter** to connect a disconnected device or disconnect a connected one.
+Search for **bluetooth**, **bt**, or **蓝牙**, then select **Connect or disconnect Bluetooth devices**. The picker lists devices already paired with macOS, with audio devices (such as headphones and speakers) first, then other devices. Within each group, connected devices come first, followed by device name. Device categories come from macOS Bluetooth metadata. Type a device name to filter, use the arrow keys to select, and press **Enter** to connect a disconnected device or disconnect a connected one.
 
 The list stays open and displays **Connecting…** or **Disconnecting…** while the request runs in the background. Requests are serialized; Enter does not start another request while a refresh or connection operation is pending. Success is determined by the device's actual connection state. If a cached row is outdated and the device already has the requested state, Winlane leaves it in that state.
 
