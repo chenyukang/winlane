@@ -13,6 +13,7 @@ mod responsiveness;
 mod scoped_loading;
 mod settings;
 mod snippet_search;
+mod window_liveness;
 mod window_search;
 
 use clipboard::{verify_clipboard_images, verify_clipboard_search};
@@ -102,6 +103,7 @@ pub fn verify_hidden_panels() {
     verify_async_focus_order(mtm);
     verify_recency_persistence(mtm);
     verify_async_window_snapshot(mtm);
+    window_liveness::verify_window_liveness(mtm);
     verify_project_rule_search(mtm);
     verify_adaptive_panels(mtm);
     verify_display_density(mtm);

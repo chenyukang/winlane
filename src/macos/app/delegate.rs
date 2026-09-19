@@ -178,6 +178,8 @@ define_class!(
         }
         #[unsafe(method(workspaceActivated:))]
         fn workspace_activated(&self, _: &NSNotification) { self.track_frontmost(); }
+        #[unsafe(method(workspaceTerminated:))]
+        fn workspace_terminated(&self, _: &NSNotification) { self.check_window_liveness(); }
         #[unsafe(method(warmPanelCache:))]
         fn warm_panel_cache(&self, _: &NSTimer) {
             if !self.warm_cache_step()
@@ -462,6 +464,7 @@ define_class!(
                 && !self.any_panel_key()
             { self.end_session(); }
             self.check_shortcuts();
+            self.poll_window_liveness();
             self.drain_shortcut_actions();
             self.poll_focus();
             self.poll_app_launch();
@@ -471,28 +474,15 @@ define_class!(
             let clipboard_changed = self.ivars().clipboard.borrow_mut().as_mut().is_some_and(|clipboard| clipboard.poll_storage());
             if clipboard_changed && self.searching_clipboard() { self.filter_preserving(self.selected_result()); }
             let result = self.ivars().receiver.borrow().as_ref().map(|rx| rx.try_recv());
-            if let Some(Ok(snapshot)) = result {
+            if let Some(Ok(mut snapshot)) = result {
                 self.ivars().receiver.replace(None);
                 self.ivars().loading.set(false);
                 if !self.ivars().demo.get() {
-                    let WindowSnapshot { mut windows, identities } = snapshot;
-                    self.install_identities(identities);
-                    if !accessibility::is_trusted() { windows.clear(); }
-                    let snapshot_ready = self.ivars().switch_selection.borrow().as_ref()
-                        .is_some_and(|selection| selection.selected().is_some());
-                    if self.ivars().mode.get() == Some(PanelMode::Switch) && snapshot_ready {
-                        self.ivars().deferred_windows.replace(Some(windows));
-                        self.select_alias();
-                        self.render();
-                        self.commit_switch_if_ready();
-                    } else {
-                        let selected_id = self.selected_result();
-                        self.install_windows(windows);
-                        self.filter_preserving(selected_id);
-                        self.prepare_switch_selection();
-                        self.commit_switch_if_ready();
+                    if !accessibility::is_trusted() {
+                        snapshot.windows.clear();
+                        snapshot.server_ids.clear();
                     }
-                    self.schedule_cache_warmup();
+                    self.install_window_snapshot(snapshot);
                 }
             } else if matches!(result, Some(Err(TryRecvError::Disconnected))) {
                 self.ivars().receiver.replace(None);
@@ -553,6 +543,14 @@ impl Delegate {
                     self,
                     sel!(workspaceActivated:),
                     Some(NSWorkspaceDidActivateApplicationNotification),
+                    None,
+                );
+            NSWorkspace::sharedWorkspace()
+                .notificationCenter()
+                .addObserver_selector_name_object(
+                    self,
+                    sel!(workspaceTerminated:),
+                    Some(NSWorkspaceDidTerminateApplicationNotification),
                     None,
                 );
         }

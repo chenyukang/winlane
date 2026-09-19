@@ -263,6 +263,7 @@ pub(super) fn verify_async_window_snapshot(mtm: MainThreadMarker) {
         tx.send(WindowSnapshot {
             windows: refreshed.clone(),
             identities: HashMap::new(),
+            server_ids: HashMap::new(),
         })
         .unwrap();
         delegate.poll(sel!(poll:), None);

@@ -213,7 +213,7 @@ pub(super) fn verify_external_focus_history(mtm: MainThreadMarker) {
     delegate.filter();
     delegate.prepare_switch_selection();
     assert_eq!(delegate.selected_window().unwrap().id, 3);
-    assert!(crate::macos::platform::focus_observer::FocusObserver::new(-1, mtm, || {}).is_none());
+    assert!(crate::macos::platform::focus_observer::FocusObserver::new(-1, mtm, |_| {}).is_none());
 }
 
 pub(super) fn verify_shortcut_recency(mtm: MainThreadMarker) {

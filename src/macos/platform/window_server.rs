@@ -19,11 +19,15 @@ pub struct Inventory {
 
 impl Inventory {
     pub fn read() -> Self {
+        Self::try_read().unwrap_or_default()
+    }
+
+    pub fn try_read() -> Option<Self> {
         // SAFETY: All windows, excluding desktop surfaces. This reads metadata,
         // not pixels or window titles, and does not request screen recording.
         let raw = unsafe { CGWindowListCopyWindowInfo(1 << 4, 0) };
         if raw.is_null() {
-            return Self::default();
+            return None;
         }
         // SAFETY: Copy returns a retained CF array, owned here until drop.
         let array = unsafe { CFArray::<*const std::ffi::c_void>::wrap_under_create_rule(raw) };
@@ -59,7 +63,11 @@ impl Inventory {
                 inventory.normal.entry(pid).or_default().insert(id);
             }
         }
-        inventory
+        Some(inventory)
+    }
+
+    pub fn contains(&self, id: u32) -> bool {
+        self.known.contains(&id)
     }
 
     pub fn rejects(&self, pid: i32, id: u32) -> bool {

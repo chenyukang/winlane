@@ -18,6 +18,7 @@ mod session;
 mod shortcuts;
 mod snippets;
 mod views;
+mod window_liveness;
 mod windows;
 
 use crate::macos::ui::material::{PanelBackdrop, tint};
@@ -154,6 +155,7 @@ struct PendingLaunch {
 struct WindowSnapshot {
     windows: Vec<WindowInfo>,
     identities: HashMap<i32, AppIdentity>,
+    server_ids: HashMap<u64, u32>,
 }
 
 struct PendingFocus {
@@ -246,6 +248,10 @@ struct AppState {
     previous_pid: Cell<i32>,
     previous_window: Cell<Option<u64>>,
     receiver: RefCell<Option<Receiver<WindowSnapshot>>>,
+    window_server_ids: RefCell<HashMap<u64, u32>>,
+    window_check_receiver: RefCell<Option<Receiver<Vec<u64>>>>,
+    window_check_again: Cell<bool>,
+    closed_windows: RefCell<HashSet<u64>>,
     loading: Cell<bool>,
     demo: Cell<bool>,
     recency: RefCell<Vec<u64>>,

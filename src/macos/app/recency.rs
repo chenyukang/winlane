@@ -23,6 +23,7 @@ impl Delegate {
         {
             return;
         }
+        self.check_window_liveness();
         self.request_focus(pid, None);
         if self
             .ivars()
@@ -37,14 +38,24 @@ impl Delegate {
         let observer = crate::macos::platform::focus_observer::FocusObserver::new(
             pid,
             self.mtm(),
-            move || {
+            move |event| {
                 if let Some(delegate) = weak.load()
                     && !delegate.ivars().demo.get()
-                    && NSWorkspace::sharedWorkspace()
-                        .frontmostApplication()
-                        .is_some_and(|app| app.processIdentifier() == pid)
                 {
-                    delegate.request_focus(pid, None);
+                    match event {
+                        crate::macos::platform::focus_observer::WindowEvent::Destroyed(id) => {
+                            delegate.remove_closed_windows(&[id]);
+                        }
+                        crate::macos::platform::focus_observer::WindowEvent::FocusChanged => {
+                            delegate.check_window_liveness();
+                            if NSWorkspace::sharedWorkspace()
+                                .frontmostApplication()
+                                .is_some_and(|app| app.processIdentifier() == pid)
+                            {
+                                delegate.request_focus(pid, None);
+                            }
+                        }
+                    }
                 }
             },
         );

@@ -402,6 +402,14 @@ impl SwitchSelection {
         }
     }
 
+    /// Remove vanished windows without moving a surviving selection or replaying steps.
+    pub fn retain(&mut self, keep: &[bool]) {
+        assert_eq!(keep.len(), self.len);
+        let before = keep[..self.index].iter().filter(|&&keep| keep).count();
+        self.len = keep.iter().filter(|&&keep| keep).count();
+        self.index = if self.len == 0 { 0 } else { before % self.len };
+    }
+
     pub fn selected(&self) -> Option<usize> {
         (self.len > 0).then_some(self.index)
     }

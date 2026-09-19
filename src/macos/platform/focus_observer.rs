@@ -24,8 +24,14 @@ unsafe extern "C" {
     fn AXUIElementCreateApplication(pid: i32) -> CFTypeRef;
 }
 
+pub enum WindowEvent {
+    FocusChanged,
+    Destroyed(u64),
+}
+
 struct Context {
-    callback: Box<dyn Fn()>,
+    pid: i32,
+    callback: Box<dyn Fn(WindowEvent)>,
 }
 
 pub struct FocusObserver {
@@ -37,7 +43,11 @@ pub struct FocusObserver {
 }
 
 impl FocusObserver {
-    pub fn new(pid: i32, mtm: MainThreadMarker, callback: impl Fn() + 'static) -> Option<Self> {
+    pub fn new(
+        pid: i32,
+        mtm: MainThreadMarker,
+        callback: impl Fn(WindowEvent) + 'static,
+    ) -> Option<Self> {
         if pid <= 0 || !crate::macos::platform::accessibility::is_trusted() {
             return None;
         }
@@ -53,20 +63,24 @@ impl FocusObserver {
         }
         let application = unsafe { CFType::wrap_under_create_rule(application) };
         let mut context = Box::new(Context {
+            pid,
             callback: Box::new(callback),
         });
-        let notification = CFString::new("AXFocusedWindowChanged");
         // SAFETY: Registration retains the elements; the boxed context stays alive
         // until the source is removed on this same main thread.
-        if unsafe {
-            AXObserverAddNotification(
-                observer.as_CFTypeRef(),
-                application.as_CFTypeRef(),
-                notification.as_concrete_TypeRef(),
-                (&mut *context as *mut Context).cast(),
-            )
-        } != 0
-        {
+        let mut registered = false;
+        for name in ["AXFocusedWindowChanged", "AXUIElementDestroyed"] {
+            let notification = CFString::new(name);
+            registered |= unsafe {
+                AXObserverAddNotification(
+                    observer.as_CFTypeRef(),
+                    application.as_CFTypeRef(),
+                    notification.as_concrete_TypeRef(),
+                    (&mut *context as *mut Context).cast(),
+                )
+            } == 0;
+        }
+        if !registered {
             return None;
         }
         let source = unsafe {
@@ -91,9 +105,21 @@ impl Drop for FocusObserver {
     }
 }
 
-extern "C" fn changed(_: CFTypeRef, _: CFTypeRef, _: CFStringRef, context: *mut c_void) {
+extern "C" fn changed(_: CFTypeRef, element: CFTypeRef, name: CFStringRef, context: *mut c_void) {
     // SAFETY: Only the main run loop dispatches this source; the owner removes
     // it before dropping the boxed context or observer.
     let context = unsafe { &*context.cast::<Context>() };
-    objc2::rc::autoreleasepool(|_| (context.callback)());
+    let name = unsafe { CFString::wrap_under_get_rule(name) };
+    let event = if name == CFString::new("AXFocusedWindowChanged") {
+        WindowEvent::FocusChanged
+    } else {
+        // The AX element is still a valid local CF object after its remote UI
+        // is destroyed. Read its identity without messaging that application.
+        let element = unsafe { CFType::wrap_under_get_rule(element) };
+        WindowEvent::Destroyed(crate::macos::platform::accessibility::element_id(
+            context.pid,
+            &element,
+        ))
+    };
+    objc2::rc::autoreleasepool(|_| (context.callback)(event));
 }

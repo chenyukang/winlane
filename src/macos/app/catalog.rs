@@ -10,10 +10,12 @@ impl Delegate {
             self.filter();
             return;
         }
+        self.check_window_liveness();
         if state.receiver.borrow().is_some() {
             self.render();
             return;
         }
+        state.closed_windows.borrow_mut().clear();
         let identities = state.identities.borrow().clone();
         state.loading.set(true);
         let (tx, rx) = mpsc::channel();
@@ -25,6 +27,49 @@ impl Delegate {
             wake.signal();
         });
         self.render();
+    }
+
+    pub(super) fn install_window_snapshot(&self, snapshot: WindowSnapshot) {
+        let state = self.ivars();
+        let WindowSnapshot {
+            mut windows,
+            identities,
+            mut server_ids,
+        } = snapshot;
+        windows.retain(|window| !state.closed_windows.borrow().contains(&window.id));
+        server_ids.retain(|id, _| !state.closed_windows.borrow().contains(id));
+        state.closed_windows.borrow_mut().clear();
+        let retained: HashSet<_> = state
+            .windows
+            .borrow()
+            .iter()
+            .chain(&windows)
+            .map(|w| w.id)
+            .collect();
+        let mut ids = state.window_server_ids.borrow_mut();
+        ids.retain(|id, _| retained.contains(id));
+        ids.extend(server_ids);
+        drop(ids);
+        self.install_identities(identities);
+        let snapshot_ready = state
+            .switch_selection
+            .borrow()
+            .as_ref()
+            .is_some_and(|selection| selection.selected().is_some());
+        if state.mode.get() == Some(PanelMode::Switch) && snapshot_ready {
+            state.deferred_windows.replace(Some(windows));
+            self.select_alias();
+            self.render();
+            self.commit_switch_if_ready();
+        } else {
+            let selected_id = self.selected_result();
+            self.install_windows(windows);
+            self.filter_preserving(selected_id);
+            self.prepare_switch_selection();
+            self.commit_switch_if_ready();
+        }
+        self.schedule_cache_warmup();
+        self.check_window_liveness();
     }
 
     pub(super) fn install_identities(&self, identities: HashMap<i32, AppIdentity>) {
@@ -281,9 +326,11 @@ pub(super) fn read_window_snapshot(cached: HashMap<i32, AppIdentity>) -> WindowS
             )
         })
         .collect::<Vec<_>>();
+    let (windows, server_ids) = accessibility::list_windows(&apps);
     WindowSnapshot {
-        windows: accessibility::list_windows(&apps),
+        windows,
         identities,
+        server_ids,
     }
 }
 

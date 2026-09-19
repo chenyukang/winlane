@@ -13,8 +13,8 @@ use std::ptr;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use winlane::core::discovery::{
-    AX_NO_VALUE, FocusRead, READ_TIMEOUT, finish_application_scan, read_focused_window,
-    read_published_windows, read_with_retry, remote_window_token, switchable_window,
+    AX_NO_VALUE, FocusRead, READ_TIMEOUT, read_focused_window, read_published_windows,
+    read_with_retry, remote_window_token, switchable_window,
 };
 use winlane::core::search::WindowInfo;
 use winlane::{tr, trf};
@@ -104,6 +104,14 @@ fn remote_scans() -> &'static Mutex<HashMap<i32, RemoteScan>> {
 
 #[derive(PartialEq)]
 struct Element(CFType);
+
+pub(super) fn element_id(pid: i32, element: &CFType) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    pid.hash(&mut hasher);
+    // SAFETY: CFHash reads a live, retained AX object's remote identity.
+    unsafe { CFHash(element.as_CFTypeRef()) }.hash(&mut hasher);
+    hasher.finish() & !(1 << 63)
+}
 
 impl Element {
     fn application(pid: i32) -> Option<Self> {
@@ -248,12 +256,7 @@ impl Element {
     }
 
     fn id(&self, pid: i32) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        pid.hash(&mut hasher);
-        // SAFETY: self owns a valid CF object. AX equality/hash identifies the
-        // remote element even when re-enumeration produces a new local pointer.
-        unsafe { CFHash(self.raw()) }.hash(&mut hasher);
-        hasher.finish() & !(1 << 63)
+        element_id(pid, &self.0)
     }
 
     fn is_window(&self) -> bool {
@@ -407,7 +410,7 @@ fn scan_application(
     pid: i32,
     app: &str,
     inventory: &Inventory,
-) -> Result<Vec<WindowInfo>, AxError> {
+) -> Result<Vec<(WindowInfo, Option<u32>)>, AxError> {
     let application = Element::application(pid).ok_or(AX_NO_VALUE)?;
     let windows = all_windows(&application, pid, inventory);
     if std::env::var_os("WINDOWLANE_DEBUG_WINDOWS").is_some() {
@@ -415,12 +418,17 @@ fn scan_application(
     }
     Ok(windows
         .into_iter()
-        .map(|window| WindowInfo {
-            id: window.id(pid),
-            pid,
-            app: app.into(),
-            title: window.string("AXTitle").unwrap_or_default(),
-            minimized: window.boolean("AXMinimized").unwrap_or(false),
+        .map(|window| {
+            (
+                WindowInfo {
+                    id: window.id(pid),
+                    pid,
+                    app: app.into(),
+                    title: window.string("AXTitle").unwrap_or_default(),
+                    minimized: window.boolean("AXMinimized").unwrap_or(false),
+                },
+                window.server_id(),
+            )
         })
         .collect())
 }
@@ -450,9 +458,9 @@ pub fn focused_window(pid: i32, policy: FocusRead) -> Option<u64> {
     Some(id)
 }
 
-pub fn list_windows(apps: &[(i32, String)]) -> Vec<WindowInfo> {
+pub fn list_windows(apps: &[(i32, String)]) -> (Vec<WindowInfo>, HashMap<u64, u32>) {
     if !is_trusted() {
-        return Vec::new();
+        return (Vec::new(), HashMap::new());
     }
     let inventory = Inventory::read();
     remote_scans()
@@ -460,7 +468,7 @@ pub fn list_windows(apps: &[(i32, String)]) -> Vec<WindowInfo> {
         .unwrap()
         .retain(|pid, _| apps.iter().any(|(app_pid, _)| app_pid == pid));
     // Each worker owns its AX handles; a slow app does not delay every other app.
-    std::thread::scope(|scope| {
+    let records: Vec<_> = std::thread::scope(|scope| {
         let workers = apps
             .chunks(apps.len().div_ceil(4).max(1))
             .map(|chunk| {
@@ -469,8 +477,7 @@ pub fn list_windows(apps: &[(i32, String)]) -> Vec<WindowInfo> {
                     chunk
                         .iter()
                         .flat_map(|(pid, app)| {
-                            let windows = scan_application(*pid, app, inventory);
-                            finish_application_scan(windows)
+                            scan_application(*pid, app, inventory).unwrap_or_default()
                         })
                         .collect::<Vec<_>>()
                 })
@@ -480,7 +487,15 @@ pub fn list_windows(apps: &[(i32, String)]) -> Vec<WindowInfo> {
             .into_iter()
             .flat_map(|worker| worker.join().expect("window scan worker panicked"))
             .collect()
-    })
+    });
+    let server_ids = records
+        .iter()
+        .filter_map(|(window, id)| id.map(|id| (window.id, id)))
+        .collect();
+    (
+        records.into_iter().map(|(window, _)| window).collect(),
+        server_ids,
+    )
 }
 
 fn find_window(pid: i32, id: u64) -> Result<Element, String> {

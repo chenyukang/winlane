@@ -14,6 +14,36 @@ fn router() -> ShortcutRouter {
     )
 }
 
+#[test]
+fn pruning_closed_windows_preserves_selection_and_navigation() {
+    let mut selection = SwitchSelection::new(1);
+    selection.install(4, Some(0));
+    selection.retain(&[false, true, true, true]);
+    assert_eq!(selection.selected(), Some(0));
+    selection.step(-1);
+    assert_eq!(selection.selected(), Some(2));
+    // Closing the selected last window wraps to the first surviving window.
+    selection.retain(&[true, true, false]);
+    assert_eq!(selection.selected(), Some(0));
+    selection.retain(&[false, true]);
+    assert_eq!(selection.selected(), Some(0));
+    selection.release();
+    assert_eq!(selection.take_commit(), Some(0));
+    selection.retain(&[true]);
+    assert_eq!(selection.take_commit(), None);
+}
+
+#[test]
+fn pruning_all_windows_does_not_commit_a_stale_selection() {
+    let mut selection = SwitchSelection::new(-1);
+    selection.install(3, Some(0));
+    selection.release();
+    selection.retain(&[false, false, false]);
+    assert_eq!(selection.selected(), None);
+    assert_eq!(selection.take_commit(), None);
+    selection.retain(&[]);
+}
+
 fn action(router: &mut ShortcutRouter, event: u32, key: i64, flags: u64) -> Action {
     router.handle(event, key, flags, false).1.unwrap()
 }
