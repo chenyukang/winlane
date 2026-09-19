@@ -19,8 +19,6 @@ mod focus_observer;
 #[cfg(target_os = "macos")]
 mod input_source;
 #[cfg(target_os = "macos")]
-mod input_trace;
-#[cfg(target_os = "macos")]
 mod installed_apps;
 #[cfg(target_os = "macos")]
 mod main_wake;

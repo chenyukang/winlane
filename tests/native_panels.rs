@@ -67,9 +67,6 @@ mod focus_observer;
 #[cfg(target_os = "macos")]
 #[path = "../src/input_source.rs"]
 mod input_source;
-#[cfg(target_os = "macos")]
-#[path = "../src/input_trace.rs"]
-mod input_trace;
 
 #[cfg(target_os = "macos")]
 mod accessibility {

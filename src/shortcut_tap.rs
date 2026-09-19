@@ -193,10 +193,6 @@ unsafe extern "C" fn callback(
         return event;
     };
     let (consume, action) = keys.handle(event_type, key, flags, repeat);
-    if action.is_some_and(|action| action.kind == winlane::shortcuts::ActionKind::Search) {
-        crate::input_trace::start();
-    }
-    crate::input_trace::record("tap", format_args!("type={event_type} consumed={consume}"));
     if let Some(action) = action {
         if state.actions.send(action).is_err() {
             return event;

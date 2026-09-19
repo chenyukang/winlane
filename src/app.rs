@@ -275,8 +275,6 @@ define_class!(
         #[unsafe(method(sendEvent:))]
         fn send_event(&self, event: &NSEvent) {
             if event.r#type() == NSEventType::KeyDown {
-                let delegate: Option<Retained<Delegate>> = unsafe { msg_send![self, delegate] };
-                if let Some(delegate) = delegate { delegate.trace_input("panel-key"); }
                 if i64::from(event.keyCode()) != winlane::shortcuts::ESCAPE {
                     let delegate: Option<Retained<Delegate>> = unsafe { msg_send![self, delegate] };
                     if let Some(delegate) = delegate && delegate.buffer_search_key(event) { return; }
@@ -337,10 +335,6 @@ define_class!(
             }
             // SAFETY: Unhandled events, including IME composition, follow NSPanel's normal dispatch.
             unsafe { let _: () = msg_send![super(self), sendEvent: event]; }
-            if event.r#type() == NSEventType::KeyDown {
-                let delegate: Option<Retained<Delegate>> = unsafe { msg_send![self, delegate] };
-                if let Some(delegate) = delegate { delegate.trace_input("panel-key-done"); }
-            }
         }
     }
 );
@@ -549,7 +543,6 @@ define_class!(
             let Some(panel) = notification.object().and_then(|object| object.downcast::<SearchPanel>().ok()) else { return; };
             self.remember_panel_display(&panel);
             self.ivars().check_panel_focus.set(false);
-            self.trace_input("became-key");
             self.focus_search();
         }
         #[unsafe(method(windowShouldClose:))]
@@ -649,7 +642,6 @@ define_class!(
         }
         #[unsafe(method(inputSourceChanged:))]
         fn input_source_changed(&self, _: &NSNotification) {
-            self.trace_input("source-notification");
             if !self.ivars().changing_input_source.get() {
                 self.complete_input_start();
                 self.remember_search_input();
@@ -1427,7 +1419,6 @@ impl Delegate {
     }
 
     fn present_panels(&self) {
-        self.trace_input("present-begin");
         self.cancel_switch_timer();
         let state = self.ivars();
         state.changing_displays.set(true);
@@ -1447,7 +1438,6 @@ impl Delegate {
             }
         }
         state.changing_displays.set(false);
-        self.trace_input("present-end");
         self.complete_input_start();
     }
 
@@ -2219,7 +2209,6 @@ impl Delegate {
     }
 
     fn focus_search(&self) {
-        self.trace_input("focus-begin");
         if self.ivars().changing_input_source.replace(true) {
             return;
         }
@@ -2261,9 +2250,7 @@ impl Delegate {
                         source.select(self.mtm());
                     }
                     if new_editor {
-                        self.trace_input("source-selected-before-editor");
                         ui.panel.makeFirstResponder(Some(control));
-                        self.trace_input("editor-focused");
                     }
                     let editor = control
                         .currentEditor()
@@ -2294,48 +2281,10 @@ impl Delegate {
             }
         }
         self.ivars().changing_input_source.set(false);
-        self.trace_input("focus-end");
         self.complete_input_start();
     }
 
-    fn trace_input(&self, event: &'static str) {
-        if !crate::input_trace::active() {
-            return;
-        }
-        let state = self.ivars();
-        let editor = self
-            .panels()
-            .into_iter()
-            .find(|ui| ui.panel.isKeyWindow())
-            .and_then(|ui| ui.panel.firstResponder())
-            .and_then(|responder| responder.downcast::<NSTextView>().ok());
-        let context = editor.as_ref().and_then(|editor| editor.inputContext());
-        let current_context = NSTextInputContext::currentInputContext(self.mtm());
-        let active = context
-            .as_ref()
-            .zip(current_context.as_ref())
-            .is_some_and(|(a, b)| std::ptr::eq(&**a, &**b));
-        let marked = editor
-            .as_ref()
-            .is_some_and(|editor| NSTextInputClient::hasMarkedText(&**editor));
-        crate::input_trace::record(
-            event,
-            format_args!(
-                "source={:?} editor_source={:?} context_active={active} marked={marked} key={} presenting={} selecting={} gate={:?}",
-                Source::current(self.mtm()).and_then(|source| source.id()),
-                context
-                    .and_then(|context| context.selectedKeyboardInputSource())
-                    .map(|id| id.to_string()),
-                self.any_panel_key(),
-                state.changing_displays.get(),
-                state.changing_input_source.get(),
-                state.input_gate.borrow().target(),
-            ),
-        );
-    }
-
     fn prepare_search_input(&self) {
-        self.trace_input("prepare-input");
         self.cancel_input_start();
         let current = Source::current(self.mtm()).and_then(|source| source.id());
         let policy = self.ivars().config.borrow().input_method;
@@ -2474,11 +2423,7 @@ impl Delegate {
         else {
             return false;
         };
-        let inserted = insert_keyboard_layout_text(&editor, event);
-        if inserted {
-            self.trace_input("layout-key-inserted");
-        }
-        inserted
+        insert_keyboard_layout_text(&editor, event)
     }
 
     fn complete_input_start(&self) {
@@ -2535,11 +2480,6 @@ impl Delegate {
         let Some(events) = state.input_gate.borrow_mut().finish(ready, expired) else {
             return;
         };
-        self.trace_input("gate-release");
-        crate::input_trace::record(
-            "gate-events",
-            format_args!("count={} expired={expired}", events.len()),
-        );
         self.cancel_input_start();
         self.remember_search_input();
         let session = state.session.get();
