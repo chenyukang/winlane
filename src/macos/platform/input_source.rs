@@ -3,7 +3,10 @@ use core_foundation::base::{CFType, CFTypeRef, TCFType};
 use core_foundation::boolean::CFBoolean;
 use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
 use core_foundation::string::{CFString, CFStringRef};
-use objc2_foundation::{MainThreadMarker, NSString, NSUserDefaults, ns_string};
+use objc2::rc::Retained;
+use objc2_app_kit::{NSEvent, NSEventModifierFlags, NSEventType, NSTextInputClient, NSTextView};
+use objc2_foundation::{MainThreadMarker, NSArray, NSString, NSUserDefaults, ns_string};
+use std::cell::Cell;
 use winlane::core::input_method::InputMethod;
 
 #[link(name = "Carbon", kind = "framework")]
@@ -127,6 +130,61 @@ pub fn preferred(policy: InputMethod, mtm: MainThreadMarker) -> Option<Source> {
     }
 }
 
+thread_local! {
+    static POLICY: Cell<InputMethod> = const { Cell::new(InputMethod::English) };
+}
+
+pub fn set_policy(policy: InputMethod, _: MainThreadMarker) {
+    POLICY.set(policy);
+}
+
+pub fn policy(_: MainThreadMarker) -> InputMethod {
+    POLICY.get()
+}
+
+pub struct Preference {
+    pub target: Option<Source>,
+    pub locales: Option<Retained<NSArray<NSString>>>,
+    pub layout: Option<String>,
+}
+
+impl Preference {
+    pub fn resolve(policy: InputMethod, mtm: MainThreadMarker) -> Self {
+        let target = preferred(policy, mtm);
+        let layout = target
+            .as_ref()
+            .filter(|source| {
+                matches!(policy, InputMethod::English | InputMethod::LastUsed)
+                    && source.is_keyboard_layout()
+            })
+            .and_then(Source::id);
+        let language = target.as_ref().and_then(|source| match policy {
+            InputMethod::English => Some("en".to_owned()),
+            InputMethod::Chinese => Some("zh".to_owned()),
+            InputMethod::LastUsed => source.primary_language(),
+            InputMethod::Current => None,
+        });
+        Self {
+            target,
+            locales: language
+                .map(|language| NSArray::from_slice(&[&*NSString::from_str(&language)])),
+            layout,
+        }
+    }
+}
+
+pub fn align_editor(source: Option<&Source>, editor: &NSTextView) {
+    if !NSTextInputClient::hasMarkedText(editor)
+        && let Some(id) = source.and_then(Source::id)
+        && let Some(context) = editor.inputContext()
+        && context
+            .selectedKeyboardInputSource()
+            .is_none_or(|current| current.to_string() != id)
+    {
+        context.setSelectedKeyboardInputSource(Some(&NSString::from_str(&id)));
+    }
+}
+
 pub fn remember(id: &str) {
     let defaults = NSUserDefaults::standardUserDefaults();
     let key = ns_string!("WinlaneSearchInputSource");
@@ -138,4 +196,40 @@ pub fn remember(id: &str) {
     }
     // SAFETY: Store only a property-list string identifying the input source, never typed text.
     unsafe { defaults.setObject_forKey(Some(&NSString::from_str(id)), key) };
+}
+
+pub fn insert_keyboard_layout_text(editor: &NSTextView, event: &NSEvent) -> bool {
+    if !editor.isEditable()
+        || event.r#type() != NSEventType::KeyDown
+        || NSTextInputClient::hasMarkedText(editor)
+        || event.modifierFlags().intersects(
+            NSEventModifierFlags::Command
+                | NSEventModifierFlags::Control
+                | NSEventModifierFlags::Option
+                | NSEventModifierFlags::Function,
+        )
+        || event.characters().is_none_or(|text| text.is_empty())
+    {
+        return false;
+    }
+    // A third-party IME can still consume keyDown after TIS and the input
+    // context both report ABC. Translate with the selected layout, then use
+    // the editor's normal insertion path without dispatching to that old IME.
+    let Some(text) = event.charactersByApplyingModifiers(event.modifierFlags()) else {
+        return false;
+    };
+    let value = text.to_string();
+    if value.is_empty() || !value.bytes().all(|byte| (b' '..=b'~').contains(&byte)) {
+        return false;
+    }
+    // SAFETY: NSString is a supported text-input value; NSNotFound asks the
+    // editor to replace its selection and preserves notifications and undo.
+    unsafe {
+        NSTextInputClient::insertText_replacementRange(
+            editor,
+            &text,
+            objc2_foundation::NSRange::new(objc2_foundation::NSNotFound as usize, 0),
+        );
+    }
+    true
 }

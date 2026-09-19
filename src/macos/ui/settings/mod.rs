@@ -383,8 +383,8 @@ impl SettingsWindow {
                 "Make search and switch panels feel right for you."
             ),
             2 => tr!(
-                "选择每次进入搜索时使用的输入法。",
-                "Choose the input source used when you start a search."
+                "统一设置 Winlane 所有输入框的默认输入法。",
+                "Choose the default input source for all Winlane text fields."
             ),
             3 => tr!(
                 "控制候选窗口、排列顺序和面板响应速度。",

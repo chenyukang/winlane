@@ -154,6 +154,9 @@ impl Delegate {
                 ProtocolObject::from_ref(self),
                 self.mtm(),
             );
+            for control in ui.quicklink_bar.borrow().controls() {
+                self.configure_input_start(control);
+            }
         } else {
             ui.quicklink_bar.borrow().view.setHidden(true);
         }

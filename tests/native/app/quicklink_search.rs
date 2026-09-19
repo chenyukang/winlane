@@ -136,6 +136,39 @@ fn verify_quicklink_shortcut_input(mtm: MainThreadMarker) {
     assert_eq!(delegate.match_count(), 1);
     let ui = &delegate.panels()[0];
     assert_eq!(ui.quicklink_bar.borrow().value(1).unwrap(), "en");
+    for control in ui.quicklink_bar.borrow().controls() {
+        let cell = control
+            .cell()
+            .unwrap()
+            .downcast::<NSTextFieldCell>()
+            .unwrap();
+        assert_eq!(
+            cell.allowedInputSourceLocales().map(|locales| locales
+                .iter()
+                .map(|locale| locale.to_string())
+                .collect::<Vec<_>>()),
+            expected.as_ref().map(|_| vec!["en".to_owned()]),
+            "inline arguments must receive the configured language before their editor is focused"
+        );
+    }
+    delegate.cancel_input_start();
+    state.input_session.borrow_mut().focused = true;
+    state.changing_displays.set(true);
+    delegate.step_quicklink_argument(1);
+    state.changing_displays.set(false);
+    assert_eq!(state.input_gate.borrow().target(), expected.as_deref());
+    delegate.cancel_input_start();
+    for control in ui.quicklink_bar.borrow().controls() {
+        let cell = control
+            .cell()
+            .unwrap()
+            .downcast::<NSTextFieldCell>()
+            .unwrap();
+        assert!(
+            cell.allowedInputSourceLocales().is_none(),
+            "manual switching must remain available in argument fields"
+        );
+    }
     assert!(delegate.panels().iter().all(|ui| !ui.panel.isVisible()));
     delegate.end_session();
     delegate.open_quicklink_shortcut("deleted-id", 78);

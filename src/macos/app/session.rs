@@ -170,6 +170,7 @@ impl Delegate {
     }
 
     pub(super) fn enter_scoped_search(&self, scope: SearchScope) {
+        self.prepare_search_field();
         self.ivars().search_scope.set(Some(scope));
         self.ivars().query.borrow_mut().clear();
         if scope == SearchScope::OpenUrl {
@@ -184,6 +185,7 @@ impl Delegate {
 
     pub(super) fn leave_scoped_search(&self) {
         if let Some(input) = self.ivars().quicklink_input.take() {
+            self.prepare_search_field();
             let id = input.link.id;
             self.clear_quicklink_input();
             self.filter_preserving(Some(SelectedResult::Quicklink(id)));
@@ -193,6 +195,7 @@ impl Delegate {
         if !self.scoped_search() {
             return;
         }
+        self.prepare_search_field();
         let command = if self.searching_open_url() {
             CommandId::OpenUrl
         } else if self.searching_projects() {

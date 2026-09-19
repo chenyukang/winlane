@@ -63,7 +63,9 @@ use crate::macos::platform::installed_apps;
 use crate::macos::platform::shortcut_tap::ShortcutTap;
 use crate::macos::ui::app_shortcuts::AppShortcutsWindow;
 use crate::macos::ui::settings::SettingsWindow;
-use winlane::core::input_method::{InputGate, InputMethod, InputSession};
+#[cfg(test)]
+use winlane::core::input_method::InputMethod;
+use winlane::core::input_method::{InputGate, InputSession};
 
 const WIDTH: f64 = 700.0;
 const HEIGHT: f64 = 590.0;

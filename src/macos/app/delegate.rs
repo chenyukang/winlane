@@ -27,6 +27,7 @@ define_class!(
                 Err(error) => { self.ivars().hotkey_error.replace(Some(error)); }
             }
             preference_store::apply_language(self.ivars().config.borrow().language);
+            input_source::set_policy(self.ivars().config.borrow().input_method, self.mtm());
             self.restore_recency(NSUserDefaults::standardUserDefaults());
             match preference_store::load_aliases() {
                 Ok(aliases) => {
@@ -113,7 +114,15 @@ define_class!(
         }
         #[unsafe(method(controlTextDidBeginEditing:))]
         fn text_began(&self, notification: &NSNotification) {
-            if let Some(control) = notification.object().and_then(|object| object.downcast::<NSControl>().ok()) { self.remember_quicklink_field(&control); }
+            if let Some(control) = notification.object().and_then(|object| object.downcast::<NSControl>().ok()) {
+                let previous = self.ivars().quicklink_input.borrow().as_ref().map(|input| input.active);
+                self.remember_quicklink_field(&control);
+                let current = self.ivars().quicklink_input.borrow().as_ref().map(|input| input.active);
+                if previous != current && !self.ivars().changing_input_source.get() {
+                    self.prepare_search_field();
+                    self.focus_search();
+                }
+            }
         }
         #[unsafe(method(control:textView:doCommandBySelector:))]
         fn text_command(&self, control: &NSControl, editor: &NSTextView, command: Sel) -> bool {

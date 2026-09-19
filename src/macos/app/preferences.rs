@@ -252,6 +252,7 @@ impl Delegate {
         if let Some(clipboard) = self.ivars().clipboard.borrow_mut().as_mut() {
             clipboard.configure(candidate.clipboard.clone());
         }
+        input_source::set_policy(candidate.input_method, self.mtm());
         self.ivars().config.replace(candidate);
         self.configure_clipboard_timer();
         self.update_aliases(&self.ivars().windows.borrow());

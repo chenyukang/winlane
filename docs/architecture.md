@@ -33,7 +33,7 @@ src/
 | --- | --- |
 | AppKit callbacks and startup | `macos/app/delegate.rs` |
 | Search/switch lifecycle and configured delay | `macos/app/session.rs` |
-| Input source, startup buffering, IME composition | `macos/app/input.rs` |
+| Input source, startup buffering, IME composition | `macos/app/input.rs`, `macos/ui/input.rs`, `macos/platform/input_source.rs` |
 | Global shortcut registration and dispatch | `macos/app/shortcuts.rs` |
 | Asynchronous window discovery and icon caches | `macos/app/catalog.rs` |
 | Recent-window tracking and exit persistence | `macos/app/recency.rs` |

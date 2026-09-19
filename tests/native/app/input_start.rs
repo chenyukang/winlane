@@ -1,5 +1,55 @@
 use super::*;
 
+pub(super) fn verify_command_reapplies_input_policy(mtm: MainThreadMarker) {
+    let before = Source::current(mtm).and_then(|source| source.id());
+    let delegate = responsive_fixture(mtm);
+    let state = delegate.ivars();
+    delegate.prepare_panel(PanelMode::Search, 1, 0);
+    let expected = input_source::preferred(InputMethod::English, mtm)
+        .and_then(|source| source.id())
+        .expect("English source is available for native checks");
+    for scope in [
+        SearchScope::Projects,
+        SearchScope::OpenUrl,
+        SearchScope::Quicklinks,
+        SearchScope::Snippets,
+        SearchScope::Clipboard,
+    ] {
+        delegate.cancel_input_start();
+        state
+            .input_session
+            .borrow_mut()
+            .prepare(Some("test.external-input".into()), InputMethod::English);
+        state.input_session.borrow_mut().focused = true;
+        state.input_session.borrow_mut().selected = Some("test.manually-selected-input".into());
+        let (_projects_tx, projects_rx) = mpsc::channel();
+        let (_history_tx, history_rx) = mpsc::channel();
+        state.project_receiver.replace(Some(projects_rx));
+        state.open_url_receiver.replace(Some(history_rx));
+        state.changing_displays.set(true);
+        delegate.enter_scoped_search(scope);
+        state.changing_displays.set(false);
+        assert_eq!(
+            state.input_gate.borrow().target(),
+            Some(expected.as_str()),
+            "entering a command from an existing search must reapply the configured input source"
+        );
+        assert_eq!(
+            state
+                .input_session
+                .borrow_mut()
+                .finish(Some("test.manually-selected-input")),
+            Some("test.external-input".into()),
+            "a new command must preserve the original application's input source"
+        );
+    }
+    delegate.end_session();
+    assert_eq!(Source::current(mtm).and_then(|source| source.id()), before);
+    for ui in delegate.panels() {
+        ui.panel.close();
+    }
+}
+
 pub(super) fn verify_input_language_is_prepared_before_focus(mtm: MainThreadMarker) {
     use winlane::core::input_method::InputMethod;
 
@@ -283,6 +333,9 @@ pub(super) fn verify_direct_layout_input(mtm: MainThreadMarker) {
         "a different current source must keep native input"
     );
     delegate.ivars().input_layout_source.take();
+    editor.setEditable(false);
+    assert!(!insert_keyboard_layout_text(&editor, &a));
+    editor.setEditable(true);
     assert!(insert_keyboard_layout_text(&editor, &a));
     assert_eq!(editor.string().to_string(), "a");
     assert!(!NSTextInputClient::hasMarkedText(&*editor));

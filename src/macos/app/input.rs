@@ -22,6 +22,7 @@ impl Delegate {
                     let control: &NSControl = active
                         .and_then(|index| bar.control(index))
                         .unwrap_or(&ui.input);
+                    self.configure_input_start(control);
                     let new_editor = control.currentEditor().is_none();
                     let first_focus = !self.ivars().input_session.borrow().focused;
                     let source =
@@ -51,19 +52,9 @@ impl Delegate {
                     if let Some(editor) = editor
                         && !NSTextInputClient::hasMarkedText(&*editor)
                     {
-                        if let Some(source) = source
-                            && let Some(id) = source.id()
-                            && let Some(context) = editor.inputContext()
-                            && context
-                                .selectedKeyboardInputSource()
-                                .is_none_or(|current| current.to_string() != id)
-                        {
-                            context.setSelectedKeyboardInputSource(Some(&NSString::from_str(&id)));
-                        }
+                        input_source::align_editor(source.as_ref(), &editor);
                         self.ivars().input_session.borrow_mut().focused = true;
-                        if first_focus {
-                            self.start_input_gate_timer();
-                        }
+                        self.start_input_gate_timer();
                         self.remember_search_input();
                     }
                 }
@@ -78,50 +69,47 @@ impl Delegate {
     }
 
     pub(super) fn prepare_search_input(&self) {
-        self.cancel_input_start();
         let current = Source::current(self.mtm()).and_then(|source| source.id());
         let policy = self.ivars().config.borrow().input_method;
-        let target = input_source::preferred(policy, self.mtm());
-        self.ivars().input_layout_source.replace(
-            target
-                .as_ref()
-                .filter(|source| {
-                    matches!(policy, InputMethod::English | InputMethod::LastUsed)
-                        && source.is_keyboard_layout()
-                })
-                .and_then(Source::id),
-        );
-        let language = target.as_ref().and_then(|source| match policy {
-            InputMethod::English => Some("en".to_owned()),
-            InputMethod::Chinese => Some("zh".to_owned()),
-            InputMethod::LastUsed => source.primary_language(),
-            InputMethod::Current => None,
-        });
-        self.ivars().input_start_locales.replace(
-            language.map(|language| NSArray::from_slice(&[&*NSString::from_str(&language)])),
-        );
-        self.ivars()
-            .input_gate
-            .borrow_mut()
-            .begin(target.as_ref().and_then(Source::id));
-        self.ivars().input_target.replace(target);
         self.ivars()
             .input_session
             .borrow_mut()
             .prepare(current, policy);
+        self.prepare_search_field();
+    }
+
+    pub(super) fn prepare_search_field(&self) {
+        self.remember_search_input();
+        self.cancel_input_start();
+        let policy = self.ivars().config.borrow().input_method;
+        self.ivars().input_session.borrow_mut().set_policy(policy);
+        let preference = input_source::Preference::resolve(policy, self.mtm());
+        self.ivars().input_layout_source.replace(preference.layout);
+        self.ivars().input_start_locales.replace(preference.locales);
+        self.ivars()
+            .input_gate
+            .borrow_mut()
+            .begin(preference.target.as_ref().and_then(Source::id));
+        self.ivars().input_target.replace(preference.target);
         for ui in self.panels() {
             self.configure_input_start(&ui.input);
+            for control in ui.quicklink_bar.borrow().controls() {
+                self.configure_input_start(control);
+            }
         }
     }
 
-    pub(super) fn configure_input_start(&self, input: &NSSearchField) {
+    pub(super) fn configure_input_start(&self, input: &NSControl) {
         if let Some(cell) = input
             .cell()
             .and_then(|cell| cell.downcast::<NSTextFieldCell>().ok())
         {
             // Hint the requested language when AppKit configures the editor.
             // Source selection itself happens before giving the editor focus.
-            cell.setAllowedInputSourceLocales(self.ivars().input_start_locales.borrow().as_deref());
+            let locales = self.ivars().input_start_locales.borrow();
+            if cell.allowedInputSourceLocales().as_deref() != locales.as_deref() {
+                cell.setAllowedInputSourceLocales(locales.as_deref());
+            }
         }
     }
 
@@ -166,10 +154,13 @@ impl Delegate {
             let changing = state.changing_input_source.replace(true);
             for ui in self.panels() {
                 self.configure_input_start(&ui.input);
+                for control in ui.quicklink_bar.borrow().controls() {
+                    self.configure_input_start(control);
+                }
                 if let Some(editor) = ui
-                    .input
-                    .currentEditor()
-                    .and_then(|editor| editor.downcast::<NSTextView>().ok())
+                    .panel
+                    .firstResponder()
+                    .and_then(|responder| responder.downcast::<NSTextView>().ok())
                 {
                     editor.setAllowedInputSourceLocales(None);
                 }
@@ -343,37 +334,4 @@ impl Delegate {
     }
 }
 
-pub(super) fn insert_keyboard_layout_text(editor: &NSTextView, event: &NSEvent) -> bool {
-    if event.r#type() != NSEventType::KeyDown
-        || NSTextInputClient::hasMarkedText(editor)
-        || event.modifierFlags().intersects(
-            NSEventModifierFlags::Command
-                | NSEventModifierFlags::Control
-                | NSEventModifierFlags::Option
-                | NSEventModifierFlags::Function,
-        )
-        || event.characters().is_none_or(|text| text.is_empty())
-    {
-        return false;
-    }
-    // A third-party IME can still consume keyDown after TIS and the input
-    // context both report ABC. Translate with the selected layout, then use
-    // the editor's normal insertion path without dispatching to that old IME.
-    let Some(text) = event.charactersByApplyingModifiers(event.modifierFlags()) else {
-        return false;
-    };
-    let value = text.to_string();
-    if value.is_empty() || !value.bytes().all(|byte| (b' '..=b'~').contains(&byte)) {
-        return false;
-    }
-    // SAFETY: NSString is a supported text-input value; NSNotFound asks the
-    // editor to replace its selection and preserves notifications and undo.
-    unsafe {
-        NSTextInputClient::insertText_replacementRange(
-            editor,
-            &text,
-            objc2_foundation::NSRange::new(objc2_foundation::NSNotFound as usize, 0),
-        );
-    }
-    true
-}
+pub(super) use input_source::insert_keyboard_layout_text;

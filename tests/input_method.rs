@@ -51,6 +51,26 @@ fn follow_current_does_not_undo_manual_switches() {
 }
 
 #[test]
+fn changing_policy_keeps_the_original_source_and_honors_current_on_exit() {
+    let mut session = InputSession::default();
+    session.prepare(Some("External Chinese".into()), InputMethod::English);
+    session.focused = true;
+    session.observe(Some("English".into()));
+    session.set_policy(InputMethod::Chinese);
+    session.observe(Some("Winlane Chinese".into()));
+    assert_eq!(
+        session.finish(Some("Winlane Chinese")),
+        Some("External Chinese".into())
+    );
+
+    session.prepare(Some("External Chinese".into()), InputMethod::English);
+    session.focused = true;
+    session.observe(Some("English".into()));
+    session.set_policy(InputMethod::Current);
+    assert_eq!(session.finish(Some("English")), None);
+}
+
+#[test]
 fn lost_focus_or_changed_destination_source_must_not_be_overridden() {
     for current in [None, Some("Destination choice")] {
         let mut session = InputSession::default();

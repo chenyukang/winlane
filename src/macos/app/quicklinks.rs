@@ -151,6 +151,7 @@ impl Delegate {
         link: winlane::features::quicklinks::Quicklink,
         template: winlane::features::quicklinks::Template,
     ) {
+        self.prepare_search_field();
         let clipboard = if template.uses_clipboard() {
             crate::macos::platform::template_context::clipboard()
         } else {
@@ -221,6 +222,7 @@ impl Delegate {
     }
 
     pub(super) fn step_quicklink_argument(&self, direction: isize) {
+        self.prepare_search_field();
         if let Some(input) = self.ivars().quicklink_input.borrow_mut().as_mut() {
             input.active = (input.active as isize + direction)
                 .rem_euclid(input.template.arguments.len() as isize)

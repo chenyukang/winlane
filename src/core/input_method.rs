@@ -18,6 +18,10 @@ pub struct InputSession {
 }
 
 impl InputSession {
+    pub fn set_policy(&mut self, policy: InputMethod) {
+        self.restore = policy != InputMethod::Current;
+    }
+
     pub fn prepare(&mut self, current: Option<String>, policy: InputMethod) {
         *self = Self {
             previous: current,

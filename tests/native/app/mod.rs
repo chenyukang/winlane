@@ -54,6 +54,7 @@ pub fn verify_hidden_panels() {
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Prohibited);
     crate::macos::ui::material::tests::verify_panel_materials(mtm);
+    crate::macos::ui::input::tests::verify_shared_input(mtm);
     verify_main_wake(mtm);
     verify_switch_alias_prefix(mtm);
     verify_distinct_window_aliases(mtm);
@@ -94,6 +95,7 @@ pub fn verify_hidden_panels() {
     verify_responsive_panels(mtm);
     verify_search_composition_survives_refresh(mtm);
     verify_input_language_is_prepared_before_focus(mtm);
+    input_start::verify_command_reapplies_input_policy(mtm);
     verify_direct_layout_input(mtm);
     verify_async_focus_order(mtm);
     verify_recency_persistence(mtm);

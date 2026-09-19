@@ -333,13 +333,13 @@ impl SettingsWindow {
 
         let source = settings_group(
             &input_tab,
-            tr!("搜索输入法", "Search input source"),
+            tr!("Winlane 输入法", "Winlane input source"),
             570.0,
             112.0,
             mtm,
         );
         source.addSubview(&label(
-            tr!("打开搜索时使用", "When search opens"),
+            tr!("开始输入时使用", "When input begins"),
             14.0,
             rect(20.0, 72.0, 285.0, 24.0),
             mtm,
@@ -355,11 +355,11 @@ impl SettingsWindow {
             mtm,
         );
         input_method.setAccessibilityLabel(Some(&NSString::from_str(tr!(
-            "搜索输入法",
-            "Search input method"
+            "Winlane 输入法",
+            "Winlane input method"
         ))));
         source.addSubview(&input_method);
-        source.addSubview(&hint(tr!("从切换模式按 Space 进入搜索时也会应用；输入过程中仍可手动切换。", "Also applies when Space opens search from switch mode. You can still change input sources while typing."), rect(20.0, 14.0, 700.0, 44.0), mtm));
+        source.addSubview(&hint(tr!("统一应用于搜索、命令参数和设置中的输入框；输入过程中仍可手动切换。", "Applies to search, command arguments, and settings fields. You can still change input sources while typing."), rect(20.0, 14.0, 700.0, 44.0), mtm));
         let behavior = settings_group(
             &input_tab,
             tr!("输入行为", "How it works"),

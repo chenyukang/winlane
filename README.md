@@ -120,7 +120,7 @@ Use the sidebar to move between settings. Each section has its own grouped contr
 | **General** | Interface language, launch at login, daily update checks, and Check for Updates. |
 | **Appearance** | System, light, or dark appearance; Compact or Normal display density; background opacity; a toggle for footer hints, refresh status, and the Settings button. |
 | **Shortcuts** | Separate shortcuts for search and switching, plus fixed app shortcuts. |
-| **Input** | Start searches in English (default) or Chinese, keep the current input source, or remember the last input source used in Winlane. |
+| **Input** | Use English (default) or Chinese across Winlane text fields, keep the current input source, or remember the last input source used in Winlane. |
 | **Windows** | Sorting, minimized windows, and apps to exclude. Recent sorting follows window focus, including mouse, Dock, and shortcut switches. |
 | **Aliases** | Fixed letters for apps or project windows matched by title. |
 | **Snippets** | Saved text and dynamic placeholders. |
@@ -133,7 +133,7 @@ Settings save automatically. Menus, switches, and sliders apply immediately; tex
 
 Language changes update the interface without a restart. By default, Winlane uses the first supported language in your macOS preferences, falling back to English.
 
-The input preference applies when the search field gains focus, including when you press Space from switch mode. The default is **Always English**. English and Chinese use an enabled input source chosen by macOS; if it is unavailable, the current source is kept. **Last used in Winlane** remembers your search input source across restarts and keeps the current source when there is no available saved source. Updates preserve your saved preference. You can still switch input sources manually while typing. Switch-mode aliases work independently of this setting.
+The input preference applies when opening search, entering a command such as `projects` or `open-url`, switching Quicklink argument fields, and focusing text fields in settings or snippet forms. Pressing Space from switch mode uses the same preference. The default is **Always English**. English and Chinese use an enabled input source chosen by macOS; if it is unavailable, the current source is kept. **Last used in Winlane** remembers the input source used in Winlane across restarts and keeps the current source when there is no available saved source. Updates preserve your saved preference. You can still switch input sources manually while typing. Switch-mode aliases work independently of this setting.
 
 The **Window** menu lets you limit searches to the current app, minimize or restore a window, hide its app, and copy its title. **Command + R** refreshes the list if something looks out of date.
 

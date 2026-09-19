@@ -119,6 +119,9 @@ impl Bar {
     pub fn control(&self, index: usize) -> Option<&NSControl> {
         self.fields.get(index).map(Field::control)
     }
+    pub fn controls(&self) -> impl Iterator<Item = &NSControl> {
+        self.fields.iter().map(Field::control)
+    }
     pub fn index(&self, control: &NSControl) -> Option<usize> {
         self.fields
             .iter()

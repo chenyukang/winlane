@@ -1,6 +1,6 @@
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Sel};
-use objc2::{MainThreadOnly, define_class, msg_send};
+use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::*;
 use objc2_foundation::{MainThreadMarker, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString};
 use winlane::tr;
@@ -9,10 +9,62 @@ define_class!(
     // SAFETY: Settings windows and event dispatch stay on AppKit's main thread.
     #[unsafe(super = NSWindow)]
     #[thread_kind = MainThreadOnly]
-    #[derive(Debug)]
+    #[ivars = super::input::WindowInput]
     pub(super) struct PreferencesWindow;
     unsafe impl NSObjectProtocol for PreferencesWindow {}
     impl PreferencesWindow {
+        #[unsafe(method(becomeKeyWindow))]
+        fn become_key(&self) {
+            let input = self.ivars();
+            if input.changing.replace(true) {
+                unsafe { let _: () = msg_send![super(self), becomeKeyWindow]; }
+                return;
+            }
+            input.prepare(self, self.mtm());
+            let responder = self.firstResponder();
+            input.configure(responder.as_deref(), false);
+            if !super::input::composing(self) { input.select(self.mtm()); }
+            unsafe { let _: () = msg_send![super(self), becomeKeyWindow]; }
+            input.configure(responder.as_deref(), true);
+            input.activate(self, self.mtm());
+            input.changing.set(false);
+        }
+        #[unsafe(method(resignKeyWindow))]
+        fn resign_key(&self) {
+            let input = self.ivars();
+            let changing = input.changing.replace(true);
+            input.finish(self.mtm());
+            unsafe { let _: () = msg_send![super(self), resignKeyWindow]; }
+            input.changing.set(changing);
+        }
+        #[unsafe(method(makeFirstResponder:))]
+        fn make_first_responder(&self, responder: Option<&NSResponder>) -> bool {
+            let input = self.ivars();
+            let same = responder.zip(self.firstResponder().as_deref())
+                .is_some_and(|(next, current)| std::ptr::eq(next, current)
+                    || next.downcast_ref::<NSControl>()
+                        .and_then(|control| control.currentEditor())
+                        .is_some_and(|editor| {
+                            let editor: &NSResponder = &editor;
+                            std::ptr::eq(editor, current)
+                        }));
+            if input.changing.get() || same || !super::input::editable(responder) {
+                return unsafe { msg_send![super(self), makeFirstResponder: responder] };
+            }
+            input.changing.set(true);
+            input.prepare(self, self.mtm());
+            input.configure(responder, false);
+            let composing = super::input::composing(self);
+            if self.isKeyWindow() && !composing { input.select(self.mtm()); }
+            let accepted: bool = unsafe { msg_send![super(self), makeFirstResponder: responder] };
+            input.configure(responder, true);
+            if accepted {
+                if self.isKeyWindow() && composing && !super::input::composing(self) { input.select(self.mtm()); }
+                input.activate(self, self.mtm());
+            }
+            input.changing.set(false);
+            accepted
+        }
         #[unsafe(method(sendEvent:))]
         fn send_event(&self, event: &NSEvent) {
             if event.r#type() == NSEventType::KeyDown
@@ -31,8 +83,15 @@ define_class!(
                     return;
                 }
             }
+            if self.isKeyWindow() && event.r#type() == NSEventType::KeyDown {
+                self.ivars().remember(self.mtm());
+                if self.ivars().insert_layout_key(self, event, self.mtm()) { return; }
+            }
             // SAFETY: Other keys and input-method cancellation keep their native behavior.
             unsafe { let _: () = msg_send![super(self), sendEvent: event]; }
+            if self.isKeyWindow() && matches!(event.r#type(), NSEventType::KeyDown | NSEventType::FlagsChanged) {
+                self.ivars().remember(self.mtm());
+            }
         }
     }
 );
@@ -41,7 +100,7 @@ pub(crate) fn preferences_window(frame: NSRect, mtm: MainThreadMarker) -> Retain
     // SAFETY: The initialized main-thread window is retained by its settings owner across closes.
     unsafe {
         let window: Retained<PreferencesWindow> = msg_send![
-            PreferencesWindow::alloc(mtm),
+            super(PreferencesWindow::alloc(mtm).set_ivars(super::input::WindowInput::default())),
             initWithContentRect: frame,
             styleMask: NSWindowStyleMask::Titled | NSWindowStyleMask::Closable,
             backing: NSBackingStoreType::Buffered,
