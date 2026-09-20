@@ -18,6 +18,7 @@ impl Delegate {
             .setDelegate(Some(ProtocolObject::from_ref(self)));
         self.ivars().settings.replace(Some(window.clone()));
         self.update_update_settings();
+        self.update_scrolling_status();
         window.select_tab(self.ivars().settings_last_tab.get().unwrap_or(4));
         self.ensure_settings_editor();
         window
@@ -265,12 +266,41 @@ impl Delegate {
         } else {
             None
         };
+        let scrolling_changed = candidate.scrolling != previous.scrolling;
+        let scroll_registration = if scrolling_changed
+            && candidate.scrolling.enabled
+            && self
+                .ivars()
+                .scroll_tap
+                .borrow()
+                .as_ref()
+                .is_none_or(|tap| !tap.is_enabled())
+        {
+            let tap = crate::macos::platform::scrolling::ScrollTap::prepare(
+                &candidate.scrolling,
+                self.mtm(),
+            )?;
+            tap.start()?;
+            Some(tap)
+        } else {
+            None
+        };
         preference_store::save(
             &candidate,
             self.ivars()
                 .config_store
                 .get_or_init(NSUserDefaults::standardUserDefaults),
         )?;
+        if !candidate.scrolling.enabled {
+            self.ivars().scroll_tap.take();
+        } else if let Some(tap) = scroll_registration {
+            self.ivars().scroll_tap.replace(Some(tap));
+        } else if let Some(tap) = self.ivars().scroll_tap.borrow().as_ref() {
+            tap.configure(&candidate.scrolling);
+        }
+        if scrolling_changed {
+            self.ivars().scroll_error.take();
+        }
         if let Some((tap, receiver)) = registration {
             self.ivars().shortcut_tap.replace(Some(tap));
             self.ivars().shortcut_rx.replace(Some(receiver));
@@ -290,6 +320,7 @@ impl Delegate {
         }
         input_source::set_rules(&candidate.input_rules, self.mtm());
         self.ivars().config.replace(candidate);
+        self.update_scrolling_status();
         if input_rules_changed {
             self.configure_app_input_rules();
         }

@@ -5,6 +5,7 @@ mod input_rules;
 mod layout;
 mod navigation;
 mod pages;
+mod scrolling;
 mod shortcuts;
 
 use super::controls::*;
@@ -20,6 +21,7 @@ use objc2_app_kit::*;
 use objc2_foundation::{MainThreadMarker, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString};
 use objc2_service_management::{SMAppService, SMAppServiceStatus};
 use pages::{GeneralPage, WindowsPage};
+use scrolling::ScrollingPage;
 use shortcuts::ShortcutsPage;
 use std::cell::{OnceCell, RefCell};
 use winlane::core::config::{
@@ -45,6 +47,8 @@ pub struct SettingsWindow {
     general: OnceCell<GeneralPage>,
     input: OnceCell<InputPage>,
     input_rules: OnceCell<InputRulesPage>,
+    scrolling: OnceCell<ScrollingPage>,
+    scroll_status: RefCell<(String, bool)>,
     windows: OnceCell<WindowsPage>,
     clipboard: OnceCell<crate::macos::ui::clipboard_settings::ClipboardControls>,
     updater: RefCell<(bool, bool, Option<String>)>,
@@ -71,6 +75,9 @@ impl SettingsWindow {
             page.fill(config);
         }
         if let Some(page) = self.input_rules.get() {
+            page.fill(config);
+        }
+        if let Some(page) = self.scrolling.get() {
             page.fill(config);
         }
         if let Some(page) = self.windows.get() {
@@ -151,6 +158,25 @@ impl SettingsWindow {
             page
         })
     }
+    fn scrolling(&self) -> &ScrollingPage {
+        self.scrolling.get_or_init(|| {
+            let target = self.target.load().expect("settings target is alive");
+            let page = ScrollingPage::new(&self.host(10), &target, self.window.mtm());
+            page.fill(&self.config.borrow());
+            let status = self.scroll_status.borrow();
+            page.status(&status.0, status.1);
+            page
+        })
+    }
+    pub fn update_scrolling_status(&self, text: &str, error: bool) {
+        if self.scroll_status.borrow().0 == text && self.scroll_status.borrow().1 == error {
+            return;
+        }
+        self.scroll_status.replace((text.into(), error));
+        if let Some(page) = self.scrolling.get() {
+            page.status(text, error);
+        }
+    }
     pub fn select_input_rule(&self, index: usize) {
         self.input_rules().select(index);
     }
@@ -214,6 +240,9 @@ impl SettingsWindow {
             9 => {
                 self.input_rules();
             }
+            10 => {
+                self.scrolling();
+            }
             _ => {}
         }
     }
@@ -245,6 +274,9 @@ impl SettingsWindow {
         }
         if let Some(page) = self.input_rules.get() {
             page.read(&mut config);
+        }
+        if let Some(page) = self.scrolling.get() {
+            page.read(&mut config)?;
         }
         config.validate()?;
         Ok(config)
@@ -357,6 +389,10 @@ impl SettingsWindow {
             9 => tr!(
                 "为 Winlane 和其他应用统一管理输入法规则。",
                 "Manage input source rules for Winlane and other apps."
+            ),
+            10 => tr!(
+                "分别调整鼠标和触控板的滚动方向。",
+                "Adjust mouse and trackpad scrolling separately."
             ),
             _ => tr!(
                 "为网址、文件和常用搜索创建快捷入口。",

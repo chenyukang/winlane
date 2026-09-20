@@ -90,6 +90,7 @@ pub fn verify_hidden_panels() {
     verify_command_search(mtm);
     keep_awake::verify(mtm);
     crate::macos::platform::keep_awake::tests::verify();
+    crate::macos::platform::scrolling::tests::verify();
     scoped_loading::verify_scoped_loading(mtm);
     verify_snippet_search(mtm);
     verify_quicklink_search(mtm);

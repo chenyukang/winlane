@@ -12,6 +12,7 @@ define_class!(
         #[unsafe(method(applicationDidBecomeActive:))]
         fn became_active(&self, _: &NSNotification) {
             self.check_language();
+            self.ensure_scrolling();
             if let Some(settings) = self.settings_window() { settings.update_login_status(); }
             self.finish_settings_focus(false);
         }
@@ -56,11 +57,13 @@ define_class!(
             self.ivars().clipboard.replace(Some(crate::macos::platform::clipboard::ClipboardRuntime::new(self.ivars().config.borrow().clipboard.clone())));
             self.configure_clipboard_timer();
             self.register_hotkeys();
+            self.ensure_scrolling();
             if !accessibility::is_trusted() { self.show(); } else { self.refresh(); }
         }
         #[unsafe(method(applicationWillTerminate:))]
         fn will_terminate(&self, _: &NSNotification) {
             let _ = self.ivars().keep_awake.borrow_mut().apply(winlane::features::keep_awake::Choice::Stop);
+            self.ivars().scroll_tap.take();
             self.ivars().catalog_watcher.take();
             self.save_recency();
             self.save_app_input_history();
@@ -512,12 +515,18 @@ define_class!(
             let action = sender.indexOfSelectedItem(); sender.selectItemAtIndex(0);
             match action { 1 => self.use_clipboard(false), 2 => self.delete_clipboard_entry(), 3 => self.toggle_clipboard_recording(), 4 => self.confirm_clear_clipboard(), _ => {} }
         }
+        #[unsafe(method(retryScrolling:))]
+        fn retry_scrolling(&self, _: Option<&AnyObject>) {
+            self.autosave_settings();
+            self.ensure_scrolling();
+        }
         #[unsafe(method(clearClipboardHistory:))]
         fn clear_clipboard_action(&self, _: Option<&AnyObject>) { self.confirm_clear_clipboard(); }
         #[unsafe(method(poll:))]
         fn poll(&self, _: Option<&AnyObject>) {
             self.update_app_input_rules();
             self.release_closed_settings();
+            self.update_scrolling_status();
             if self.ivars().check_panel_focus.replace(false)
                 && self.ivars().mode.get().is_some()
                 && !self.ivars().changing_displays.get()

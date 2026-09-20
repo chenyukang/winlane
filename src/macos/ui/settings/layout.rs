@@ -62,6 +62,7 @@ impl SettingsWindow {
         settings_tab(&tabs, tr!("剪贴板", "Clipboard"), mtm);
         settings_tab(&tabs, tr!("快捷链接", "Quicklinks"), mtm);
         settings_tab(&tabs, tr!("输入法规则", "Input Rules"), mtm);
+        settings_tab(&tabs, tr!("鼠标滚轮", "Mouse Scrolling"), mtm);
         let mut navigation = Vec::new();
         for (position, (index, symbol, color)) in [
             (4, "gearshape.fill", NSColor::systemGrayColor()),
@@ -74,6 +75,7 @@ impl SettingsWindow {
             (6, "text.quote", NSColor::systemGreenColor()),
             (7, "doc.on.clipboard", NSColor::systemOrangeColor()),
             (8, "link", NSColor::systemCyanColor()),
+            (10, "computermouse.fill", NSColor::systemBlueColor()),
         ]
         .into_iter()
         .enumerate()
@@ -125,6 +127,8 @@ impl SettingsWindow {
             general: OnceCell::new(),
             input: OnceCell::new(),
             input_rules: OnceCell::new(),
+            scrolling: OnceCell::new(),
+            scroll_status: RefCell::new((String::new(), false)),
             windows: OnceCell::new(),
             clipboard: OnceCell::new(),
             updater: RefCell::new((false, false, None)),

@@ -23,6 +23,10 @@ pub(super) fn verify_autosave(mtm: MainThreadMarker) {
             delegate.ivars().shortcut_tap.borrow().is_none(),
             "ordinary settings must not register a keyboard tap"
         );
+        assert!(
+            delegate.ivars().scroll_tap.borrow().is_none(),
+            "disabled scrolling must not install event taps"
+        );
         saved
     };
     crate::macos::ui::settings::tests::verify_autosave_controls(&settings, saved);

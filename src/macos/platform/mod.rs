@@ -15,6 +15,7 @@ pub(crate) mod preferences;
 pub(crate) mod project_open;
 pub(crate) mod quicklinks;
 pub(crate) mod recency_trace;
+pub(crate) mod scrolling;
 pub(crate) mod shortcut_tap;
 pub(crate) mod system_commands;
 pub(crate) mod template_context;

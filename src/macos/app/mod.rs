@@ -17,6 +17,7 @@ mod projects;
 mod quicklinks;
 mod recency;
 mod render;
+mod scrolling;
 mod search;
 mod session;
 mod settings_focus;
@@ -243,6 +244,8 @@ struct AppState {
     status_item: OnceCell<Retained<NSStatusItem>>,
     timer: OnceCell<Retained<NSTimer>>,
     shortcut_tap: RefCell<Option<ShortcutTap>>,
+    scroll_tap: RefCell<Option<crate::macos::platform::scrolling::ScrollTap>>,
+    scroll_error: RefCell<Option<String>>,
     shortcut_rx: RefCell<Option<Receiver<Action>>>,
     last_shortcut_check: Cell<Option<Instant>>,
     wake: OnceCell<MainWake>,

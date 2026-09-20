@@ -339,6 +339,7 @@ pub struct Config {
     pub language: Language,
     pub input_indicator: crate::features::input_indicator::Settings,
     pub input_rules: crate::features::input_rules::Settings,
+    pub scrolling: crate::features::scrolling::Settings,
     pub include_minimized: bool,
     pub excluded_apps: Vec<String>,
 }
@@ -364,6 +365,7 @@ impl Default for Config {
             language: Language::System,
             input_indicator: Default::default(),
             input_rules: Default::default(),
+            scrolling: Default::default(),
             include_minimized: true,
             excluded_apps: Vec::new(),
         }
@@ -377,6 +379,7 @@ impl Config {
         self.clipboard.validate()?;
         self.input_indicator.validate()?;
         self.input_rules.validate()?;
+        self.scrolling.validate()?;
         if self.alias_rules.len() > 64 {
             return Err(tr!(
                 "最多设置 64 条 alias 规则。",

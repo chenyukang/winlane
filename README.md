@@ -137,6 +137,7 @@ Use the sidebar to move between settings. Each section has its own grouped contr
 | **Snippets** | Saved text and dynamic placeholders. |
 | **Clipboard** | Recording, local storage, retention limits, and clearing history. |
 | **Quicklinks** | Saved URLs and paths, input placeholders, target apps, and Raycast JSON import. |
+| **Mouse Scrolling** | Separate mouse/trackpad directions and discrete mouse wheel step size. Disabled by default; see [scrolling settings](docs/scrolling.md). |
 
 Settings save automatically. Menus, switches, and sliders apply immediately; text fields save when you press Return or finish editing. Invalid values and conflicting shortcuts leave the last valid configuration in effect and show an error. Restore Defaults also applies immediately.
 

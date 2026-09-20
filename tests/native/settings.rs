@@ -8,6 +8,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
     verify_card_appearances(mtm);
     input::tests::verify(target, mtm);
     input_rules::tests::verify(target, mtm);
+    scrolling::tests::verify(target, mtm);
     use winlane::core::i18n::Locale;
     for (locale, title, tabs) in [
         (
@@ -24,6 +25,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
                 "Clipboard",
                 "Quicklinks",
                 "Input Rules",
+                "Mouse Scrolling",
             ],
         ),
         (
@@ -40,6 +42,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
                 "剪贴板",
                 "快捷链接",
                 "输入法规则",
+                "鼠标滚轮",
             ],
         ),
     ] {
@@ -140,7 +143,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
                 .iter()
                 .map(|button| button.tag())
                 .collect::<Vec<_>>(),
-            [4, 1, 0, 9, 2, 3, 5, 6, 7, 8]
+            [4, 1, 0, 9, 2, 3, 5, 6, 7, 8, 10]
         );
         for button in &settings.navigation {
             assert_eq!(button.action(), Some(sel!(selectSettingsSection:)));
@@ -546,6 +549,7 @@ pub fn verify_autosave_controls(settings: &SettingsWindow, saved: impl Fn() -> C
         .switch_delay
         .setStringValue(ns_string!("150"));
     input_rules::tests::verify_autosave(settings, &saved);
+    scrolling::tests::verify_autosave(settings, &saved);
     settings
         .windows()
         .minimized
