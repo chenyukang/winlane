@@ -6,6 +6,7 @@ pub(crate) mod clipboard;
 pub(crate) mod focus_observer;
 pub(crate) mod input_source;
 pub(crate) mod installed_apps;
+pub(crate) mod keep_awake;
 pub(crate) mod main_wake;
 pub(crate) mod menu_bar;
 pub(crate) mod open_url;

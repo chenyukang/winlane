@@ -60,6 +60,7 @@ define_class!(
         }
         #[unsafe(method(applicationWillTerminate:))]
         fn will_terminate(&self, _: &NSNotification) {
+            let _ = self.ivars().keep_awake.borrow_mut().apply(winlane::features::keep_awake::Choice::Stop);
             self.ivars().catalog_watcher.take();
             self.save_recency();
             self.save_app_input_history();
@@ -534,6 +535,9 @@ define_class!(
             self.poll_projects();
             self.poll_open_url();
             self.poll_bluetooth();
+            if self.ivars().keep_awake.borrow_mut().expire(std::time::SystemTime::now()) && self.searching_keep_awake() {
+                self.render();
+            }
             let clipboard_changed = self.ivars().clipboard.borrow_mut().as_mut().is_some_and(|clipboard| clipboard.poll_storage());
             if clipboard_changed && self.searching_clipboard() { self.filter_preserving(self.selected_result()); }
             let result = self.ivars().receiver.borrow().as_ref().map(|rx| rx.try_recv());

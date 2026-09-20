@@ -161,6 +161,10 @@ impl Delegate {
             && self.ivars().mode.get() == Some(PanelMode::Search)
     }
 
+    pub(super) fn searching_keep_awake(&self) -> bool {
+        self.scoped_search() && self.ivars().search_scope.get() == Some(SearchScope::KeepAwake)
+    }
+
     pub(super) fn searching_bluetooth(&self) -> bool {
         self.scoped_search() && self.ivars().search_scope.get() == Some(SearchScope::Bluetooth)
     }
@@ -258,7 +262,9 @@ impl Delegate {
             return;
         }
         self.prepare_search_field();
-        let command = if self.searching_bluetooth() {
+        let command = if self.searching_keep_awake() {
+            CommandId::KeepAwake
+        } else if self.searching_bluetooth() {
             CommandId::Bluetooth
         } else if self.searching_open_url() {
             CommandId::OpenUrl
@@ -315,6 +321,7 @@ impl Delegate {
         self.ivars().bluetooth_matches.borrow_mut().clear();
         self.clear_open_url_matches();
         self.ivars().search_scope.set(None);
+        self.ivars().keep_awake_matches.borrow_mut().clear();
         if clipboard || projects || open_url || bluetooth {
             self.ivars().clipboard_matches.borrow_mut().clear();
             self.ivars().project_matches.borrow_mut().clear();

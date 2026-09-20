@@ -50,6 +50,8 @@ impl Delegate {
         } else {
             None
         };
+        let in_keep_awake = self.searching_keep_awake();
+        let keep_awake_matches = state.keep_awake_matches.borrow();
         let bluetooth_matches = state.bluetooth_matches.borrow();
         let bluetooth_error = state.bluetooth_error.borrow();
         let bluetooth_pending = state.bluetooth_pending.borrow();
@@ -81,7 +83,8 @@ impl Delegate {
             + launch_matches.len()
             + project_matches.len()
             + open_url.len()
-            + bluetooth_matches.len();
+            + bluetooth_matches.len()
+            + keep_awake_matches.len();
         let quicklink_input = state.quicklink_input.borrow();
         let inline = quicklink_input.is_some();
         let trusted = accessibility::is_trusted();
@@ -183,19 +186,22 @@ impl Delegate {
         }
         ui.input.setHidden(switching || inline);
         ui.scope_back.setHidden(!self.scoped_search() || inline);
-        ui.scope_back.setTitle(&NSString::from_str(if in_bluetooth {
-            tr!("‹ 蓝牙", "‹ Bluetooth")
-        } else if in_clipboard {
-            tr!("‹ 剪贴板", "‹ Clipboard")
-        } else if in_open_url {
-            tr!("‹ 网址", "‹ URLs")
-        } else if in_projects {
-            tr!("‹ 项目", "‹ Projects")
-        } else if self.searching_quicklinks() {
-            tr!("‹ 链接", "‹ Links")
-        } else {
-            tr!("‹ 片段", "‹ Snippets")
-        }));
+        ui.scope_back
+            .setTitle(&NSString::from_str(if in_keep_awake {
+                tr!("‹ 防休眠", "‹ Awake")
+            } else if in_bluetooth {
+                tr!("‹ 蓝牙", "‹ Bluetooth")
+            } else if in_clipboard {
+                tr!("‹ 剪贴板", "‹ Clipboard")
+            } else if in_open_url {
+                tr!("‹ 网址", "‹ URLs")
+            } else if in_projects {
+                tr!("‹ 项目", "‹ Projects")
+            } else if self.searching_quicklinks() {
+                tr!("‹ 链接", "‹ Links")
+            } else {
+                tr!("‹ 片段", "‹ Snippets")
+            }));
         ui.clipboard_actions.setHidden(!in_clipboard);
         ui.shortcut_label
             .setHidden(in_clipboard || inline || scope_loading);
@@ -328,7 +334,15 @@ impl Delegate {
             label.removeFromSuperview();
         }
         if count == 0 {
-            let (title, detail) = if in_clipboard {
+            let (title, detail) = if in_keep_awake {
+                (
+                    tr!("没有匹配的选项", "No matching options"),
+                    tr!(
+                        "试试 30、60 或清空搜索。",
+                        "Try 30, 60, or clear the search."
+                    ),
+                )
+            } else if in_clipboard {
                 if clipboard
                     .as_ref()
                     .is_some_and(|clipboard| clipboard.loading)
@@ -563,7 +577,9 @@ impl Delegate {
             ui.empty_labels.replace(vec![heading, detail]);
         }
         for position in 0..count {
-            let content = if let Some(device) = bluetooth_matches.get(position) {
+            let content = if let Some(choice) = keep_awake_matches.get(position) {
+                RowContent::KeepAwake(*choice)
+            } else if let Some(device) = bluetooth_matches.get(position) {
                 let pending = bluetooth_pending
                     .as_ref()
                     .filter(|(address, _)| *address == device.address)
@@ -607,6 +623,19 @@ impl Delegate {
             let row = &mut rows[position];
             if row.content.as_ref() != Some(&content) {
                 let tooltip = match &content {
+                    RowContent::KeepAwake(choice) => {
+                        set_label(&row.app, &choice.title());
+                        set_label(&row.title, choice.detail());
+                        set_label(&row.alias, "☕");
+                        row.icon.setImage(
+                            NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                                ns_string!("cup.and.saucer"),
+                                None,
+                            )
+                            .as_deref(),
+                        );
+                        format!("{} · {}", choice.title(), choice.detail())
+                    }
                     RowContent::Bluetooth(device, pending) => {
                         let status = super::bluetooth::device_status(device, *pending);
                         set_label(&row.app, status);
@@ -807,7 +836,13 @@ impl Delegate {
         let clipboard_error = clipboard
             .as_ref()
             .and_then(|clipboard| clipboard.error.as_ref());
-        let status = if in_bluetooth {
+        let status = if in_keep_awake {
+            state
+                .keep_awake_error
+                .borrow()
+                .clone()
+                .unwrap_or_else(|| state.keep_awake.borrow().status())
+        } else if in_bluetooth {
             bluetooth_error.clone().unwrap_or_else(|| {
                 if state.bluetooth_permission.borrow().is_some() {
                     tr!(
@@ -945,7 +980,8 @@ impl Delegate {
                 || (in_projects && project_cache.error.is_some())
                 || (in_bluetooth && bluetooth_error.is_some())
                 || (in_open_url && url_history.error.is_some()));
-        ui.footer.setHidden(!show_hints && !has_error);
+        ui.footer
+            .setHidden(!show_hints && !has_error && !in_keep_awake);
     }
 
     pub(super) fn create_row(&self, position: usize, density: DisplayDensity) -> RowUi {

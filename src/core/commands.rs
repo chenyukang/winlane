@@ -4,6 +4,7 @@ use crate::tr;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CommandId {
+    KeepAwake,
     Bluetooth,
     Projects,
     OpenUrl,
@@ -43,6 +44,14 @@ impl Command {
 }
 
 pub const COMMANDS: &[Command] = &[
+    Command {
+        id: CommandId::KeepAwake,
+        name: "keep-awake",
+        title_en: "Keep Mac awake",
+        title_zh: "保持 Mac 唤醒",
+        symbol: "cup.and.saucer",
+        keywords: &["caffeine", "awake", "prevent sleep", "防休眠", "保持唤醒"],
+    },
     Command {
         id: CommandId::Bluetooth,
         name: "bluetooth",

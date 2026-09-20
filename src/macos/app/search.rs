@@ -6,6 +6,11 @@ impl Delegate {
     }
 
     pub(super) fn filter_preserving(&self, selected_id: Option<SelectedResult>) {
+        if self.searching_keep_awake() {
+            self.filter_keep_awake(selected_id);
+            return;
+        }
+        self.ivars().keep_awake_matches.borrow_mut().clear();
         if self.searching_bluetooth() {
             self.filter_bluetooth(selected_id);
             return;
@@ -179,7 +184,8 @@ impl Delegate {
                         .map(|index| extra_count + index)
                 }),
             Some(
-                SelectedResult::Bluetooth(_)
+                SelectedResult::KeepAwake(_)
+                | SelectedResult::Bluetooth(_)
                 | SelectedResult::Clipboard(_)
                 | SelectedResult::Project(_)
                 | SelectedResult::OpenUrl(_),
@@ -265,6 +271,15 @@ impl Delegate {
     }
 
     pub(super) fn selected_result(&self) -> Option<SelectedResult> {
+        if self.searching_keep_awake() {
+            return self
+                .ivars()
+                .keep_awake_matches
+                .borrow()
+                .get(self.ivars().selected.get())
+                .copied()
+                .map(SelectedResult::KeepAwake);
+        }
         if let Some(device) = self.selected_bluetooth() {
             return Some(SelectedResult::Bluetooth(device.address));
         }
@@ -295,7 +310,8 @@ impl Delegate {
     }
 
     pub(super) fn match_count(&self) -> usize {
-        self.ivars().bluetooth_matches.borrow().len()
+        self.ivars().keep_awake_matches.borrow().len()
+            + self.ivars().bluetooth_matches.borrow().len()
             + self.ivars().command_matches.borrow().len()
             + self.ivars().snippet_matches.borrow().len()
             + self.ivars().clipboard_matches.borrow().len()

@@ -4,6 +4,7 @@ mod commands;
 pub(crate) mod diagnostics;
 mod input_rules;
 mod input_start;
+mod keep_awake;
 mod launch_search;
 mod main_wake;
 mod open_url;
@@ -87,6 +88,8 @@ pub fn verify_hidden_panels() {
     verify_catalog_refresh(mtm);
     verify_launch_search(mtm);
     verify_command_search(mtm);
+    keep_awake::verify(mtm);
+    crate::macos::platform::keep_awake::tests::verify();
     scoped_loading::verify_scoped_loading(mtm);
     verify_snippet_search(mtm);
     verify_quicklink_search(mtm);

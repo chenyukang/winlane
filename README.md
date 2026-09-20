@@ -57,6 +57,10 @@ Each row represents an independent window. Separate editor projects appear separ
 
 The letters beside each window are its **alias**. Type those letters while holding Command, then release Command to jump directly to that window. Aliases are assigned automatically from English app names, stay unique across windows, and are remembered when Winlane restarts. Additional window aliases may change when the target app closes and creates new windows.
 
+### Keep your Mac awake
+
+Run **keep-awake** to prevent idle sleep for 30 minutes, 60 minutes, or until turned off. Choose whether the display may sleep, and use the same command to stop. Sessions end automatically when Winlane quits. See [Keep Awake](docs/keep-awake.md).
+
 ### Connect Bluetooth devices
 
 Search for **bluetooth** or **bt**, select a paired device, then press **Enter** to connect or disconnect it. Search by device name; **Command + R** refreshes the list and **Esc** closes it. You can assign a direct shortcut in **Settings → Shortcuts → Command shortcuts**. See [Bluetooth devices](docs/bluetooth.md) for permissions and connection behavior.

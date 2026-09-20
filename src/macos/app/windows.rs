@@ -2,6 +2,10 @@ use super::*;
 
 impl Delegate {
     pub(super) fn activate_selected(&self) {
+        if self.searching_keep_awake() {
+            self.apply_keep_awake();
+            return;
+        }
         if self.searching_bluetooth() {
             self.toggle_selected_bluetooth();
             return;

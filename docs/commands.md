@@ -43,3 +43,5 @@ The picker closes before a system command executes. These commands do not change
 Result rendering, keyboard selection, mouse selection, and selection preservation are shared across commands. Adding a new command does not require a new result layout.
 
 This is a compiled-in extension point. Winlane does not load third-party code or interpret search text as shell commands.
+
+`keep-awake` opens a duration picker for preventing idle sleep, with an optional always-on display. See [Keep Awake](keep-awake.md).

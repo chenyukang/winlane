@@ -6,6 +6,7 @@ mod delegate;
 mod input;
 mod input_indicator;
 mod input_rules;
+mod keep_awake;
 mod launch;
 mod layout;
 mod menus;
@@ -83,6 +84,7 @@ const APP_CATALOG_TTL: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SearchScope {
+    KeepAwake,
     Bluetooth,
     Projects,
     OpenUrl,
@@ -127,6 +129,7 @@ struct RowUi {
 
 #[derive(Clone, PartialEq, Eq)]
 enum RowContent {
+    KeepAwake(winlane::features::keep_awake::Choice),
     Bluetooth(winlane::features::bluetooth::Device, Option<bool>),
     Project(winlane::features::projects::Project),
     OpenUrl(winlane::features::open_url::Page),
@@ -139,6 +142,7 @@ enum RowContent {
 }
 
 enum SelectedResult {
+    KeepAwake(winlane::features::keep_awake::Choice),
     Bluetooth(String),
     Project(std::path::PathBuf),
     OpenUrl(String),
@@ -176,6 +180,9 @@ struct PendingFocus {
 
 #[derive(Default)]
 struct AppState {
+    keep_awake: RefCell<crate::macos::platform::keep_awake::KeepAwake>,
+    keep_awake_matches: RefCell<Vec<winlane::features::keep_awake::Choice>>,
+    keep_awake_error: RefCell<Option<String>>,
     panels: RefCell<Vec<Rc<PanelUi>>>,
     query: RefCell<String>,
     search_scope: Cell<Option<SearchScope>>,

@@ -134,6 +134,7 @@ fn verify_command_shortcut_scope(mtm: MainThreadMarker) {
     state.demo.set(true);
     state.catalog_checked.set(Some(Instant::now()));
     for (command, scope) in [
+        (CommandId::KeepAwake, SearchScope::KeepAwake),
         (CommandId::OpenUrl, SearchScope::OpenUrl),
         (CommandId::Bluetooth, SearchScope::Bluetooth),
         (CommandId::Projects, SearchScope::Projects),
