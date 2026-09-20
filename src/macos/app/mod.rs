@@ -3,6 +3,7 @@ mod catalog;
 mod clipboard;
 mod commands;
 mod delegate;
+mod files;
 mod input;
 mod input_indicator;
 mod input_rules;
@@ -85,6 +86,7 @@ const APP_CATALOG_TTL: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SearchScope {
+    Files,
     KeepAwake,
     Bluetooth,
     Projects,
@@ -95,6 +97,7 @@ enum SearchScope {
 }
 
 struct PanelUi {
+    file_preview: RefCell<Option<Retained<NSView>>>,
     display_id: u32,
     shortcut_label: Retained<NSTextField>,
     project_progress: Retained<NSProgressIndicator>,
@@ -130,6 +133,7 @@ struct RowUi {
 
 #[derive(Clone, PartialEq, Eq)]
 enum RowContent {
+    File(winlane::features::files::Entry),
     KeepAwake(winlane::features::keep_awake::Choice),
     Bluetooth(winlane::features::bluetooth::Device, Option<bool>),
     Project(winlane::features::projects::Project),
@@ -143,6 +147,7 @@ enum RowContent {
 }
 
 enum SelectedResult {
+    File(std::path::PathBuf),
     KeepAwake(winlane::features::keep_awake::Choice),
     Bluetooth(String),
     Project(std::path::PathBuf),
@@ -181,6 +186,7 @@ struct PendingFocus {
 
 #[derive(Default)]
 struct AppState {
+    files: RefCell<files::State>,
     keep_awake: RefCell<crate::macos::platform::keep_awake::KeepAwake>,
     keep_awake_matches: RefCell<Vec<winlane::features::keep_awake::Choice>>,
     keep_awake_error: RefCell<Option<String>>,

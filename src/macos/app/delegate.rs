@@ -53,6 +53,7 @@ define_class!(
             self.configure_app_input_rules();
             self.update_input_indicator();
             self.preload_projects();
+            self.preload_files();
             self.observe_app_catalog();
             self.ivars().clipboard.replace(Some(crate::macos::platform::clipboard::ClipboardRuntime::new(self.ivars().config.borrow().clipboard.clone())));
             self.configure_clipboard_timer();
@@ -154,7 +155,8 @@ define_class!(
         fn text_command(&self, control: &NSControl, editor: &NSTextView, command: Sel) -> bool {
             if NSTextInputClient::hasMarkedText(editor) { false }
             else if self.editing_quicklink() { self.quicklink_text_command(control, command) }
-            else if command == sel!(insertTab:) && self.begin_selected_quicklink() { true }
+            else if command == sel!(insertTab:)
+                && (self.complete_selected_file() || self.begin_selected_quicklink()) { true }
             else if command == sel!(moveDown:) || command == sel!(insertTab:) {
                 self.move_selection(1); true
             } else if command == sel!(moveUp:) || command == sel!(insertBacktab:) {
@@ -451,8 +453,13 @@ define_class!(
                 settings.window.close();
             } else if self.any_panel_key() { self.dismiss(); }
         }
+        #[unsafe(method(refreshFiles:))]
+        fn refresh_files_timer(&self, timer: &NSTimer) { self.files_timer_fired(timer); }
+        #[unsafe(method(clearRecentFiles:))]
+        fn clear_recent_files_action(&self, _: Option<&AnyObject>) { self.clear_recent_files(); }
         #[unsafe(method(refreshWindows:))]
         fn refresh_action(&self, _: Option<&AnyObject>) {
+            if self.searching_files() { self.refresh_files(); self.render(); return; }
             if self.searching_bluetooth() { self.refresh_bluetooth(); self.render(); return; }
             if self.searching_open_url() { self.refresh_open_url(); self.render(); return; }
             if self.searching_projects() { self.refresh_projects(true); self.render(); return; }
@@ -544,6 +551,7 @@ define_class!(
             self.poll_app_catalog();
             self.poll_projects();
             self.poll_open_url();
+            self.poll_files();
             self.poll_bluetooth();
             let awake_expired = self.ivars().keep_awake.borrow_mut().expire(std::time::SystemTime::now());
             let awake_changed = self.update_keep_awake_indicator(false);

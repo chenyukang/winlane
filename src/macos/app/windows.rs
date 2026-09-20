@@ -2,6 +2,10 @@ use super::*;
 
 impl Delegate {
     pub(super) fn activate_selected(&self) {
+        if self.searching_files() {
+            self.open_selected_file(false);
+            return;
+        }
         if self.searching_keep_awake() {
             self.apply_keep_awake();
             return;

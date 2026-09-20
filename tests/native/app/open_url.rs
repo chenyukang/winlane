@@ -477,33 +477,36 @@ fn verify_context_menu_key(mtm: MainThreadMarker) {
         ).unwrap()
     };
     let control = NSEventModifierFlags::Control;
-    for code in [36, 76] {
-        let event = key(code, control, ns_string!("\r"));
-        editor.contextMenuKeyDown(&event);
-        assert!(
-            state.launch_receiver.borrow().is_none(),
-            "empty input must not launch anything"
-        );
+    for scope in [SearchScope::OpenUrl, SearchScope::Files] {
+        state.search_scope.set(Some(scope));
+        for code in [36, 76] {
+            let event = key(code, control, ns_string!("\r"));
+            editor.contextMenuKeyDown(&event);
+            assert!(
+                state.launch_receiver.borrow().is_none(),
+                "empty input must not launch anything"
+            );
 
-        // Input still starting: submit must stay behind the letters already queued.
-        state.changing_displays.set(true);
-        state
-            .input_gate
-            .borrow_mut()
-            .begin(Some("test.pending-input".into()));
-        ui.panel
-            .sendEvent(&key(0, NSEventModifierFlags::empty(), ns_string!("a")));
-        editor.contextMenuKeyDown(&event);
-        let queued = state.input_gate.borrow_mut().finish(None, true).unwrap();
-        assert_eq!(
-            queued
-                .iter()
-                .map(|event| event.keyCode())
-                .collect::<Vec<_>>(),
-            [0, code]
-        );
-        delegate.cancel_input_start();
-        state.changing_displays.set(false);
+            // Input still starting: submit must stay behind the letters already queued.
+            state.changing_displays.set(true);
+            state
+                .input_gate
+                .borrow_mut()
+                .begin(Some("test.pending-input".into()));
+            ui.panel
+                .sendEvent(&key(0, NSEventModifierFlags::empty(), ns_string!("a")));
+            editor.contextMenuKeyDown(&event);
+            let queued = state.input_gate.borrow_mut().finish(None, true).unwrap();
+            assert_eq!(
+                queued
+                    .iter()
+                    .map(|event| event.keyCode())
+                    .collect::<Vec<_>>(),
+                [0, code]
+            );
+            delegate.cancel_input_start();
+            state.changing_displays.set(false);
+        }
     }
 
     state.changing_displays.set(true);

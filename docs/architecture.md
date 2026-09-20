@@ -9,6 +9,7 @@ src/
 ├── core/                   # Search, aliases, shortcuts, configuration, localization
 ├── features/
 │   ├── clipboard/          # History model, image assets, persistence
+│   ├── files/              # File search scope, ranking, paths, and recent-file storage
 │   ├── projects.rs         # Recent-project discovery and matching
 │   ├── quicklinks.rs       # URL templates, validation, imports
 │   ├── open_url/           # URL opening, Google search, Chrome history snapshots
@@ -43,7 +44,7 @@ src/
 | Panel construction and display placement | `macos/app/panel.rs` |
 | Result rendering and native row drawing | `macos/app/render.rs`, `macos/app/views.rs` |
 | Settings changes and language rebuilds | `macos/app/preferences.rs` |
-| Feature-specific actions | `macos/app/clipboard.rs`, `projects.rs`, `quicklinks.rs`, `snippets.rs`, `commands.rs` |
+| Feature-specific actions | `macos/app/files.rs`, `clipboard.rs`, `projects.rs`, `quicklinks.rs`, `snippets.rs`, `commands.rs` |
 
 ## Tests
 
@@ -60,3 +61,5 @@ cargo clippy --locked --all-targets -- -D warnings
 ```
 
 Native tests create hidden windows and use isolated test data. Real desktop activation, input methods, and full-screen Spaces still require separate interactive verification. See [development](development.md) for build and installation instructions, and [commands](commands.md#add-a-command) for the command extension point.
+
+File search uses `macos/platform/files.rs` for one cancellable worker with a Spotlight query and a background run loop. The app debounces requests, rejects old generations, and renders bounded cached rows before results arrive. Direct path browsing and recent-file I/O also run on that worker. Quick Look is embedded in the existing panel and released when preview or the session closes.

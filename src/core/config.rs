@@ -340,6 +340,7 @@ pub struct Config {
     pub input_indicator: crate::features::input_indicator::Settings,
     pub input_rules: crate::features::input_rules::Settings,
     pub scrolling: crate::features::scrolling::Settings,
+    pub files: crate::features::files::Settings,
     pub include_minimized: bool,
     pub excluded_apps: Vec<String>,
 }
@@ -366,6 +367,7 @@ impl Default for Config {
             input_indicator: Default::default(),
             input_rules: Default::default(),
             scrolling: Default::default(),
+            files: Default::default(),
             include_minimized: true,
             excluded_apps: Vec::new(),
         }
@@ -377,6 +379,7 @@ impl Config {
         crate::features::snippets::validate(&self.snippets)?;
         crate::features::quicklinks::validate(&self.quicklinks)?;
         self.clipboard.validate()?;
+        self.files.validate()?;
         self.input_indicator.validate()?;
         self.input_rules.validate()?;
         self.scrolling.validate()?;

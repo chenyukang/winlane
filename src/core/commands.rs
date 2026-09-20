@@ -4,6 +4,7 @@ use crate::tr;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CommandId {
+    Files,
     KeepAwake,
     Bluetooth,
     Projects,
@@ -44,6 +45,14 @@ impl Command {
 }
 
 pub const COMMANDS: &[Command] = &[
+    Command {
+        id: CommandId::Files,
+        name: "files",
+        title_en: "Search files and folders",
+        title_zh: "查找文件和文件夹",
+        symbol: "doc.text.magnifyingglass",
+        keywords: &["file", "finder", "documents", "文件", "文件夹"],
+    },
     Command {
         id: CommandId::KeepAwake,
         name: "keep-awake",

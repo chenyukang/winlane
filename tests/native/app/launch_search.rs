@@ -512,7 +512,8 @@ pub(super) fn verify_typo_search(mtm: MainThreadMarker) {
             let _: () = msg_send![&*delegate, controlTextDidChange: &*notification];
         }
         match expected {
-            SelectedResult::KeepAwake(_)
+            SelectedResult::File(_)
+            | SelectedResult::KeepAwake(_)
             | SelectedResult::Bluetooth(_)
             | SelectedResult::Project(_)
             | SelectedResult::OpenUrl(_)

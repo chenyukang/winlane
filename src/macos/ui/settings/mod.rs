@@ -1,5 +1,6 @@
 mod appearance;
 mod command_shortcuts;
+mod files;
 mod input;
 mod input_rules;
 mod layout;
@@ -11,6 +12,7 @@ mod shortcuts;
 use super::controls::*;
 use super::shortcut::ShortcutControls;
 use appearance::AppearancePage;
+use files::FilesPage;
 use input::InputPage;
 use input_rules::InputRulesPage;
 use navigation::SettingsNavigationButton;
@@ -48,6 +50,7 @@ pub struct SettingsWindow {
     input: OnceCell<InputPage>,
     input_rules: OnceCell<InputRulesPage>,
     scrolling: OnceCell<ScrollingPage>,
+    files: OnceCell<FilesPage>,
     scroll_status: RefCell<(String, bool)>,
     windows: OnceCell<WindowsPage>,
     clipboard: OnceCell<crate::macos::ui::clipboard_settings::ClipboardControls>,
@@ -78,6 +81,9 @@ impl SettingsWindow {
             page.fill(config);
         }
         if let Some(page) = self.scrolling.get() {
+            page.fill(config);
+        }
+        if let Some(page) = self.files.get() {
             page.fill(config);
         }
         if let Some(page) = self.windows.get() {
@@ -154,6 +160,14 @@ impl SettingsWindow {
         self.input_rules.get_or_init(|| {
             let target = self.target.load().expect("settings target is alive");
             let page = InputRulesPage::new(&self.host(9), &target, self.window.mtm());
+            page.fill(&self.config.borrow());
+            page
+        })
+    }
+    fn files(&self) -> &FilesPage {
+        self.files.get_or_init(|| {
+            let target = self.target.load().expect("settings target is alive");
+            let page = FilesPage::new(&self.host(11), &target, self.window.mtm());
             page.fill(&self.config.borrow());
             page
         })
@@ -243,6 +257,9 @@ impl SettingsWindow {
             10 => {
                 self.scrolling();
             }
+            11 => {
+                self.files();
+            }
             _ => {}
         }
     }
@@ -276,6 +293,9 @@ impl SettingsWindow {
             page.read(&mut config);
         }
         if let Some(page) = self.scrolling.get() {
+            page.read(&mut config)?;
+        }
+        if let Some(page) = self.files.get() {
             page.read(&mut config)?;
         }
         config.validate()?;
@@ -389,6 +409,10 @@ impl SettingsWindow {
             9 => tr!(
                 "为 Winlane 和其他应用统一管理输入法规则。",
                 "Manage input source rules for Winlane and other apps."
+            ),
+            11 => tr!(
+                "按文件名搜索，快速打开、预览或在 Finder 中定位。",
+                "Find files by name, open, preview, or reveal them in Finder."
             ),
             10 => tr!(
                 "分别调整鼠标和触控板的滚动方向。",

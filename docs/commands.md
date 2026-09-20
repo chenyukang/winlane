@@ -8,6 +8,7 @@ For example, binding **Command + Option + U** to `open-url` opens its URL/search
 
 | Command | Search examples | Action |
 | --- | --- | --- |
+| `files` | `files`, `finder`, `documents`, `文件` | Search filenames, browse a path, open, preview, or reveal in Finder. [Guide](files.md). |
 | `open-url` | `open-url`, `history`, `浏览记录`, `最近网址` | Browse Chrome history, open a typed URL, or search Google in Chrome. |
 | `projects` | `projects`, `vscode`, `vs code`, `最近项目`, `项目` | Browse recent local VS Code folders and workspaces, then open a project. |
 | `clipboard` | `clipboard`, `clip`, `剪贴板` | Open a dedicated list to search and paste clipboard history. |

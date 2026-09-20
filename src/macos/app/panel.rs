@@ -287,6 +287,7 @@ impl Delegate {
         root.addSubview(&history_permissions_button);
 
         Rc::new(PanelUi {
+            file_preview: RefCell::new(None),
             project_progress,
             display_id,
             panel,

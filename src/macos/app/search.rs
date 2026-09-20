@@ -6,6 +6,11 @@ impl Delegate {
     }
 
     pub(super) fn filter_preserving(&self, selected_id: Option<SelectedResult>) {
+        if self.searching_files() {
+            self.filter_files(selected_id);
+            return;
+        }
+        self.cancel_files_search();
         if self.searching_keep_awake() {
             self.filter_keep_awake(selected_id);
             return;
@@ -184,7 +189,8 @@ impl Delegate {
                         .map(|index| extra_count + index)
                 }),
             Some(
-                SelectedResult::KeepAwake(_)
+                SelectedResult::File(_)
+                | SelectedResult::KeepAwake(_)
                 | SelectedResult::Bluetooth(_)
                 | SelectedResult::Clipboard(_)
                 | SelectedResult::Project(_)
@@ -271,6 +277,11 @@ impl Delegate {
     }
 
     pub(super) fn selected_result(&self) -> Option<SelectedResult> {
+        if self.searching_files() {
+            return self
+                .selected_file()
+                .map(|entry| SelectedResult::File(entry.path));
+        }
         if self.searching_keep_awake() {
             return self
                 .ivars()
@@ -310,7 +321,8 @@ impl Delegate {
     }
 
     pub(super) fn match_count(&self) -> usize {
-        self.ivars().keep_awake_matches.borrow().len()
+        self.ivars().files.borrow().matches.len()
+            + self.ivars().keep_awake_matches.borrow().len()
             + self.ivars().bluetooth_matches.borrow().len()
             + self.ivars().command_matches.borrow().len()
             + self.ivars().snippet_matches.borrow().len()

@@ -19,7 +19,8 @@ define_class!(
                 .is_some_and(|editor| NSTextInputClient::hasMarkedText(&*editor));
             let delegate: Option<Retained<Delegate>> = unsafe { msg_send![self, delegate] };
             if let Some(delegate) = delegate
-                && delegate.is_open_url_input_key(event, composing)
+                && (delegate.is_open_url_input_key(event, composing)
+                    || delegate.is_files_open_key(event, composing))
             {
                 // macOS routes Control-Return here before sendEvent:. Reuse that
                 // path so submission stays behind any buffered input-source keys.
@@ -43,6 +44,8 @@ define_class!(
                     delegate.submit_open_url(true);
                     return;
                 }
+                let delegate: Option<Retained<Delegate>> = unsafe { msg_send![self, delegate] };
+                if let Some(delegate) = delegate && delegate.handle_files_key(event, composing) { return; }
                 if i64::from(event.keyCode()) == SPACE {
                     let delegate: Option<Retained<Delegate>> = unsafe { msg_send![self, delegate] };
                     if let Some(delegate) = delegate {
@@ -231,7 +234,8 @@ impl RowUi {
         let launching = matches!(
             self.content,
             Some(
-                RowContent::Application(_)
+                RowContent::File(_)
+                    | RowContent::Application(_)
                     | RowContent::Command(_)
                     | RowContent::Snippet(_)
                     | RowContent::Quicklink(_)

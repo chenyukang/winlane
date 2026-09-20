@@ -262,7 +262,9 @@ impl Delegate {
             return;
         }
         self.prepare_search_field();
-        let command = if self.searching_keep_awake() {
+        let command = if self.searching_files() {
+            CommandId::Files
+        } else if self.searching_keep_awake() {
             CommandId::KeepAwake
         } else if self.searching_bluetooth() {
             CommandId::Bluetooth
@@ -314,6 +316,8 @@ impl Delegate {
         self.ivars().project_open.take();
         self.cancel_scoped_refresh();
         self.clear_quicklink_input();
+        let files = self.searching_files();
+        self.cancel_files_search();
         let clipboard = self.searching_clipboard();
         let projects = self.searching_projects();
         let open_url = self.searching_open_url();
@@ -322,7 +326,7 @@ impl Delegate {
         self.clear_open_url_matches();
         self.ivars().search_scope.set(None);
         self.ivars().keep_awake_matches.borrow_mut().clear();
-        if clipboard || projects || open_url || bluetooth {
+        if clipboard || projects || open_url || bluetooth || files {
             self.ivars().clipboard_matches.borrow_mut().clear();
             self.ivars().project_matches.borrow_mut().clear();
             for ui in self.panels() {

@@ -63,6 +63,7 @@ impl SettingsWindow {
         settings_tab(&tabs, tr!("快捷链接", "Quicklinks"), mtm);
         settings_tab(&tabs, tr!("输入法规则", "Input Rules"), mtm);
         settings_tab(&tabs, tr!("鼠标滚轮", "Mouse Scrolling"), mtm);
+        settings_tab(&tabs, tr!("文件", "Files"), mtm);
         let mut navigation = Vec::new();
         for (position, (index, symbol, color)) in [
             (4, "gearshape.fill", NSColor::systemGrayColor()),
@@ -76,6 +77,7 @@ impl SettingsWindow {
             (7, "doc.on.clipboard", NSColor::systemOrangeColor()),
             (8, "link", NSColor::systemCyanColor()),
             (10, "computermouse.fill", NSColor::systemBlueColor()),
+            (11, "folder.fill", NSColor::systemIndigoColor()),
         ]
         .into_iter()
         .enumerate()
@@ -83,7 +85,7 @@ impl SettingsWindow {
             let y = if position < 7 {
                 568.0 - position as f64 * 44.0
             } else {
-                220.0 - (position - 7) as f64 * 44.0
+                224.0 - (position - 7) as f64 * 40.0
             };
             let item = tabs.tabViewItemAtIndex(index);
             let control = SettingsNavigationButton::new(
@@ -128,6 +130,7 @@ impl SettingsWindow {
             input: OnceCell::new(),
             input_rules: OnceCell::new(),
             scrolling: OnceCell::new(),
+            files: OnceCell::new(),
             scroll_status: RefCell::new((String::new(), false)),
             windows: OnceCell::new(),
             clipboard: OnceCell::new(),

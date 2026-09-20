@@ -64,7 +64,9 @@ impl Delegate {
         let projects_loading = in_projects
             && (state.project_receiver.borrow().is_some()
                 || state.scoped_refresh_timer.borrow().is_some());
-        let scope_loading = projects_loading || bluetooth_loading;
+        let in_files = self.searching_files();
+        let files = state.files.borrow();
+        let scope_loading = projects_loading || bluetooth_loading || (in_files && files.loading);
         if scope_loading && ui.project_progress.isHidden() {
             ui.project_progress.setHidden(false);
             // SAFETY: This main-thread AppKit action accepts a nil sender.
@@ -84,7 +86,8 @@ impl Delegate {
             + project_matches.len()
             + open_url.len()
             + bluetooth_matches.len()
-            + keep_awake_matches.len();
+            + keep_awake_matches.len()
+            + files.matches.len();
         let quicklink_input = state.quicklink_input.borrow();
         let inline = quicklink_input.is_some();
         let trusted = accessibility::is_trusted();
@@ -94,7 +97,15 @@ impl Delegate {
         let in_clipboard = self.searching_clipboard();
         let show_hints = state.config.borrow().show_usage_hints;
         let density = state.config.borrow().display_density;
-        let row_height = row_height(density);
+        let row_height = if self.searching_files() {
+            if density == DisplayDensity::Normal {
+                52.0
+            } else {
+                44.0
+            }
+        } else {
+            row_height(density)
+        };
         let show_mode_label =
             switching && (show_hints || !state.alias_input.borrow().text().is_empty());
         let root = ui.panel.contentView().unwrap();
@@ -107,6 +118,12 @@ impl Delegate {
             .map_or(0.0, |input| input.extra_height(density));
         let mut height = panel_height(count, switching, !trusted || demo, show_mode_label, density)
             + argument_height;
+        if in_files {
+            height = (100.0
+                + count.max(3) as f64 * row_height
+                + if !trusted || demo { 28.0 } else { 0.0 })
+            .clamp(280.0, HEIGHT);
+        }
         if let Some(visible) = visible {
             height = height.min((visible.size.height - chrome_height).max(1.0));
         }
@@ -186,22 +203,23 @@ impl Delegate {
         }
         ui.input.setHidden(switching || inline);
         ui.scope_back.setHidden(!self.scoped_search() || inline);
-        ui.scope_back
-            .setTitle(&NSString::from_str(if in_keep_awake {
-                tr!("‹ 防休眠", "‹ Awake")
-            } else if in_bluetooth {
-                tr!("‹ 蓝牙", "‹ Bluetooth")
-            } else if in_clipboard {
-                tr!("‹ 剪贴板", "‹ Clipboard")
-            } else if in_open_url {
-                tr!("‹ 网址", "‹ URLs")
-            } else if in_projects {
-                tr!("‹ 项目", "‹ Projects")
-            } else if self.searching_quicklinks() {
-                tr!("‹ 链接", "‹ Links")
-            } else {
-                tr!("‹ 片段", "‹ Snippets")
-            }));
+        ui.scope_back.setTitle(&NSString::from_str(if in_files {
+            tr!("‹ 文件", "‹ Files")
+        } else if in_keep_awake {
+            tr!("‹ 防休眠", "‹ Awake")
+        } else if in_bluetooth {
+            tr!("‹ 蓝牙", "‹ Bluetooth")
+        } else if in_clipboard {
+            tr!("‹ 剪贴板", "‹ Clipboard")
+        } else if in_open_url {
+            tr!("‹ 网址", "‹ URLs")
+        } else if in_projects {
+            tr!("‹ 项目", "‹ Projects")
+        } else if self.searching_quicklinks() {
+            tr!("‹ 链接", "‹ Links")
+        } else {
+            tr!("‹ 片段", "‹ Snippets")
+        }));
         ui.clipboard_actions.setHidden(!in_clipboard);
         ui.shortcut_label
             .setHidden(in_clipboard || inline || scope_loading);
@@ -297,15 +315,29 @@ impl Delegate {
         if ui.scroll.frame() != scroll_frame {
             ui.scroll.setFrame(scroll_frame);
         }
+        if let Some(preview) = ui.file_preview.borrow().as_ref() {
+            preview.setFrame(scroll_frame);
+            if let Some(entry) = files.matches.get(state.selected.get())
+                && let Ok(url) = crate::macos::platform::files::file_url(&entry.path)
+            {
+                // SAFETY: This view is QLPreviewView and its item is always an NSURL.
+                unsafe {
+                    let current: Option<Retained<NSURL>> = msg_send![preview, previewItem];
+                    if current.as_deref() != Some(&*url) {
+                        let _: () = msg_send![preview, setPreviewItem: &*url];
+                    }
+                }
+            }
+        }
         let list_size = NSSize::new(LIST_WIDTH, (count as f64 * row_height).max(list_height));
         if list.frame().size != list_size {
             list.setFrameSize(list_size);
         }
         let mut rows = ui.rows.borrow_mut();
-        if rows
-            .first()
-            .is_some_and(|row| row.button.ivars().density.get() != density)
-        {
+        if rows.first().is_some_and(|row| {
+            row.button.ivars().density.get() != density
+                || (row.button.frame().size.height - (row_height - 2.0)).abs() > 0.5
+        }) {
             for row in rows.drain(..) {
                 row.button.removeFromSuperview();
             }
@@ -334,7 +366,19 @@ impl Delegate {
             label.removeFromSuperview();
         }
         if count == 0 {
-            let (title, detail) = if in_keep_awake {
+            let (title, detail) = if in_files {
+                (
+                    if files.loading {
+                        tr!("正在查找文件…", "Searching files…")
+                    } else {
+                        tr!("没有匹配的文件", "No matching files")
+                    },
+                    tr!(
+                        "按文件名搜索，或输入 ~/Downloads/ 浏览目录。未被 Spotlight 索引的文件可通过路径查找。",
+                        "Search by filename, or type ~/Downloads/ to browse. Use a path for files outside the Spotlight index."
+                    ),
+                )
+            } else if in_keep_awake {
                 (
                     tr!("没有匹配的选项", "No matching options"),
                     tr!(
@@ -577,7 +621,9 @@ impl Delegate {
             ui.empty_labels.replace(vec![heading, detail]);
         }
         for position in 0..count {
-            let content = if let Some(choice) = keep_awake_matches.get(position) {
+            let content = if let Some(entry) = files.matches.get(position) {
+                RowContent::File(entry.clone())
+            } else if let Some(choice) = keep_awake_matches.get(position) {
                 RowContent::KeepAwake(*choice)
             } else if let Some(device) = bluetooth_matches.get(position) {
                 let pending = bluetooth_pending
@@ -623,6 +669,19 @@ impl Delegate {
             let row = &mut rows[position];
             if row.content.as_ref() != Some(&content) {
                 let tooltip = match &content {
+                    RowContent::File(entry) => {
+                        set_label(&row.app, &entry.name);
+                        set_label(&row.title, &entry.parent_label(&super::files::home()));
+                        set_label(&row.alias, "");
+                        row.icon.setImage(
+                            NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                                &NSString::from_str(entry.symbol()),
+                                None,
+                            )
+                            .as_deref(),
+                        );
+                        entry.path.to_string_lossy().into_owned()
+                    }
                     RowContent::KeepAwake(choice) => {
                         set_label(&row.app, &choice.title());
                         set_label(&row.title, choice.detail());
@@ -836,7 +895,35 @@ impl Delegate {
         let clipboard_error = clipboard
             .as_ref()
             .and_then(|clipboard| clipboard.error.as_ref());
-        let status = if in_keep_awake {
+        let status = if in_files {
+            files.error.clone().unwrap_or_else(|| {
+                if files.loading {
+                    tr!("正在更新文件…", "Updating files…").into()
+                } else if files.limited {
+                    tr!(
+                        "结果较多，请增加关键词或缩小搜索范围。",
+                        "Many matches. Refine your query or search folders."
+                    )
+                    .into()
+                } else if files
+                    .matches
+                    .get(state.selected.get())
+                    .is_some_and(|entry| entry.directory)
+                {
+                    tr!(
+                        "↵ 进入目录 · ⌃↵ 打开目录 · ⌃⌫ 上一层 · ⇥ 补全",
+                        "↵ Browse · ⌃↵ Open folder · ⌃⌫ Parent · ⇥ Complete"
+                    )
+                    .into()
+                } else {
+                    tr!(
+                        "⇥ 补全 · ↵ 打开 · ⌘↵ Finder · ⌘Y 预览",
+                        "⇥ Complete · ↵ Open · ⌘↵ Finder · ⌘Y Preview"
+                    )
+                    .into()
+                }
+            })
+        } else if in_keep_awake {
             state
                 .keep_awake_error
                 .borrow()
@@ -978,6 +1065,7 @@ impl Delegate {
                 || !trusted
                 || (in_clipboard && clipboard_error.is_some())
                 || (in_projects && project_cache.error.is_some())
+                || (in_files && files.error.is_some())
                 || (in_bluetooth && bluetooth_error.is_some())
                 || (in_open_url && url_history.error.is_some()));
         ui.footer
@@ -987,7 +1075,15 @@ impl Delegate {
     pub(super) fn create_row(&self, position: usize, density: DisplayDensity) -> RowUi {
         let mtm = self.mtm();
         let normal = density == DisplayDensity::Normal;
-        let row_height = row_height(density);
+        let row_height = if self.searching_files() {
+            if density == DisplayDensity::Normal {
+                52.0
+            } else {
+                44.0
+            }
+        } else {
+            row_height(density)
+        };
         let frame = rect(
             2.0,
             position as f64 * row_height + 1.0,
@@ -1059,6 +1155,28 @@ impl Delegate {
         );
         icon.setImageScaling(NSImageScaling::ScaleProportionallyDown);
         button.addSubview(&icon);
+        if self.searching_files() {
+            app.setAlignment(NSTextAlignment::Left);
+            title.setFont(Some(&NSFont::systemFontOfSize(if normal {
+                12.0
+            } else {
+                11.0
+            })));
+            let h = frame.size.height;
+            let name_height = app.intrinsicContentSize().height;
+            let path_height = title.intrinsicContentSize().height;
+            let gap = 2.0;
+            let padding = (h - name_height - path_height - gap) / 2.0;
+            let (name_y, path_y) = if button.isFlipped() {
+                (padding, padding + name_height + gap)
+            } else {
+                (padding + path_height + gap, padding)
+            };
+            app.setFrame(rect(52.0, name_y, LIST_WIDTH - 70.0, name_height));
+            title.setFrame(rect(52.0, path_y, LIST_WIDTH - 70.0, path_height));
+            icon.setFrame(rect(14.0, (h - 26.0) / 2.0, 26.0, 26.0));
+            alias.setHidden(true);
+        }
         RowUi {
             button,
             title,

@@ -2,7 +2,7 @@
 
 Switch windows, launch apps, and handle everyday Mac tasks from your keyboard.
 
-Winlane combines a window switcher with search for apps, saved links, snippets, clipboard history, and recent projects. It lives in the menu bar and opens when you need it.
+Winlane combines a window switcher with search for apps, saved links, snippets, clipboard history, files, and recent projects. It lives in the menu bar and opens when you need it.
 
 | Light mode | Dark mode |
 | --- | --- |
@@ -61,6 +61,12 @@ These are the default shortcuts. Change them or add more in **Settings → Short
 ## Everyday tools
 
 To use a tool, open search, type its command name, and press **Enter**. You can also give a command its own shortcut in **Settings → Shortcuts → Command shortcuts**.
+
+### Find files
+
+Run **`files`** to search file and folder names, including fuzzy abbreviations, or browse a path such as `~/Downloads/`. Press **Tab** to complete the selected path and continue inside a folder. Results show the name and parent folder. The panel opens with cached results while searching in the background; an empty query shows files recently opened through Winlane.
+
+Press **Enter** to browse into a folder or open a file, **Control + Enter** to open a folder in Finder, and **Control + Backspace** to return to the parent path. **Command + Enter** reveals the selection in Finder; **Command + Y** previews it. **Command + C** copies the file; **Command + Shift + C** copies its path. Configure search folders and clear recent items in **Settings → Files**. [File search guide](docs/files.md).
 
 ### Reopen a project
 
@@ -170,6 +176,7 @@ Winlane keeps settings, aliases, snippets, Quicklinks, and clipboard history on 
 - **Window access:** Accessibility permission lets Winlane read and focus windows and handle shortcuts. Winlane does not log your keystrokes or take screenshots automatically.
 - **Clipboard history:** saved text and images are **not encrypted**. Winlane skips standard sensitive-content markers and common password managers, but cannot recognize every secret. Pause recording before copying anything you do not want retained.
 - **Input rules and projects:** remembered input sources and the recent-project cache are stored locally. Filled-in snippet arguments are not saved as form history; the pasted text remains on your clipboard.
+- **Files:** filename search uses Spotlight. The last 25 paths opened through Winlane are stored locally and can be cleared in Settings → Files. No file contents or search queries are saved.
 - **Chrome history:** read locally when you use `open-url`, with no separate permanent history library. macOS may require Full Disk Access; Winlane shows an access-settings action if needed.
 - **Bluetooth:** macOS requests Bluetooth permission when you use the device command.
 - **Updates:** update checks contact GitHub for release information and downloads. They do not include window titles or search terms.

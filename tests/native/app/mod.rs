@@ -98,6 +98,7 @@ pub fn verify_hidden_panels() {
     verify_quicklink_search(mtm);
     verify_projects_search(mtm);
     open_url::verify_open_url(mtm);
+    super::files::tests::verify_files(mtm);
     bluetooth::verify_bluetooth(mtm);
     verify_clipboard_search(mtm);
     verify_clipboard_images(mtm);
