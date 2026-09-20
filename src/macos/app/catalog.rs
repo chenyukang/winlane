@@ -117,6 +117,46 @@ impl Delegate {
         self.ivars().aliases.replace(effective);
     }
 
+    pub(super) fn observe_app_catalog(&self) {
+        let wake = self.ivars().wake.get().unwrap().handle();
+        match crate::macos::platform::catalog_watcher::CatalogWatcher::new(
+            installed_apps::application_roots(),
+            move || wake.signal(),
+        ) {
+            Ok(watcher) => {
+                self.ivars().catalog_watcher.replace(Some(watcher));
+            }
+            Err(error) => eprintln!("Application directory monitoring failed: {error}"),
+        }
+    }
+
+    pub(super) fn poll_app_catalog_changes(&self) {
+        let changed = self
+            .ivars()
+            .catalog_watcher
+            .borrow_mut()
+            .as_mut()
+            .is_some_and(|watcher| watcher.take_changed());
+        if changed {
+            self.invalidate_app_catalog();
+        }
+    }
+
+    pub(super) fn invalidate_app_catalog(&self) {
+        let state = self.ivars();
+        state
+            .catalog_generation
+            .set(state.catalog_generation.get().wrapping_add(1));
+        let cached =
+            state.catalog_checked.get().is_some() || !state.installed_apps.borrow().is_empty();
+        state.catalog_checked.set(None);
+        if cached {
+            self.start_app_catalog_scan();
+        } else {
+            self.ensure_app_catalog();
+        }
+    }
+
     pub(super) fn ensure_app_catalog(&self) {
         let state = self.ivars();
         if state.demo.get()
@@ -132,8 +172,19 @@ impl Delegate {
         {
             return;
         }
+        self.start_app_catalog_scan();
+    }
+
+    fn start_app_catalog_scan(&self) {
+        let state = self.ivars();
+        if state.demo.get() || state.catalog_receiver.borrow().is_some() {
+            return;
+        }
         let (tx, rx) = mpsc::channel();
         state.catalog_receiver.replace(Some(rx));
+        state
+            .catalog_scan_generation
+            .set(state.catalog_generation.get());
         let wake = state.wake.get().unwrap().handle();
         std::thread::spawn(move || {
             let _ = tx.send(installed_apps::discover());
@@ -152,6 +203,11 @@ impl Delegate {
             Some(Ok(apps)) => {
                 let selected = self.selected_result();
                 state.catalog_receiver.replace(None);
+                // An install may finish while an older scan is still running.
+                if state.catalog_scan_generation.get() != state.catalog_generation.get() {
+                    self.start_app_catalog_scan();
+                    return;
+                }
                 state.catalog_checked.set(Some(Instant::now()));
                 state.installed_apps.replace(apps);
                 if state.mode.get() == Some(PanelMode::Search) {

@@ -52,6 +52,7 @@ define_class!(
             self.configure_app_input_rules();
             self.update_input_indicator();
             self.preload_projects();
+            self.observe_app_catalog();
             self.ivars().clipboard.replace(Some(crate::macos::platform::clipboard::ClipboardRuntime::new(self.ivars().config.borrow().clipboard.clone())));
             self.configure_clipboard_timer();
             self.register_hotkeys();
@@ -59,6 +60,7 @@ define_class!(
         }
         #[unsafe(method(applicationWillTerminate:))]
         fn will_terminate(&self, _: &NSNotification) {
+            self.ivars().catalog_watcher.take();
             self.save_recency();
             self.save_app_input_history();
             self.ivars().clipboard.take();
@@ -450,8 +452,7 @@ define_class!(
             if self.searching_open_url() { self.refresh_open_url(); self.render(); return; }
             if self.searching_projects() { self.refresh_projects(true); self.render(); return; }
             if self.ivars().demo.get() { self.filter(); } else {
-                self.ivars().catalog_checked.set(None);
-                self.ensure_app_catalog();
+                self.invalidate_app_catalog();
                 self.refresh();
             }
         }
@@ -528,6 +529,7 @@ define_class!(
             self.poll_focus();
             self.poll_app_launch();
             self.poll_project_open();
+            self.poll_app_catalog_changes();
             self.poll_app_catalog();
             self.poll_projects();
             self.poll_open_url();

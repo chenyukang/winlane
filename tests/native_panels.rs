@@ -15,6 +15,18 @@ fn main() {
         } else if std::env::var_os("WINLANE_APP_SCAN").is_some() {
             let start = std::time::Instant::now();
             let apps = macos::platform::installed_apps::discover();
+            if let Ok(query) = std::env::var("WINLANE_APP_SCAN") {
+                let matches = winlane::core::app_catalog::matching_apps(
+                    &apps,
+                    &query,
+                    &std::collections::HashSet::new(),
+                    &[],
+                    None,
+                );
+                for index in matches {
+                    println!("Matched installed app: {:?}", apps[index]);
+                }
+            }
             assert!(!apps.is_empty());
             assert_eq!(
                 apps.iter()

@@ -8,17 +8,18 @@ use objc2::rc::autoreleasepool;
 use objc2_foundation::{NSBundle, NSHomeDirectory, NSNumber, NSString, NSURL};
 use winlane::core::app_catalog::InstalledApp;
 
+pub fn application_roots() -> Vec<PathBuf> {
+    vec![
+        PathBuf::from("/Applications"),
+        PathBuf::from(NSHomeDirectory().to_string()).join("Applications"),
+        PathBuf::from("/System/Applications"),
+        PathBuf::from("/System/Library/CoreServices/Applications"),
+        PathBuf::from("/System/Library/CoreServices/Finder.app"),
+    ]
+}
+
 pub fn discover() -> Vec<InstalledApp> {
-    autoreleasepool(|_| {
-        let roots = [
-            PathBuf::from("/Applications"),
-            PathBuf::from(NSHomeDirectory().to_string()).join("Applications"),
-            PathBuf::from("/System/Applications"),
-            PathBuf::from("/System/Library/CoreServices/Applications"),
-            PathBuf::from("/System/Library/CoreServices/Finder.app"),
-        ];
-        collect(&roots, &indexed_paths())
-    })
+    autoreleasepool(|_| collect(&application_roots(), &indexed_paths()))
 }
 
 fn usable_path(path: &Path) -> bool {

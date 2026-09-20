@@ -4,7 +4,9 @@ A native macOS window switcher, built with Rust and AppKit.
 
 Hold a shortcut to move between windows, or type to find the one you need. Winlane runs in the menu bar and stays out of the way until you call it up.
 
-![Winlane in switch mode, showing window aliases and project titles](docs/images/window-switcher.png)
+| Light mode | Dark mode |
+| --- | --- |
+| ![Winlane search in light mode](docs/images/window-search-light.png) | ![Winlane search in dark mode](docs/images/window-search-dark.png) |
 
 ## Get started
 

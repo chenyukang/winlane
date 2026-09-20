@@ -83,6 +83,7 @@ pub fn verify_hidden_panels() {
     assert!(Source::by_id("example.test.missing-input-source", mtm).is_none());
     crate::macos::ui::app_shortcuts::tests::verify_hidden_settings(&delegate, mtm);
     crate::macos::platform::installed_apps::tests::verify_catalog();
+    crate::macos::platform::catalog_watcher::tests::verify();
     verify_catalog_refresh(mtm);
     verify_launch_search(mtm);
     verify_command_search(mtm);

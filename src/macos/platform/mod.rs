@@ -1,6 +1,7 @@
 pub(crate) mod accessibility;
 pub(crate) mod applications;
 pub(crate) mod bluetooth;
+pub(crate) mod catalog_watcher;
 pub(crate) mod clipboard;
 pub(crate) mod focus_observer;
 pub(crate) mod input_source;

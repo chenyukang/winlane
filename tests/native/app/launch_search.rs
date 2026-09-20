@@ -391,8 +391,74 @@ pub(super) fn verify_catalog_refresh(mtm: MainThreadMarker) {
             "completed scans must be reused"
         );
     }
+    // Notifications refresh an existing cache even while the search UI is closed.
+    state.mode.set(None);
+    let directory = tempfile::tempdir().unwrap();
+    state.catalog_watcher.replace(Some(
+        crate::macos::platform::catalog_watcher::CatalogWatcher::new(
+            vec![directory.path().to_path_buf()],
+            || {},
+        )
+        .unwrap(),
+    ));
+    std::fs::create_dir(directory.path().join("New.app")).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while state.catalog_generation.get() == 0 && Instant::now() < deadline {
+        delegate.poll_app_catalog_changes();
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    state.catalog_watcher.take();
+    assert!(state.catalog_checked.get().is_none());
+    assert!(
+        state.catalog_receiver.borrow().is_some(),
+        "install notifications must refresh the cache in the background"
+    );
+    state.mode.set(Some(PanelMode::Search));
+    state.query.replace("neomac".into());
+    delegate.ensure_app_catalog();
+    assert!(
+        state.catalog_receiver.borrow().is_some(),
+        "installation invalidates the ten-minute cache"
+    );
+    let scan = state
+        .catalog_receiver
+        .borrow_mut()
+        .take()
+        .unwrap()
+        .recv_timeout(Duration::from_secs(15))
+        .unwrap();
+    let (tx, rx) = mpsc::channel();
+    state.catalog_receiver.replace(Some(rx));
+    let cached = state.installed_apps.borrow().clone();
+    delegate.invalidate_app_catalog();
+    tx.send(scan).unwrap();
+    delegate.poll_app_catalog();
+    assert_eq!(
+        *state.installed_apps.borrow(),
+        cached,
+        "a superseded scan must not overwrite the cache"
+    );
+    assert!(state.catalog_checked.get().is_none());
+    assert!(
+        state.catalog_receiver.borrow().is_some(),
+        "a change during a scan needs another scan"
+    );
+    let scan = state
+        .catalog_receiver
+        .borrow_mut()
+        .take()
+        .unwrap()
+        .recv_timeout(Duration::from_secs(15))
+        .unwrap();
+    let (tx, rx) = mpsc::channel();
+    state.catalog_receiver.replace(Some(rx));
+    tx.send(scan).unwrap();
+    delegate.poll_app_catalog();
+    assert!(state.catalog_checked.get().is_some());
+    assert_eq!(&*state.query.borrow(), "neomac");
+    assert!(state.catalog_receiver.borrow().is_none());
     println!(
-        "Catalog refresh checks passed: demand, scope, ten-minute cache, in-flight reuse, completion."
+        "Catalog refresh checks passed: demand, scope, ten-minute fallback, install invalidation, in-flight races and query preservation."
     );
 }
 
