@@ -106,6 +106,13 @@ impl KeepAwake {
         false
     }
 
+    pub fn current_choice(&self, now: SystemTime) -> Choice {
+        self.active
+            .as_ref()
+            .filter(|active| active.deadline.is_none_or(|end| now < end))
+            .map_or(Choice::Stop, |active| active.choice)
+    }
+
     pub fn status(&self) -> String {
         match &self.active {
             None => tr!("防休眠已关闭", "Keep Awake is off").into(),

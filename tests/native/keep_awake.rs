@@ -72,6 +72,18 @@ pub fn verify() {
         .unwrap();
     let id = runtime.active.as_ref().unwrap()._assertions[0].0;
     let deadline = runtime.active.as_ref().unwrap().deadline.unwrap();
+    assert_eq!(
+        runtime.current_choice(SystemTime::now()),
+        Choice::Start {
+            minutes: Some(30),
+            display: false
+        }
+    );
+    assert_eq!(runtime.current_choice(deadline), Choice::Stop);
+    assert!(
+        runtime.active.is_some(),
+        "selection must recognize expiry even before the timer clears it"
+    );
     assert!(runtime.indicator_status(deadline).is_none());
     assert!(runtime.expire(deadline));
     assert!(!exists(id));

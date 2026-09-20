@@ -38,7 +38,14 @@ impl Delegate {
             choices.iter().position(|item| *item == choice)
         } else {
             None
-        };
+        }
+        .or_else(|| {
+            let current = state
+                .keep_awake
+                .borrow()
+                .current_choice(std::time::SystemTime::now());
+            choices.iter().position(|choice| *choice == current)
+        });
         state.matches.borrow_mut().clear();
         state.launch_matches.borrow_mut().clear();
         state.command_matches.borrow_mut().clear();
