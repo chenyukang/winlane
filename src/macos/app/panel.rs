@@ -223,6 +223,8 @@ impl Delegate {
         root.addSubview(&clipboard_actions);
         let quicklink_bar = crate::macos::ui::quicklinks::input::Bar::new(self, mtm);
         root.addSubview(&quicklink_bar.view);
+        let file_controls = files::Controls::new(self);
+        root.addSubview(&file_controls.view);
         let mode_label = label("", 11.0, rect(16.0, LIST_BOTTOM, WIDTH - 32.0, 20.0), mtm);
         mode_label.setTextColor(Some(&NSColor::labelColor()));
         mode_label.setAlphaValue(0.65);
@@ -287,6 +289,7 @@ impl Delegate {
         root.addSubview(&history_permissions_button);
 
         Rc::new(PanelUi {
+            file_controls,
             file_preview: RefCell::new(None),
             project_progress,
             display_id,

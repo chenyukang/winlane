@@ -1,13 +1,22 @@
 use super::*;
 use crate::macos::platform::files::{Request, Service, Update};
 use std::path::PathBuf;
+use winlane::features::files::query::Options;
 use winlane::features::files::{self, Entry};
+
+mod actions;
+use actions::Action;
+mod controls;
+pub(super) use controls::Controls;
 
 #[derive(Default)]
 pub(super) struct State {
     service: Option<Service>,
     generation: u64,
-    requested: Option<(String, files::Settings)>,
+    requested: Option<(String, files::Settings, Options)>,
+    pub options: Options,
+    pub menu_open: bool,
+    regex_pending: bool,
     entries: Vec<Entry>,
     pub recent: Vec<Entry>,
     recent_changed: bool,
@@ -50,7 +59,8 @@ impl Delegate {
         let query = self.ivars().query.borrow().clone();
         let settings = self.ivars().config.borrow().files.clone();
         let mut state = self.ivars().files.borrow_mut();
-        let changed = state.requested.as_ref() != Some(&(query.clone(), settings.clone()));
+        let options = state.options;
+        let changed = state.requested.as_ref() != Some(&(query.clone(), settings.clone(), options));
         if changed {
             if let Some(timer) = state.timer.take() {
                 timer.invalidate();
@@ -58,9 +68,11 @@ impl Delegate {
             if let Some(service) = &state.service {
                 state.generation = service.cancel();
             }
-            state.requested = Some((query.clone(), settings.clone()));
+            state.requested = Some((query.clone(), settings.clone(), options));
             state.loading = true;
             state.error = None;
+            state.limited = false;
+            state.regex_pending = options.regex && !query.trim().is_empty();
             // Return to AppKit before any disk access, then debounce successive keystrokes.
             let timer = unsafe {
                 NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
@@ -77,7 +89,7 @@ impl Delegate {
             state.timer = Some(timer);
         }
         let home = home();
-        let direct = files::path_query(&query, &home);
+        let direct = files::query::search_path(&query, &home, options.regex);
         let candidates: Vec<_> =
             if query.trim().is_empty() && state.loading && !state.recent.is_empty() {
                 state
@@ -100,10 +112,19 @@ impl Delegate {
                     .cloned()
                     .collect()
             };
-        let term = direct
-            .as_ref()
-            .map_or(query.as_str(), |(_, leaf)| leaf.as_str());
-        state.matches = files::matching(&candidates, term, &state.recent);
+        let candidates: Vec<_> = candidates
+            .into_iter()
+            .filter(|entry| options.kind.allows(entry))
+            .collect();
+        state.matches = if state.regex_pending {
+            Vec::new()
+        } else if options.regex {
+            files::matching(&candidates, "", &state.recent)
+        } else {
+            files::query::Matcher::new(&query, &home, options)
+                .expect("plain matching needs no regex compilation")
+                .matching(&candidates, &state.recent)
+        };
         let position = match selected {
             Some(SelectedResult::File(path)) => {
                 state.matches.iter().position(|entry| entry.path == path)
@@ -157,6 +178,7 @@ impl Delegate {
         state.service.as_ref().unwrap().search(Request {
             generation: state.generation,
             query: self.ivars().query.borrow().clone(),
+            options: state.options,
             settings: self.ivars().config.borrow().files.clone(),
             recent: state.recent.clone(),
         });
@@ -245,8 +267,11 @@ impl Delegate {
                 if state.generation != generation || !self.searching_files() {
                     return;
                 }
-                if error.is_none() && (!gathering || !entries.is_empty()) {
+                if (error.is_none() && (!gathering || !entries.is_empty()))
+                    || (state.options.regex && error.is_some())
+                {
                     state.entries = entries;
+                    state.regex_pending = false;
                 }
                 state.loading = gathering;
                 state.limited = limited;
@@ -279,6 +304,10 @@ impl Delegate {
             self.complete_selected_file();
             return;
         }
+        self.open_file_entry(entry);
+    }
+
+    fn open_file_entry(&self, entry: Entry) {
         self.preload_files();
         self.cancel_routing();
         self.end_session();
@@ -327,7 +356,11 @@ impl Delegate {
             return true;
         }
         if event.keyCode() == 51 && flags == NSEventModifierFlags::Control {
-            let parent = files::parent_query(&self.ivars().query.borrow());
+            let parent = files::query::parent_search_path(
+                &self.ivars().query.borrow(),
+                &home(),
+                self.ivars().files.borrow().options.regex,
+            );
             if let Some(parent) = parent {
                 self.set_file_query(parent);
                 return true;
@@ -340,6 +373,12 @@ impl Delegate {
             return true;
         }
         let command = flags == NSEventModifierFlags::Command;
+        if flags == NSEventModifierFlags::Control && event.keyCode() == 17 {
+            if !event.isARepeat() {
+                self.show_file_actions();
+            }
+            return true;
+        }
         let path_copy = flags == (NSEventModifierFlags::Command | NSEventModifierFlags::Shift)
             && event.keyCode() == 8;
         if !(command && matches!(event.keyCode(), 36 | 76 | 16 | 8) || path_copy) {
@@ -348,33 +387,16 @@ impl Delegate {
         let Some(entry) = self.selected_file() else {
             return true;
         };
-        if command && event.keyCode() == 16 {
-            self.toggle_file_preview(&entry);
-            return true;
-        }
-        let Ok(url) = crate::macos::platform::files::file_url(&entry.path) else {
-            return true;
-        };
-        if matches!(event.keyCode(), 36 | 76) {
-            self.cancel_routing();
-            self.end_session();
-            NSWorkspace::sharedWorkspace()
-                .activateFileViewerSelectingURLs(&NSArray::from_slice(&[&*url]));
+        let action = if event.keyCode() == 16 {
+            Action::Preview
+        } else if matches!(event.keyCode(), 36 | 76) {
+            Action::Reveal
+        } else if path_copy {
+            Action::CopyPath
         } else {
-            let pasteboard = NSPasteboard::generalPasteboard();
-            pasteboard.clearContents();
-            if path_copy {
-                unsafe {
-                    pasteboard.setString_forType(
-                        &NSString::from_str(&entry.path.to_string_lossy()),
-                        NSPasteboardTypeString,
-                    );
-                }
-            } else {
-                pasteboard.writeObjects(&NSArray::from_slice(&[ProtocolObject::from_ref(&*url)]));
-            }
-            self.dismiss();
-        }
+            Action::Copy
+        };
+        self.perform_file_action(action, entry);
         true
     }
 
@@ -398,8 +420,13 @@ impl Delegate {
         let Some(entry) = self.selected_file() else {
             return true;
         };
-        self.set_file_query(entry.completion(&home()));
+        self.complete_file_entry(&entry);
         true
+    }
+
+    fn complete_file_entry(&self, entry: &Entry) {
+        self.ivars().files.borrow_mut().options.regex = false;
+        self.set_file_query(entry.completion(&home()));
     }
 
     fn set_file_query(&self, text: String) {

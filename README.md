@@ -66,6 +66,8 @@ To use a tool, open search, type its command name, and press **Enter**. You can 
 
 Run **`files`** to search file and folder names, including fuzzy abbreviations, or browse a path such as `~/Downloads/`. Press **Tab** to complete the selected path and continue inside a folder. Results show the name and parent folder. The panel opens with cached results while searching in the background; an empty query shows files recently opened through Winlane.
 
+Filter by file type using the selector below the search field, or enable **`.*`** for regular expressions such as `^report.*\.pdf$`. Press **Control + T** to see actions and their shortcuts for the selected item.
+
 Press **Enter** to browse into a folder or open a file, **Control + Enter** to open a folder in Finder, and **Control + Backspace** to return to the parent path. **Command + Enter** reveals the selection in Finder; **Command + Y** previews it. **Command + C** copies the file; **Command + Shift + C** copies its path. Configure search folders and clear recent items in **Settings → Files**. [File search guide](docs/files.md).
 
 ### Reopen a project

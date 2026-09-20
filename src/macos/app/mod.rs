@@ -97,6 +97,7 @@ enum SearchScope {
 }
 
 struct PanelUi {
+    file_controls: files::Controls,
     file_preview: RefCell<Option<Retained<NSView>>>,
     display_id: u32,
     shortcut_label: Retained<NSTextField>,

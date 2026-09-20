@@ -119,7 +119,7 @@ impl Delegate {
         let mut height = panel_height(count, switching, !trusted || demo, show_mode_label, density)
             + argument_height;
         if in_files {
-            height = (100.0
+            height = (132.0
                 + count.max(3) as f64 * row_height
                 + if !trusted || demo { 28.0 } else { 0.0 })
             .clamp(280.0, HEIGHT);
@@ -221,6 +221,8 @@ impl Delegate {
             tr!("‹ 片段", "‹ Snippets")
         }));
         ui.clipboard_actions.setHidden(!in_clipboard);
+        ui.file_controls
+            .render(in_files, height, files.options, !files.matches.is_empty());
         ui.shortcut_label
             .setHidden(in_clipboard || inline || scope_loading);
         if let Some(item) = ui.clipboard_actions.itemAtIndex(3) {
@@ -309,7 +311,10 @@ impl Delegate {
             } else {
                 0.0
             };
-        let list_top = height - if switching { 36.0 } else { HEIGHT - LIST_TOP } - argument_height;
+        let list_top = height
+            - if switching { 36.0 } else { HEIGHT - LIST_TOP }
+            - argument_height
+            - if in_files { 32.0 } else { 0.0 };
         let list_height = list_top - list_bottom;
         let scroll_frame = rect(10.0, list_bottom, LIST_WIDTH, list_height);
         if ui.scroll.frame() != scroll_frame {
@@ -370,6 +375,8 @@ impl Delegate {
                 (
                     if files.loading {
                         tr!("正在查找文件…", "Searching files…")
+                    } else if files.error.is_some() {
+                        tr!("无法完成搜索", "Could not complete search")
                     } else {
                         tr!("没有匹配的文件", "No matching files")
                     },
@@ -901,8 +908,8 @@ impl Delegate {
                     tr!("正在更新文件…", "Updating files…").into()
                 } else if files.limited {
                     tr!(
-                        "结果较多，请增加关键词或缩小搜索范围。",
-                        "Many matches. Refine your query or search folders."
+                        "结果未完全显示，请增加关键词或指定目录。",
+                        "Some results are not shown. Refine the query or choose a folder."
                     )
                     .into()
                 } else if files
@@ -1065,7 +1072,7 @@ impl Delegate {
                 || !trusted
                 || (in_clipboard && clipboard_error.is_some())
                 || (in_projects && project_cache.error.is_some())
-                || (in_files && files.error.is_some())
+                || (in_files && (files.error.is_some() || files.limited))
                 || (in_bluetooth && bluetooth_error.is_some())
                 || (in_open_url && url_history.error.is_some()));
         ui.footer

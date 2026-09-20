@@ -457,6 +457,14 @@ define_class!(
         fn refresh_files_timer(&self, timer: &NSTimer) { self.files_timer_fired(timer); }
         #[unsafe(method(clearRecentFiles:))]
         fn clear_recent_files_action(&self, _: Option<&AnyObject>) { self.clear_recent_files(); }
+        #[unsafe(method(fileKindChanged:))]
+        fn file_kind_changed(&self, sender: &NSPopUpButton) { self.set_files_kind(sender.indexOfSelectedItem()); }
+        #[unsafe(method(fileRegexChanged:))]
+        fn file_regex_changed(&self, sender: &NSButton) { self.set_files_regex(sender.state() == NSControlStateValueOn); }
+        #[unsafe(method(showFileActions:))]
+        fn show_file_actions_button(&self, _: Option<&AnyObject>) { self.show_file_actions(); }
+        #[unsafe(method(performFileAction:))]
+        fn perform_file_menu_action(&self, sender: &NSMenuItem) { self.file_menu_action(sender); }
         #[unsafe(method(refreshWindows:))]
         fn refresh_action(&self, _: Option<&AnyObject>) {
             if self.searching_files() { self.refresh_files(); self.render(); return; }
@@ -535,11 +543,13 @@ define_class!(
             self.update_app_input_rules();
             self.release_closed_settings();
             self.update_scrolling_status();
+            let transient_ui_open = self.ivars().files.borrow().menu_open
+                || (self.searching_bluetooth() && self.ivars().bluetooth_permission.borrow().is_some());
             if self.ivars().check_panel_focus.replace(false)
                 && self.ivars().mode.get().is_some()
                 && !self.ivars().changing_displays.get()
                 && !self.any_panel_key()
-                && !(self.searching_bluetooth() && self.ivars().bluetooth_permission.borrow().is_some())
+                && !transient_ui_open
             { self.end_session(); }
             self.check_shortcuts();
             self.poll_window_liveness();

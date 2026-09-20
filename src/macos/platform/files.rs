@@ -10,12 +10,14 @@ use std::sync::{
     mpsc::{self, Receiver, Sender},
 };
 use std::time::{Duration, Instant};
+use winlane::features::files::query::{Kind, Matcher, Options};
 use winlane::features::files::{self, Entry, Settings};
 use winlane::{tr, trf};
 
 pub struct Request {
     pub generation: u64,
     pub query: String,
+    pub options: Options,
     pub settings: Settings,
     pub recent: Vec<Entry>,
 }
@@ -110,7 +112,14 @@ fn search(
             wake.signal();
         }
     };
-    if request.query.trim().is_empty() {
+    let matcher = match Matcher::new(&request.query, home, request.options) {
+        Ok(matcher) => matcher,
+        Err(error) => {
+            send(Vec::new(), false, false, Some(error));
+            return;
+        }
+    };
+    if request.query.trim().is_empty() && request.options.kind == Kind::All {
         let mut entries: Vec<_> = request
             .recent
             .into_iter()
@@ -127,12 +136,12 @@ fn search(
         send(entries, false, false, None);
         return;
     }
-    if let Some((_, leaf)) = files::path_query(&request.query, home) {
-        match files::browse(&request.query, home, cancelled) {
+    if matcher.directory.is_some() {
+        match files::browse_with(&matcher, cancelled) {
             Ok(entries) => {
                 let limited = entries.len() >= files::MAX_CANDIDATES;
                 send(
-                    files::matching(&entries, &leaf, &request.recent),
+                    matcher.matching(&entries, &request.recent),
                     false,
                     limited,
                     None,
@@ -142,10 +151,7 @@ fn search(
         }
         return;
     }
-    let Some(predicate) = predicate(&request.query) else {
-        send(Vec::new(), false, false, None);
-        return;
-    };
+    let predicate = search_predicate(&matcher);
     let query = NSMetadataQuery::new();
     query.setPredicate(Some(&predicate));
     query.setNotificationBatchingInterval(0.1);
@@ -206,41 +212,55 @@ fn search(
                     dirty.store(false, Ordering::Release);
                     query.disableUpdates();
                     let count = query.resultCount();
-                    let entries: Vec<_> = (0..count.min(files::MAX_CANDIDATES))
-                        .take_while(|_| !cancelled())
-                        .filter_map(|i| {
-                            let item = query.resultAtIndex(i).downcast::<NSMetadataItem>().ok()?;
-                            let text = |key: &str| {
-                                item.valueForAttribute(&NSString::from_str(key))?
-                                    .downcast::<NSString>()
-                                    .ok()
-                                    .map(|s| s.to_string())
-                            };
-                            let path = PathBuf::from(text("kMDItemPath")?);
-                            if !request.settings.allows(&path, home) {
-                                return None;
+                    let deadline = Instant::now() + Duration::from_secs(2);
+                    let mut scanned = 0;
+                    let entries: Vec<_> = (0..count)
+                        .take_while(|i| {
+                            let read = !cancelled() && Instant::now() < deadline;
+                            if read {
+                                scanned = *i + 1;
                             }
-                            let name = path.file_name()?.to_string_lossy().into_owned();
-                            let directory = text("kMDItemContentType")
-                                .is_some_and(|t| t == "public.folder" || t == "public.directory");
-                            let modified = item
-                                .valueForAttribute(ns_string!("kMDItemFSContentChangeDate"))
-                                .and_then(|d| d.downcast::<NSDate>().ok())
-                                .map_or(0, |d| d.timeIntervalSince1970().max(0.0) as u64);
-                            Some(Entry {
-                                path,
-                                name,
-                                directory,
-                                modified,
+                            read
+                        })
+                        .filter_map(|i| {
+                            autoreleasepool(|_| {
+                                let item =
+                                    query.resultAtIndex(i).downcast::<NSMetadataItem>().ok()?;
+                                let text = |key: &str| {
+                                    item.valueForAttribute(&NSString::from_str(key))?
+                                        .downcast::<NSString>()
+                                        .ok()
+                                        .map(|s| s.to_string())
+                                };
+                                let path = PathBuf::from(text("kMDItemPath")?);
+                                if !request.settings.allows(&path, home) {
+                                    return None;
+                                }
+                                let name = path.file_name()?.to_string_lossy().into_owned();
+                                let directory = text("kMDItemContentType").is_some_and(|t| {
+                                    t == "public.folder" || t == "public.directory"
+                                });
+                                let modified = item
+                                    .valueForAttribute(ns_string!("kMDItemFSContentChangeDate"))
+                                    .and_then(|d| d.downcast::<NSDate>().ok())
+                                    .map_or(0, |d| d.timeIntervalSince1970().max(0.0) as u64);
+                                Some(Entry {
+                                    path,
+                                    name,
+                                    directory,
+                                    modified,
+                                })
                             })
                         })
+                        .filter(|entry| matcher.score(entry).is_some())
+                        .take(files::MAX_CANDIDATES)
                         .collect();
                     let gathering = query.isGathering();
                     query.enableUpdates();
                     send(
-                        files::matching(&entries, &request.query, &request.recent),
+                        matcher.matching(&entries, &request.recent),
                         gathering,
-                        count > files::MAX_CANDIDATES,
+                        scanned < count,
                         None,
                     );
                     last = Instant::now();
@@ -327,6 +347,68 @@ pub(crate) fn predicate(text: &str) -> Option<objc2::rc::Retained<NSPredicate>> 
             ))
             .into_super(),
         )
+    }
+}
+
+pub(crate) fn search_predicate(matcher: &Matcher) -> objc2::rc::Retained<NSPredicate> {
+    let mut conditions = Vec::new();
+    if matcher.options.regex {
+        if let Some(literals) = matcher.literals() {
+            let predicates: Vec<_> = literals
+                .iter()
+                .map(|literal| unsafe {
+                    NSPredicate::predicateWithFormat_argumentArray(
+                        ns_string!("kMDItemFSName CONTAINS[cd] %@"),
+                        Some(&NSArray::from_slice(&[
+                            &*NSString::from_str(literal) as &AnyObject
+                        ])),
+                    )
+                })
+                .collect();
+            conditions.push(if predicates.len() == 1 {
+                predicates[0].clone()
+            } else {
+                NSCompoundPredicate::orPredicateWithSubpredicates(&NSArray::from_retained_slice(
+                    &predicates,
+                ))
+                .into_super()
+            });
+        }
+    } else if let Some(predicate) = predicate(&matcher.term) {
+        conditions.push(predicate);
+    }
+    let kind = matcher.options.kind;
+    if kind != Kind::All {
+        let directory =
+            "(kMDItemContentType == 'public.folder' OR kMDItemContentType == 'public.directory')";
+        let format = match kind {
+            Kind::Folders => directory.into(),
+            Kind::Files => format!("NOT {directory}"),
+            _ => format!(
+                "NOT {directory} AND ({})",
+                kind.extensions()
+                    .iter()
+                    .map(|ext| format!("kMDItemFSName ENDSWITH[cd] '.{ext}'"))
+                    .collect::<Vec<_>>()
+                    .join(" OR ")
+            ),
+        };
+        conditions.push(unsafe {
+            NSPredicate::predicateWithFormat_argumentArray(&NSString::from_str(&format), None)
+        });
+    }
+    match conditions.len() {
+        0 => unsafe {
+            NSPredicate::predicateWithFormat_argumentArray(
+                ns_string!("kMDItemFSName LIKE '*'"),
+                None,
+            )
+        },
+        1 => conditions.pop().unwrap(),
+        _ => NSCompoundPredicate::andPredicateWithSubpredicates(&NSArray::from_retained_slice(
+            &conditions,
+        ))
+        .into_super(),
     }
 }
 

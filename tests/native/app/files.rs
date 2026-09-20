@@ -124,6 +124,7 @@ pub(crate) fn verify_files(mtm: MainThreadMarker) {
     assert!(ui.project_progress.isHidden() != app.files.borrow().loading);
     verify_completion(&delegate, &ui);
     verify_navigation(&delegate, &ui);
+    verify_filters_and_actions(&delegate, &ui);
 
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("preview.txt");
@@ -371,6 +372,106 @@ fn verify_navigation(delegate: &Delegate, ui: &PanelUi) {
     assert!(!ui.panel.isVisible());
 }
 
+fn verify_filters_and_actions(delegate: &Delegate, ui: &PanelUi) {
+    use winlane::features::files::query::Kind;
+    let app = delegate.ivars();
+    let entries: Vec<_> = [
+        ("report.pdf", false),
+        ("photo.png", false),
+        ("Documents", true),
+    ]
+    .into_iter()
+    .map(|(name, directory)| Entry {
+        path: home().join(name),
+        name: name.into(),
+        directory,
+        modified: 1,
+    })
+    .collect();
+    app.files.borrow_mut().entries = entries.clone();
+    app.query.replace("o".into());
+    delegate.filter();
+    delegate.set_files_kind(
+        Kind::ALL
+            .iter()
+            .position(|kind| *kind == Kind::Images)
+            .unwrap() as isize,
+    );
+    assert_eq!(delegate.selected_file(), Some(entries[1].clone()));
+    assert!(app.files.borrow().loading);
+    assert!(!ui.file_controls.view.isHidden());
+    assert!(ui.file_controls.actions.isEnabled());
+    assert!(
+        ui.scroll.frame().origin.y + ui.scroll.frame().size.height
+            <= ui.file_controls.view.frame().origin.y
+    );
+    for panel in delegate.panels() {
+        assert_eq!(panel.file_controls.kind.indexOfSelectedItem(), 4);
+    }
+    let menu = delegate.file_actions_menu();
+    assert_eq!(menu.numberOfItems(), 5);
+    assert_eq!(menu.itemAtIndex(0).unwrap().tag(), 0);
+    let copy_path = menu.itemAtIndex(4).unwrap();
+    assert_eq!(copy_path.keyEquivalent().to_string(), "c");
+    assert_eq!(
+        copy_path.keyEquivalentModifierMask(),
+        NSEventModifierFlags::Command | NSEventModifierFlags::Shift
+    );
+
+    delegate.set_files_kind(1);
+    let menu = delegate.file_actions_menu();
+    assert_eq!(menu.numberOfItems(), 6);
+    assert_eq!(menu.itemAtIndex(0).unwrap().tag(), 1);
+    assert_eq!(
+        menu.itemAtIndex(1).unwrap().keyEquivalentModifierMask(),
+        NSEventModifierFlags::Control
+    );
+    app.files.borrow_mut().entries = vec![entries[1].clone()];
+    delegate.set_files_kind(0);
+    delegate.file_menu_action(&menu.itemAtIndex(0).unwrap());
+    assert_eq!(
+        *app.query.borrow(),
+        "~/Documents/",
+        "menu actions keep the original target across background updates"
+    );
+    assert!(delegate.searching_files());
+
+    app.query.replace("[".into());
+    app.files.borrow_mut().entries = entries.clone();
+    delegate.set_files_regex(true);
+    assert!(
+        delegate.selected_file().is_none(),
+        "a pending expression must not activate an old unmatched result"
+    );
+    assert_eq!(ui.file_controls.regex.state(), NSControlStateValueOn);
+    let generation = app.files.borrow().generation;
+    delegate.apply_files_update(Update::Results {
+        generation,
+        entries: Vec::new(),
+        gathering: false,
+        limited: false,
+        error: Some("Invalid regular expression: unclosed character class".into()),
+    });
+    assert!(delegate.selected_file().is_none());
+    assert!(!ui.file_controls.actions.isEnabled());
+    assert!(!ui.footer.isHidden());
+    assert!(
+        ui.footer
+            .stringValue()
+            .to_string()
+            .contains("Invalid regular expression")
+    );
+    assert_eq!(*app.query.borrow(), "[");
+    assert!(
+        app.files.borrow().service.is_none(),
+        "UI controls do not perform disk access or compile expressions"
+    );
+    delegate.set_files_regex(false);
+    delegate.leave_scoped_search();
+    assert!(ui.file_controls.view.isHidden());
+    delegate.activate_selected();
+}
+
 fn verify_worker(delegate: &Delegate) {
     let predicate = crate::macos::platform::files::predicate("dc").unwrap();
     for (name, kind, expected) in [
@@ -402,6 +503,7 @@ fn verify_worker(delegate: &Delegate) {
     let generation = service.cancel();
     service.search(Request {
         generation,
+        options: Options::default(),
         query: format!("{}/", temp.path().display()),
         settings: files::Settings::default(),
         recent: Vec::new(),
@@ -449,6 +551,7 @@ fn verify_worker(delegate: &Delegate) {
         let generation = service.cancel();
         service.search(Request {
             generation,
+            options: Options::default(),
             query: word.into(),
             settings: files::Settings {
                 roots: vec![temp.path().to_string_lossy().into_owned()],
@@ -483,6 +586,38 @@ fn verify_worker(delegate: &Delegate) {
             }
         }
     }
+    for kind in winlane::features::files::query::Kind::ALL {
+        let options = Options { kind, regex: true };
+        for pattern in [r"\.(txt|md)$", r"^\d+$"] {
+            let (entries, error) = worker_result(&service, pattern.into(), options, temp.path());
+            assert!(
+                error.is_none(),
+                "native {kind:?} predicate must be accepted: {error:?}"
+            );
+            assert!(entries.iter().all(|entry| kind.allows(entry)));
+        }
+    }
+    let (entries, error) = worker_result(
+        &service,
+        format!("{}/^sample\\.txt$", temp.path().display()),
+        Options {
+            regex: true,
+            ..Options::default()
+        },
+        temp.path(),
+    );
+    assert!(error.is_none());
+    assert_eq!(entries.len(), 1);
+    let (_, error) = worker_result(
+        &service,
+        "[".into(),
+        Options {
+            regex: true,
+            ..Options::default()
+        },
+        temp.path(),
+    );
+    assert!(error.is_some());
     service.cancel();
     service.save(Vec::new());
     let deadline = Instant::now() + Duration::from_secs(3);
@@ -495,4 +630,42 @@ fn verify_worker(delegate: &Delegate) {
     );
     let predicate = crate::macos::platform::files::predicate("x' OR TRUEPREDICATE OR '").unwrap();
     assert!(!predicate.predicateFormat().is_empty());
+}
+
+fn worker_result(
+    service: &Service,
+    query: String,
+    options: Options,
+    root: &std::path::Path,
+) -> (Vec<Entry>, Option<String>) {
+    let generation = service.cancel();
+    service.search(Request {
+        generation,
+        query,
+        options,
+        settings: files::Settings {
+            roots: vec![root.to_string_lossy().into_owned()],
+            excluded: Vec::new(),
+            hide_generated: false,
+        },
+        recent: Vec::new(),
+    });
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let update = service
+            .receiver
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap();
+        if let Update::Results {
+            generation: actual,
+            entries,
+            gathering: false,
+            error,
+            ..
+        } = update
+            && actual == generation
+        {
+            return (entries, error);
+        }
+    }
 }

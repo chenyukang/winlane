@@ -139,7 +139,15 @@ fn folder_abbreviations_work_in_name_search_and_path_browsing() {
     std::fs::write(home.join("Documents.txt"), "fixture").unwrap();
     let entries = files::browse("~/", home, || false).unwrap();
     let names = |query| {
-        files::matching(&entries, query, &[])
+        let named: Vec<_> = entries
+            .iter()
+            .cloned()
+            .map(|mut entry| {
+                entry.path = Path::new("/fixtures").join(&entry.name);
+                entry
+            })
+            .collect();
+        files::matching(&named, query, &[])
             .into_iter()
             .map(|e| e.name)
             .collect::<Vec<_>>()

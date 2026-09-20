@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 
 pub mod history;
+pub mod query;
 pub const MAX_RESULTS: usize = 50;
 pub const MAX_CANDIDATES: usize = 5000;
 pub const MAX_RECENT: usize = 25;
@@ -204,6 +205,10 @@ fn subsequence(needle: &str, haystack: &str) -> bool {
 }
 
 pub fn score(entry: &Entry, query: &str) -> Option<u8> {
+    score_with_parent(entry, query, true)
+}
+
+fn score_with_parent(entry: &Entry, query: &str, match_parent: bool) -> Option<u8> {
     let query = query.trim().to_lowercase();
     if query.is_empty() {
         return Some(0);
@@ -233,7 +238,7 @@ pub fn score(entry: &Entry, query: &str) -> Option<u8> {
         if name.contains(word) {
             continue;
         }
-        if parent.contains(word) {
+        if match_parent && parent.contains(word) {
             rank = rank.max(3);
         } else if word.chars().count() >= if entry.directory { 2 } else { 3 }
             && subsequence(word, &name)
@@ -247,12 +252,20 @@ pub fn score(entry: &Entry, query: &str) -> Option<u8> {
 }
 
 pub fn matching(entries: &[Entry], query: &str, recent: &[Entry]) -> Vec<Entry> {
+    ranked_matching(entries, recent, |entry| score(entry, query))
+}
+
+fn ranked_matching(
+    entries: &[Entry],
+    recent: &[Entry],
+    score: impl Fn(&Entry) -> Option<u8>,
+) -> Vec<Entry> {
     let mut seen = HashSet::new();
     let mut ranked: Vec<_> = entries
         .iter()
         .filter(|e| seen.insert(&e.path))
         .filter_map(|e| {
-            score(e, query).map(|rank| {
+            score(e).map(|rank| {
                 (
                     rank,
                     recent
@@ -289,9 +302,21 @@ pub fn browse(
     home: &Path,
     cancelled: impl Fn() -> bool,
 ) -> Result<Vec<Entry>, String> {
-    let (directory, leaf) =
-        path_query(query, home).ok_or_else(|| tr!("路径无效。", "Invalid path.").to_owned())?;
-    let reader = std::fs::read_dir(&directory).map_err(|e| {
+    browse_with(
+        &query::Matcher::new(query, home, query::Options::default())?,
+        cancelled,
+    )
+}
+
+pub fn browse_with(
+    matcher: &query::Matcher,
+    cancelled: impl Fn() -> bool,
+) -> Result<Vec<Entry>, String> {
+    let directory = matcher
+        .directory
+        .as_ref()
+        .ok_or_else(|| tr!("路径无效。", "Invalid path.").to_owned())?;
+    let reader = std::fs::read_dir(directory).map_err(|e| {
         trf!(
             "无法读取目录 {}：{}",
             "Cannot read folder {}: {}",
@@ -308,11 +333,11 @@ pub fn browse(
             continue;
         };
         let name = item.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') && !leaf.starts_with('.') {
+        if name.starts_with('.') && (!matcher.term.starts_with('.') || matcher.options.regex) {
             continue;
         }
         if let Ok(entry) = Entry::read(item.path())
-            && score(&entry, &leaf).is_some()
+            && matcher.score(&entry).is_some()
         {
             entries.push(entry);
         }
