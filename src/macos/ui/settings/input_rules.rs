@@ -1,7 +1,9 @@
 use super::*;
 use crate::macos::platform::{applications::target_at_url, input_source::Source};
+use crate::macos::ui::rule_list::RuleListButton;
 use block2::RcBlock;
 use objc2_foundation::{NSArray, NSURL, ns_string};
+use std::cell::Cell;
 use std::rc::Rc;
 use winlane::core::config::ApplicationTarget;
 use winlane::features::input_rules::{
@@ -9,6 +11,7 @@ use winlane::features::input_rules::{
 };
 
 struct RuleRow {
+    navigation: Retained<RuleListButton>,
     view: Retained<NSView>,
     application: RefCell<Option<ApplicationTarget>>,
     choose: Retained<NSButton>,
@@ -116,14 +119,16 @@ pub(super) struct InputRulesPage {
     restore: Retained<NSPopUpButton>,
     scroll: Retained<NSScrollView>,
     document: Retained<NSView>,
-    empty: Retained<NSTextField>,
+    detail: Retained<NSView>,
+    global_view: Retained<NSView>,
+    global_navigation: Retained<RuleListButton>,
+    selected: Cell<usize>,
     rows: RefCell<Vec<Rc<RuleRow>>>,
     target: Weak<AnyObject>,
 }
 
 impl InputRulesPage {
     pub(super) fn new(host: &NSView, target: &AnyObject, mtm: MainThreadMarker) -> Self {
-        let group = settings_group(host, tr!("全局规则", "Global rule"), 570.0, 172.0, mtm);
         let enabled = checkbox(
             tr!(
                 "为其他应用启用自动切换",
@@ -131,22 +136,57 @@ impl InputRulesPage {
             ),
             mtm,
         );
-        enabled.setFrame(rect(20.0, 130.0, 700.0, 28.0));
+        enabled.setFrame(rect(4.0, 533.0, 730.0, 28.0));
         set_action(&enabled, target, sel!(settingsChanged:));
-        group.addSubview(&enabled);
-        row_divider(&group, 120.0, mtm);
-        group.addSubview(&label(
-            tr!("默认输入法", "Default input source"),
-            14.0,
-            rect(20.0, 79.0, 270.0, 26.0),
+        host.addSubview(&enabled);
+        let scroll =
+            NSScrollView::initWithFrame(NSScrollView::alloc(mtm), rect(0.0, 50.0, 250.0, 462.0));
+        scroll.setHasVerticalScroller(true);
+        scroll.setAutohidesScrollers(true);
+        scroll.setScrollerStyle(NSScrollerStyle::Overlay);
+        scroll.setDrawsBackground(false);
+        let document = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 250.0, 462.0));
+        scroll.setDocumentView(Some(&document));
+        host.addSubview(&scroll);
+        host.addSubview(&button(
+            tr!("＋ 添加应用…", "＋ Add App…"),
+            target,
+            sel!(addInputRule:),
+            rect(0.0, 10.0, 250.0, 30.0),
             mtm,
         ));
-        let source = SourcePicker::new(rect(310.0, 78.0, 410.0, 28.0), false, target, mtm);
-        group.addSubview(&source.control);
-        group.addSubview(&label(
+        let divider = NSBox::initWithFrame(NSBox::alloc(mtm), rect(262.0, 10.0, 1.0, 502.0));
+        divider.setBoxType(NSBoxType::Separator);
+        host.addSubview(&divider);
+        let detail = NSView::initWithFrame(NSView::alloc(mtm), rect(274.0, 50.0, 466.0, 462.0));
+        host.addSubview(&detail);
+        let global_view = NSView::initWithFrame(NSView::alloc(mtm), detail.bounds());
+        global_view.addSubview(&label(
+            tr!("全局规则", "Global rule"),
+            20.0,
+            rect(20.0, 407.0, 426.0, 32.0),
+            mtm,
+        ));
+        global_view.addSubview(&hint(
+            tr!(
+                "未单独设置的应用使用此规则。",
+                "Used by apps without their own rule."
+            ),
+            rect(20.0, 373.0, 426.0, 25.0),
+            mtm,
+        ));
+        global_view.addSubview(&label(
+            tr!("默认输入法", "Default input source"),
+            14.0,
+            rect(20.0, 329.0, 426.0, 24.0),
+            mtm,
+        ));
+        let source = SourcePicker::new(rect(20.0, 293.0, 426.0, 28.0), false, target, mtm);
+        global_view.addSubview(&source.control);
+        global_view.addSubview(&label(
             tr!("回到应用时", "When returning to an app"),
             14.0,
-            rect(20.0, 28.0, 270.0, 26.0),
+            rect(20.0, 233.0, 426.0, 24.0),
             mtm,
         ));
         let restore = popup(
@@ -154,50 +194,35 @@ impl InputRulesPage {
                 tr!("使用默认输入法", "Use default input source"),
                 tr!("恢复该应用上次使用", "Restore last used in that app"),
             ],
-            rect(310.0, 27.0, 410.0, 28.0),
+            rect(20.0, 197.0, 426.0, 28.0),
             mtm,
         );
         set_action(&restore, target, sel!(settingsChanged:));
-        group.addSubview(&restore);
-        host.addSubview(&label(
-            tr!("应用规则", "App rules"),
-            14.0,
-            rect(8.0, 329.0, 300.0, 27.0),
-            mtm,
-        ));
-        host.addSubview(&button(
-            tr!("＋ 添加应用…", "＋ Add App…"),
-            target,
-            sel!(addInputRule:),
-            rect(554.0, 328.0, 182.0, 30.0),
-            mtm,
-        ));
-        let scroll =
-            NSScrollView::initWithFrame(NSScrollView::alloc(mtm), rect(0.0, 53.0, 740.0, 265.0));
-        scroll.setHasVerticalScroller(true);
-        scroll.setAutohidesScrollers(true);
-        scroll.setScrollerStyle(NSScrollerStyle::Overlay);
-        scroll.setDrawsBackground(false);
-        let document = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 740.0, 265.0));
-        let empty = hint(
+        global_view.addSubview(&restore);
+        global_view.addSubview(&hint(
             tr!(
-                "添加应用，为它覆盖全局输入法或恢复策略。",
-                "Add an app to override its input source or restore strategy."
+                "应用规则优先；Winlane 规则始终生效。",
+                "App rules take priority; the Winlane rule is always active."
             ),
-            rect(20.0, 209.0, 690.0, 40.0),
+            rect(20.0, 118.0, 426.0, 48.0),
             mtm,
-        );
-        document.addSubview(&empty);
-        scroll.setDocumentView(Some(&document));
-        host.addSubview(&scroll);
-        host.addSubview(&hint(tr!("应用规则优先；Winlane 规则始终生效。输入过程中仍可手动切换。", "App rules take priority; the Winlane rule is always active. You can still switch sources manually."), rect(8.0, 3.0, 726.0, 42.0), mtm));
+        ));
+        detail.addSubview(&global_view);
+        let global_navigation = RuleListButton::new(target, sel!(selectInputRule:), mtm);
+        global_navigation.set_label(tr!("全局规则", "Global rule"));
+        global_navigation.set_symbol("globe");
+        global_navigation.setTag(0);
+        document.addSubview(&global_navigation);
         Self {
             enabled,
             source,
             restore,
             scroll,
             document,
-            empty,
+            detail,
+            global_view,
+            global_navigation,
+            selected: Cell::new(0),
             rows: RefCell::default(),
             target: Weak::new(target),
         }
@@ -225,6 +250,7 @@ impl InputRulesPage {
             .selectItemAtIndex(isize::from(settings.restore == RestoreStrategy::LastUsed));
         for row in self.rows.borrow_mut().drain(..) {
             row.view.removeFromSuperview();
+            row.navigation.removeFromSuperview();
         }
         for rule in &settings.apps {
             let row = self.append_row();
@@ -236,11 +262,12 @@ impl InputRulesPage {
                 Some(RestoreStrategy::LastUsed) => 2,
             });
         }
+        self.selected.set(0);
         self.layout();
         self.document.scrollRectToVisible(rect(
             0.0,
             self.document.bounds().size.height - 1.0,
-            740.0,
+            250.0,
             1.0,
         ));
     }
@@ -283,57 +310,64 @@ impl InputRulesPage {
             .target
             .load()
             .expect("settings delegate lives for the app lifetime");
-        let view = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 740.0, 130.0));
+        let view = NSView::initWithFrame(NSView::alloc(mtm), self.detail.bounds());
+        let navigation = RuleListButton::new(&target, sel!(selectInputRule:), mtm);
+        navigation.set_label(tr!("新应用规则", "New app rule"));
+        navigation.set_symbol("app.dashed");
         let choose = button(
             tr!("选择应用…", "Choose App…"),
             &target,
             sel!(chooseInputRuleApp:),
-            rect(10.0, 89.0, 588.0, 30.0),
+            rect(20.0, 403.0, 426.0, 32.0),
             mtm,
         );
         let remove = button(
-            tr!("移除", "Remove"),
+            tr!("移除规则", "Remove Rule"),
             &target,
             sel!(removeInputRule:),
-            rect(615.0, 89.0, 112.0, 30.0),
+            rect(306.0, 12.0, 140.0, 30.0),
             mtm,
         );
         view.addSubview(&choose);
         view.addSubview(&remove);
-        let source = SourcePicker::new(rect(10.0, 22.0, 350.0, 28.0), true, &target, mtm);
-        source.fill(SourceRule::Global, &self.sources());
-        view.addSubview(&hint(
+        view.addSubview(&label(
             tr!("默认输入法", "Default input source"),
-            rect(14.0, 53.0, 340.0, 23.0),
+            14.0,
+            rect(20.0, 329.0, 426.0, 24.0),
             mtm,
         ));
+        let source = SourcePicker::new(rect(20.0, 293.0, 426.0, 28.0), true, &target, mtm);
+        source.fill(SourceRule::Global, &self.sources());
         view.addSubview(&source.control);
+        view.addSubview(&label(
+            tr!("回到应用时", "When returning to an app"),
+            14.0,
+            rect(20.0, 233.0, 426.0, 24.0),
+            mtm,
+        ));
         let restore = popup(
             &[
                 tr!("使用全局设置", "Use global setting"),
                 tr!("使用默认输入法", "Use default input source"),
                 tr!("恢复该应用上次使用", "Restore last used in that app"),
             ],
-            rect(378.0, 22.0, 349.0, 28.0),
+            rect(20.0, 197.0, 426.0, 28.0),
             mtm,
         );
         set_action(&restore, &target, sel!(settingsChanged:));
-        view.addSubview(&hint(
-            tr!("回到应用时", "When returning to an app"),
-            rect(382.0, 53.0, 340.0, 23.0),
-            mtm,
-        ));
         view.addSubview(&restore);
-        row_divider(&view, 4.0, mtm);
         let row = Rc::new(RuleRow {
             view,
+            navigation,
             choose,
             remove,
             source,
             restore,
             application: RefCell::default(),
         });
-        self.document.addSubview(&row.view);
+        row.view.setHidden(true);
+        self.detail.addSubview(&row.view);
+        self.document.addSubview(&row.navigation);
         self.rows.borrow_mut().push(row.clone());
         row
     }
@@ -341,6 +375,8 @@ impl InputRulesPage {
         row.choose.setTitle(&NSString::from_str(&application.name));
         row.choose
             .setToolTip(Some(&NSString::from_str(&application.bundle_id)));
+        row.navigation.set_label(&application.name);
+        row.navigation.set_application_icon(&application.path);
         let builtin = application.bundle_id == WINLANE_ID;
         row.choose.setEnabled(!builtin);
         row.remove.setEnabled(!builtin);
@@ -348,24 +384,48 @@ impl InputRulesPage {
     }
     fn layout(&self) {
         let rows = self.rows.borrow();
-        let height = (rows.len() as f64 * 130.0).max(self.scroll.contentSize().height);
-        self.document.setFrameSize(NSSize::new(740.0, height));
-        self.empty.setHidden(!rows.is_empty());
+        let height = ((rows.len() + 1) as f64 * 42.0).max(self.scroll.contentSize().height);
+        self.document.setFrameSize(NSSize::new(250.0, height));
+        self.global_navigation
+            .setFrame(rect(4.0, height - 42.0, 242.0, 40.0));
+        self.global_navigation
+            .set_selected(self.selected.get() == 0);
+        self.global_view.setHidden(self.selected.get() != 0);
         for (index, row) in rows.iter().enumerate() {
-            row.view
-                .setFrameOrigin(NSPoint::new(0.0, height - (index + 1) as f64 * 130.0));
+            row.navigation
+                .setFrame(rect(4.0, height - (index + 2) as f64 * 42.0, 242.0, 40.0));
+            row.navigation.setTag((index + 1) as isize);
+            row.navigation
+                .set_selected(self.selected.get() == index + 1);
+            row.view.setHidden(self.selected.get() != index + 1);
             row.choose.setTag(index as isize);
             row.remove.setTag(index as isize);
+        }
+    }
+    pub(super) fn select(&self, index: usize) {
+        if index > self.rows.borrow().len() {
+            return;
+        }
+        if let Some(window) = self.detail.window() {
+            window.makeFirstResponder(None);
+        }
+        self.selected.set(index);
+        self.layout();
+        if index == 0 {
+            self.global_navigation
+                .scrollRectToVisible(self.global_navigation.bounds());
+        } else if let Some(row) = self.rows.borrow().get(index - 1) {
+            row.navigation.scrollRectToVisible(row.navigation.bounds());
         }
     }
     pub(super) fn add(&self, window: &NSWindow, message: &Retained<NSTextField>) {
         if self.rows.borrow().len() >= 64 {
             return;
         }
-        let row = self.append_row();
-        self.layout();
-        row.view.scrollRectToVisible(row.view.bounds());
-        self.choose(self.rows.borrow().len() - 1, window, message);
+        self.append_row();
+        let count = self.rows.borrow().len();
+        self.select(count);
+        self.choose(count - 1, window, message);
     }
     pub(super) fn remove(&self, index: usize) {
         let removable = self
@@ -374,11 +434,15 @@ impl InputRulesPage {
             .get(index)
             .is_some_and(|row| row.remove.isEnabled());
         if removable {
-            self.rows
-                .borrow_mut()
-                .remove(index)
-                .view
-                .removeFromSuperview();
+            let row = self.rows.borrow_mut().remove(index);
+            row.view.removeFromSuperview();
+            row.navigation.removeFromSuperview();
+            let selected = self.selected.get();
+            self.selected.set(if selected > index + 1 {
+                selected - 1
+            } else {
+                selected.min(self.rows.borrow().len())
+            });
         }
         self.layout();
     }

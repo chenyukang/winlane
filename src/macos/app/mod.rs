@@ -18,6 +18,7 @@ mod recency;
 mod render;
 mod search;
 mod session;
+mod settings_focus;
 mod shortcuts;
 mod snippets;
 mod views;
@@ -30,6 +31,7 @@ use delegate::Delegate;
 #[cfg(test)]
 use input::insert_keyboard_layout_text;
 use layout::{alias_badge_size, label, panel_height, rect, row_height, set_label};
+use settings_focus::PendingSettingsFocus;
 use views::{ListView, PanelContentView, RowAppearance, SearchPanel, WindowRowButton};
 
 use std::cell::{Cell, OnceCell, RefCell};
@@ -209,7 +211,8 @@ struct AppState {
     aliases_writable: Cell<bool>,
     settings: RefCell<Option<Rc<SettingsWindow>>>,
     settings_release_pending: Cell<bool>,
-    settings_focus_pending: Cell<bool>,
+    settings_focus_pending: Cell<Option<PendingSettingsFocus>>,
+    settings_focus_timer: RefCell<Option<Retained<NSTimer>>>,
     app_input_rules: RefCell<winlane::features::input_rules::Runtime>,
     app_input_pending: Cell<bool>,
     settings_last_tab: Cell<Option<isize>>,
@@ -218,7 +221,8 @@ struct AppState {
     updater: OnceCell<crate::macos::platform::updater::Updater>,
     updater_error: RefCell<Option<String>>,
     app_shortcuts: RefCell<Option<Rc<AppShortcutsWindow>>>,
-    alias_rules: RefCell<Option<Rc<crate::macos::ui::alias_rules::AliasRulesWindow>>>,
+    alias_rules_editor: RefCell<Option<Rc<crate::macos::ui::alias_rules::AliasRulesEditor>>>,
+    alias_rules_draft: RefCell<Option<crate::macos::ui::alias_rules::AliasRulesDraft>>,
     launch_receiver: RefCell<Option<PendingLaunch>>,
     installed_apps: RefCell<Vec<InstalledApp>>,
     catalog_receiver: RefCell<Option<Receiver<Vec<InstalledApp>>>>,

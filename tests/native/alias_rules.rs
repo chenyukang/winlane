@@ -1,14 +1,19 @@
 use super::*;
 
 pub fn verify_rules_editor(
-    window: &AliasRulesWindow,
+    window: &AliasRulesEditor,
+    settings: &crate::macos::ui::settings::SettingsWindow,
     target: &AnyObject,
     mtm: MainThreadMarker,
     saved: impl Fn() -> Config,
 ) {
+    let host = &settings.window;
+    assert_eq!(window.view().window().as_ref(), Some(host));
     window.add(target, mtm);
     assert!(window.candidate().unwrap().is_empty());
     let first = window.rows.borrow()[0].clone();
+    assert_eq!(window.selected.get(), Some(0));
+    assert!(!first.view.isHidden());
     first.set_application(ApplicationTarget {
         bundle_id: "com.example.editor".into(),
         path: "/Applications/Example Editor.app".into(),
@@ -30,6 +35,8 @@ pub fn verify_rules_editor(
     first.alias.setStringValue(ns_string!("ck"));
     window.add(target, mtm);
     let second = window.rows.borrow()[1].clone();
+    assert!(first.view.isHidden());
+    assert!(!second.view.isHidden());
     second.set_application(first.application.borrow().clone().unwrap());
     second.alias.setStringValue(ns_string!("ck"));
     second.title.setStringValue(ns_string!("rust"));
@@ -51,10 +58,40 @@ pub fn verify_rules_editor(
         "incomplete new rows remain drafts"
     );
     assert_eq!(saved().alias_rules[0].title_contains, "ckb project");
-    let translated = AliasRulesWindow::new(target, mtm);
-    translated.copy_draft_from(window, target, mtm);
+    let translated = AliasRulesEditor::new(target, mtm);
+    translated.restore_draft(window.draft(), target, mtm);
+    assert_eq!(translated.draft(), window.draft());
     assert_eq!(translated.rows.borrow().len(), 3);
+    assert_eq!(translated.selected.get(), window.selected.get());
     assert_eq!(translated.candidate().unwrap(), window.candidate().unwrap());
+    // Switching rules commits the active field before hiding its editor.
+    window.select(0);
+    unsafe { first.title.selectText(None) };
+    let editor = host
+        .firstResponder()
+        .unwrap()
+        .downcast::<NSTextView>()
+        .unwrap();
+    editor.setString(ns_string!("ckb project edited"));
+    unsafe {
+        second.navigation.sendAction_to(
+            second.navigation.action(),
+            second.navigation.target().as_deref(),
+        );
+    }
+    assert_eq!(window.selected.get(), Some(1));
+    assert!(first.view.isHidden());
+    assert_eq!(saved().alias_rules[0].title_contains, "ckb project edited");
+    window.select(0);
+    first.alias.setStringValue(ns_string!("ABC"));
+    window.select(1);
+    window.select(0);
+    assert_eq!(
+        first.alias.stringValue().to_string(),
+        "ABC",
+        "invalid drafts survive selection"
+    );
+    first.alias.setStringValue(ns_string!("ck"));
     unsafe {
         assert!(
             first
@@ -71,13 +108,16 @@ pub fn verify_rules_editor(
         for view in row.view.subviews().iter() {
             assert!(view.frame().origin.x >= 0.0 && view.frame().origin.y >= 0.0);
             assert!(view.frame().origin.x + view.frame().size.width <= row.view.frame().size.width);
+            assert!(
+                view.frame().origin.y + view.frame().size.height <= row.view.frame().size.height
+            );
         }
     }
     if let Ok(dir) = std::env::var("WINLANE_PREVIEW_DIR") {
-        let root = window.window.contentView().unwrap();
+        let root = window.view();
         // A solid backing makes offscreen AppKit text readable in the preview.
         let appearance = unsafe { NSAppearance::appearanceNamed(NSAppearanceNameAqua) };
-        window.window.setAppearance(appearance.as_deref());
+        host.setAppearance(appearance.as_deref());
         let backing = NSBox::initWithFrame(NSBox::alloc(mtm), root.bounds());
         backing.setBoxType(NSBoxType::Custom);
         backing.setFillColor(&NSColor::whiteColor());
@@ -102,26 +142,21 @@ pub fn verify_rules_editor(
             )
         );
     }
-    let row = window.rows.borrow()[0].clone();
-    // SAFETY: The retained field belongs to this hidden native window.
-    unsafe { row.title.selectText(None) };
-    let editor = window
-        .window
+    window.select(0);
+    let selected = window.rows.borrow()[0].clone();
+    unsafe { selected.title.selectText(None) };
+    let field_editor = host
         .firstResponder()
         .unwrap()
         .downcast::<NSTextView>()
         .unwrap();
-    editor.setString(ns_string!("compiler"));
-    window
-        .window
-        .sendEvent(&crate::macos::ui::settings::tests::escape_event(
-            &window.window,
-            NSEventModifierFlags::empty(),
-        ));
+    field_editor.setString(ns_string!("saved on tab change"));
+    settings.select_tab(4);
+    assert_eq!(saved().alias_rules[0].title_contains, "saved on tab change");
+    settings.select_tab(5);
     assert_eq!(
-        saved().alias_rules[0].title_contains,
-        "compiler",
-        "Escape must finish and save the active rule edit"
+        window.rows.borrow()[0].title.stringValue().to_string(),
+        "saved on tab change"
     );
-    assert!(!window.window.isVisible());
+    assert!(!host.isVisible());
 }

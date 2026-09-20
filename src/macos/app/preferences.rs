@@ -2,18 +2,6 @@ use super::*;
 use crate::macos::platform::preferences as preference_store;
 
 impl Delegate {
-    pub(super) fn finish_settings_focus(&self) {
-        // App activation can finish after the nonactivating search panel has gone away.
-        // Consume the request once so unrelated future activations cannot steal focus.
-        if self.ivars().settings_focus_pending.replace(false)
-            && self.ivars().mode.get().is_none()
-            && let Some(settings) = self.settings_window()
-            && settings.window.isVisible()
-        {
-            settings.bring_to_front();
-        }
-    }
-
     pub(super) fn settings_window(&self) -> Option<Rc<SettingsWindow>> {
         self.ivars().settings.borrow().clone()
     }
@@ -40,6 +28,7 @@ impl Delegate {
             return;
         };
         match settings.selected_tab() {
+            5 => settings.embed_alias_rules(self.ensure_alias_rules_editor().view()),
             6 => settings.embed_snippets(self.ensure_snippet_editor().view()),
             8 => settings.embed_quicklinks(self.ensure_quicklink_editor().view()),
             _ => {}
@@ -47,6 +36,9 @@ impl Delegate {
     }
 
     fn release_settings_editors(&self) {
+        if let Some(editor) = self.ivars().alias_rules_editor.take() {
+            self.ivars().alias_rules_draft.replace(Some(editor.draft()));
+        }
         if let Some(editor) = self.ivars().snippet_editor.take() {
             self.ivars()
                 .snippet_editor_draft
@@ -96,25 +88,29 @@ impl Delegate {
         }
     }
 
-    pub(super) fn ensure_alias_rules_window(
+    pub(super) fn ensure_alias_rules_editor(
         &self,
-    ) -> Rc<crate::macos::ui::alias_rules::AliasRulesWindow> {
-        if let Some(window) = self.ivars().alias_rules.borrow().clone() {
-            return window;
+    ) -> Rc<crate::macos::ui::alias_rules::AliasRulesEditor> {
+        if let Some(editor) = self.ivars().alias_rules_editor.borrow().clone() {
+            return editor;
         }
-        let window = Rc::new(crate::macos::ui::alias_rules::AliasRulesWindow::new(
+        let editor = Rc::new(crate::macos::ui::alias_rules::AliasRulesEditor::new(
             self,
             self.mtm(),
         ));
-        window
-            .window
-            .setDelegate(Some(ProtocolObject::from_ref(self)));
-        self.ivars().alias_rules.replace(Some(window.clone()));
-        window
+        if let Some(draft) = self.ivars().alias_rules_draft.take() {
+            editor.restore_draft(draft, self, self.mtm());
+        } else {
+            editor.fill(&self.ivars().config.borrow().alias_rules, self, self.mtm());
+        }
+        self.ivars()
+            .alias_rules_editor
+            .replace(Some(editor.clone()));
+        editor
     }
 
     pub(super) fn autosave_alias_rules(&self) {
-        let Some(window) = self.ivars().alias_rules.borrow().clone() else {
+        let Some(window) = self.ivars().alias_rules_editor.borrow().clone() else {
             return;
         };
         let result = window.candidate().and_then(|rules| {
@@ -192,18 +188,6 @@ impl Delegate {
                 window.select_tab(tab);
                 window.window.setFrameOrigin(frame.origin);
                 self.report_shortcut_status();
-            }
-        }
-        let old_alias_rules = state.alias_rules.take();
-        if let Some(old) = old_alias_rules {
-            let showing = old.window.isVisible();
-            let frame = old.window.frame();
-            old.window.close();
-            if showing {
-                let window = self.ensure_alias_rules_window();
-                window.copy_draft_from(&old, self, self.mtm());
-                window.window.setFrameOrigin(frame.origin);
-                window.window.makeKeyAndOrderFront(None);
             }
         }
         let old_shortcuts = state.app_shortcuts.take();

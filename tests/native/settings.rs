@@ -473,7 +473,7 @@ fn verify_lazy_pages(target: &AnyObject, mtm: MainThreadMarker) {
     for index in [0, 2, 3, 5] {
         settings.select_tab(index);
     }
-    verify_loaded_pages(&settings, &[0, 1, 2, 3, 4, 5, 7]);
+    verify_loaded_pages(&settings, &[0, 1, 2, 3, 4, 7]);
     assert_eq!(settings.candidate().unwrap(), config);
 }
 

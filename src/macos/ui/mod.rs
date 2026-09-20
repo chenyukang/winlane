@@ -6,6 +6,7 @@ pub(crate) mod input;
 pub(crate) mod input_indicator;
 pub(crate) mod material;
 pub(crate) mod quicklinks;
+mod rule_list;
 pub(crate) mod settings;
 pub(crate) mod shortcut;
 pub(crate) mod snippets;

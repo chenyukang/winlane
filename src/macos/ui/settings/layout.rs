@@ -126,7 +126,6 @@ impl SettingsWindow {
             input: OnceCell::new(),
             input_rules: OnceCell::new(),
             windows: OnceCell::new(),
-            aliases: OnceCell::new(),
             clipboard: OnceCell::new(),
             updater: RefCell::new((false, false, None)),
         }

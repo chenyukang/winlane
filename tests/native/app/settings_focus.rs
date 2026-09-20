@@ -3,6 +3,8 @@ use super::*;
 #[derive(Default)]
 struct FocusProbe {
     visible: Cell<bool>,
+    key: Cell<bool>,
+    on_active_space: Cell<bool>,
     key_requests: Cell<usize>,
     centers: Cell<usize>,
 }
@@ -17,6 +19,10 @@ define_class!(
     impl SettingsFocusProbe {
         #[unsafe(method(isVisible))]
         fn visible(&self) -> bool { self.ivars().visible.get() }
+        #[unsafe(method(isKeyWindow))]
+        fn key(&self) -> bool { self.ivars().key.get() }
+        #[unsafe(method(isOnActiveSpace))]
+        fn on_active_space(&self) -> bool { self.ivars().on_active_space.get() }
         #[unsafe(method(makeKeyAndOrderFront:))]
         fn make_key(&self, _: Option<&AnyObject>) {
             self.ivars().visible.set(true);
@@ -59,6 +65,7 @@ pub(super) fn verify_settings_focus(mtm: MainThreadMarker) {
     let settings = Rc::new(settings);
     delegate.ivars().settings.replace(Some(settings.clone()));
     probe.ivars().visible.set(true);
+    probe.ivars().on_active_space.set(true);
     delegate.prepare_panel(PanelMode::Search, 123, 0);
     assert!(
         !probe.isVisible(),
@@ -100,6 +107,10 @@ pub(super) fn verify_settings_focus(mtm: MainThreadMarker) {
         probe.ivars().key_requests.get() > before_activation,
         "a delayed app activation must complete the focus request for existing Settings"
     );
+    assert!(
+        delegate.ivars().settings_focus_pending.get().is_some(),
+        "an activation notification must not finish the request before Settings actually receives keyboard focus"
+    );
     assert_eq!(
         probe.ivars().centers.get(),
         0,
@@ -116,6 +127,70 @@ pub(super) fn verify_settings_focus(mtm: MainThreadMarker) {
             .collectionBehavior()
             .contains(NSWindowCollectionBehavior::MoveToActiveSpace)
     );
+    let state = delegate.ivars();
+    let request = state.settings_focus_pending.get().unwrap();
+    let timer = state
+        .settings_focus_timer
+        .borrow()
+        .as_ref()
+        .unwrap()
+        .clone();
+    let own_pid = Some(std::process::id() as i32);
+    let key_requests = probe.ivars().key_requests.get();
+    timer.fire();
+    assert!(
+        probe.ivars().key_requests.get() > key_requests,
+        "a timer must retry without another activation notification"
+    );
+    assert!(state.settings_focus_pending.get().is_some());
+    probe.ivars().key.set(true);
+    delegate.check_settings_focus(false, request.origin_pid, request.started, true);
+    assert!(
+        state.settings_focus_pending.get().is_some(),
+        "a key flag in an inactive app is not a successful handoff"
+    );
+    delegate.check_settings_focus(true, request.origin_pid, request.started, true);
+    assert!(
+        state.settings_focus_pending.get().is_some(),
+        "a stale app-active flag must not override the system's frontmost application"
+    );
+    probe.ivars().on_active_space.set(false);
+    delegate.check_settings_focus(true, own_pid, request.started, true);
+    assert!(
+        state.settings_focus_pending.get().is_some(),
+        "Settings must reach the current Space"
+    );
+    probe.ivars().on_active_space.set(true);
+    delegate.check_settings_focus(true, own_pid, request.started, false);
+    assert!(
+        state.settings_focus_pending.get().is_some(),
+        "synchronous success must survive until after panel teardown"
+    );
+    probe.ivars().key.set(false);
+    let requests = probe.ivars().key_requests.get();
+    delegate.check_settings_focus(
+        true,
+        own_pid,
+        request.started + Duration::from_millis(100),
+        true,
+    );
+    assert!(
+        probe.ivars().key_requests.get() > requests,
+        "recover focus lost as the nonactivating panel closes"
+    );
+    probe.ivars().key.set(true);
+    delegate.check_settings_focus(
+        true,
+        own_pid,
+        request.started + Duration::from_millis(200),
+        true,
+    );
+    assert!(state.settings_focus_pending.get().is_none());
+    assert!(state.settings_focus_timer.borrow().is_none());
+    assert!(
+        !timer.isValid(),
+        "successful handoff stops the temporary timer"
+    );
     let completed = probe.ivars().key_requests.get();
     delegate.became_active(sel!(applicationDidBecomeActive:), &activation);
     assert_eq!(
@@ -125,7 +200,14 @@ pub(super) fn verify_settings_focus(mtm: MainThreadMarker) {
     );
 
     delegate.settings_action(sel!(showSettings:), None);
+    let canceled_timer = state
+        .settings_focus_timer
+        .borrow()
+        .as_ref()
+        .unwrap()
+        .clone();
     delegate.prepare_panel(PanelMode::Search, 124, 0);
+    assert!(!canceled_timer.isValid());
     let canceled = probe.ivars().key_requests.get();
     delegate.became_active(sel!(applicationDidBecomeActive:), &activation);
     assert_eq!(
@@ -135,10 +217,51 @@ pub(super) fn verify_settings_focus(mtm: MainThreadMarker) {
     );
     delegate.end_session();
     delegate.settings_action(sel!(showSettings:), None);
+    let request = state.settings_focus_pending.get().unwrap();
+    let requests = probe.ivars().key_requests.get();
+    delegate.check_settings_focus(
+        false,
+        request.origin_pid,
+        request.started + Duration::from_millis(1500),
+        true,
+    );
+    assert!(
+        state.settings_focus_pending.get().is_none(),
+        "denied activation cannot retry forever"
+    );
+    assert_eq!(probe.ivars().key_requests.get(), requests);
+
+    delegate.settings_action(sel!(showSettings:), None);
+    let request = state.settings_focus_pending.get().unwrap();
+    let requests = probe.ivars().key_requests.get();
+    delegate.check_settings_focus(false, Some(-42), request.started, true);
+    assert!(
+        state.settings_focus_pending.get().is_none(),
+        "switching to another app cancels focus recovery"
+    );
+    assert_eq!(probe.ivars().key_requests.get(), requests);
+
+    delegate.settings_action(sel!(showSettings:), None);
+    let stale = state
+        .settings_focus_timer
+        .borrow()
+        .as_ref()
+        .unwrap()
+        .clone();
+    delegate.settings_action(sel!(showSettings:), None);
+    assert!(!stale.isValid());
+    let requests = probe.ivars().key_requests.get();
+    delegate.retry_settings_focus(sel!(retrySettingsFocus:), &stale);
+    assert_eq!(
+        probe.ivars().key_requests.get(),
+        requests,
+        "old callbacks cannot act on a newer request"
+    );
     let closed = unsafe {
         NSNotification::notificationWithName_object(NSWindowWillCloseNotification, Some(&*probe))
     };
     delegate.settings_closed(sel!(windowWillClose:), &closed);
+    assert!(state.settings_focus_timer.borrow().is_none());
     probe.ivars().visible.set(false);
     let canceled = probe.ivars().key_requests.get();
     delegate.became_active(sel!(applicationDidBecomeActive:), &activation);
@@ -165,6 +288,6 @@ pub(super) fn verify_settings_focus(mtm: MainThreadMarker) {
     }
     winlane::core::i18n::set_locale(previous_locale);
     println!(
-        "Settings focus: Command-comma reuses the existing window and draft, completes delayed activation once, and cancels on search/close; no windows shown or apps activated."
+        "Settings focus: Command-comma retains drafts, retries lost or delayed keyboard focus, checks the active Space, and cancels on success, timeout, app changes, new search or close; no windows shown or apps activated."
     );
 }

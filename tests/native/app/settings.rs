@@ -60,9 +60,16 @@ pub(super) fn verify_autosave(mtm: MainThreadMarker) {
         &shortcuts, &delegate, mtm, saved,
     );
     assert!(!settings.window.isVisible() && !shortcuts.window.isVisible());
-    let rules = delegate.ensure_alias_rules_window();
-    crate::macos::ui::settings::tests::verify_escape_close(&rules.window);
-    crate::macos::ui::alias_rules::tests::verify_rules_editor(&rules, &delegate, mtm, saved);
+    settings.select_tab(5);
+    let rules = delegate
+        .ivars()
+        .alias_rules_editor
+        .borrow()
+        .clone()
+        .unwrap();
+    crate::macos::ui::alias_rules::tests::verify_rules_editor(
+        &rules, &settings, &delegate, mtm, saved,
+    );
     assert_eq!(
         settings.candidate().unwrap().alias_rules,
         saved().alias_rules
@@ -74,7 +81,7 @@ pub(super) fn verify_autosave(mtm: MainThreadMarker) {
     delegate.release_closed_settings();
     assert!(delegate.settings_window().is_none());
     println!(
-        "Settings Escape checks passed: all three windows close, active edits save, IME composition and modified Escape do not close windows."
+        "Settings Escape checks passed: Settings and app shortcuts close, active edits save, IME composition and modified Escape do not close windows."
     );
     store.removePersistentDomainForName(&domain);
     winlane::core::i18n::set_locale(previous_locale);
@@ -82,6 +89,7 @@ pub(super) fn verify_autosave(mtm: MainThreadMarker) {
         "Autosave checks passed: native actions persisted to an isolated preferences domain; invalid values and conflicts preserved prior settings; no keyboard taps installed."
     );
     verify_settings_lifecycle(mtm);
+    verify_alias_editor_lifecycle(mtm);
 }
 
 fn verify_settings_lifecycle(mtm: MainThreadMarker) {
@@ -191,5 +199,86 @@ fn verify_settings_lifecycle(mtm: MainThreadMarker) {
     }
     println!(
         "Settings lifecycle checks passed: pages load on demand; windows and editors release on close; drafts and saved values survive repeated reopen."
+    );
+}
+
+fn verify_alias_editor_lifecycle(mtm: MainThreadMarker) {
+    use crate::macos::ui::settings::tests::verify_loaded_pages;
+    use objc2::rc::autoreleasepool;
+
+    let delegate = Delegate::new(mtm);
+    let initial = Config {
+        alias_rules: vec![winlane::core::config::AliasRule {
+            alias: "ed".into(),
+            application: ApplicationTarget {
+                bundle_id: "com.example.editor".into(),
+                path: "/Applications/Example Editor.app".into(),
+                name: "Editor".into(),
+            },
+            title_contains: "project".into(),
+        }],
+        ..Config::default()
+    };
+    delegate.ivars().config.replace(initial.clone());
+    let (window, view, editor, draft) = autoreleasepool(|_| {
+        let settings = delegate.ensure_settings_window();
+        verify_loaded_pages(&settings, &[4]);
+        assert!(delegate.ivars().alias_rules_editor.borrow().is_none());
+        settings.select_tab(5);
+        let editor = delegate
+            .ivars()
+            .alias_rules_editor
+            .borrow()
+            .clone()
+            .unwrap();
+        assert_eq!(editor.view().window().as_ref(), Some(&settings.window));
+        assert_eq!(editor.candidate().unwrap(), initial.alias_rules);
+        verify_loaded_pages(&settings, &[4, 5]);
+        editor.add(&delegate, mtm);
+        let draft = editor.draft();
+        settings.select_tab(4);
+        settings.select_tab(5);
+        assert!(Rc::ptr_eq(&editor, &delegate.ensure_alias_rules_editor()));
+        assert_eq!(editor.draft(), draft);
+        assert_eq!(*delegate.ivars().config.borrow(), initial);
+        let weak = (
+            Weak::new(&*settings.window),
+            Weak::new(editor.view()),
+            Rc::downgrade(&editor),
+            draft,
+        );
+        settings.window.close();
+        delegate.release_closed_settings();
+        assert!(delegate.ivars().alias_rules_editor.borrow().is_none());
+        weak
+    });
+    assert!(window.load().is_none());
+    assert!(view.load().is_none());
+    assert!(editor.upgrade().is_none());
+    for _ in 0..2 {
+        let (view, editor) = autoreleasepool(|_| {
+            let settings = delegate.ensure_settings_window();
+            assert_eq!(settings.selected_tab(), 5);
+            verify_loaded_pages(&settings, &[5]);
+            let editor = delegate
+                .ivars()
+                .alias_rules_editor
+                .borrow()
+                .clone()
+                .unwrap();
+            assert_eq!(editor.view().window().as_ref(), Some(&settings.window));
+            assert_eq!(editor.draft(), draft);
+            assert_eq!(editor.candidate().unwrap(), initial.alias_rules);
+            assert_eq!(settings.candidate().unwrap(), initial);
+            let weak = (Weak::new(editor.view()), Rc::downgrade(&editor));
+            settings.window.close();
+            delegate.release_closed_settings();
+            weak
+        });
+        assert!(view.load().is_none());
+        assert!(editor.upgrade().is_none());
+    }
+    println!(
+        "Alias editor checks passed: embedded in Settings, loaded on demand, released on close, drafts restored on reopen."
     );
 }

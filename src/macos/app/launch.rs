@@ -19,9 +19,6 @@ impl Delegate {
         self.remember_frontmost_window();
         self.end_session();
         self.ivars().launch_receiver.replace(None);
-        if let Some(window) = self.ivars().alias_rules.borrow().clone() {
-            window.window.orderOut(None);
-        }
         if let Some(settings) = self.settings_window() {
             settings.window.orderOut(None);
         }

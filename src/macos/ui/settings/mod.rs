@@ -46,7 +46,6 @@ pub struct SettingsWindow {
     input: OnceCell<InputPage>,
     input_rules: OnceCell<InputRulesPage>,
     windows: OnceCell<WindowsPage>,
-    aliases: OnceCell<()>,
     clipboard: OnceCell<crate::macos::ui::clipboard_settings::ClipboardControls>,
     updater: RefCell<(bool, bool, Option<String>)>,
     tabs: Retained<NSTabView>,
@@ -152,6 +151,9 @@ impl SettingsWindow {
             page
         })
     }
+    pub fn select_input_rule(&self, index: usize) {
+        self.input_rules().select(index);
+    }
     pub fn add_input_rule(&self) {
         self.input_rules().add(&self.window, &self.message);
     }
@@ -196,12 +198,6 @@ impl SettingsWindow {
             }
             4 => {
                 self.general();
-            }
-            5 => {
-                self.aliases.get_or_init(|| {
-                    let target = self.target.load().expect("settings target is alive");
-                    pages::build_aliases(&self.host(5), &target, self.window.mtm());
-                });
             }
             7 => {
                 self.clipboard.get_or_init(|| {
@@ -381,6 +377,11 @@ impl SettingsWindow {
         self.message.setStringValue(&text);
         self.message
             .setToolTip((!message.is_empty()).then_some(&text));
+    }
+    pub fn embed_alias_rules(&self, view: &NSView) {
+        let host = self.host(5);
+        view.setFrame(host.bounds());
+        host.addSubview(view);
     }
     pub fn embed_snippets(&self, view: &NSView) {
         let host = self.host(6);

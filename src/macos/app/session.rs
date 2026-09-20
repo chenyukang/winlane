@@ -52,7 +52,7 @@ impl Delegate {
         direction: i8,
         scope: Option<SearchScope>,
     ) {
-        self.ivars().settings_focus_pending.set(false);
+        self.cancel_settings_focus();
         self.ivars().project_open.take();
         self.remember_app_input();
         self.ivars().preparing_panel.set(true);
@@ -81,9 +81,6 @@ impl Delegate {
             self.prepare_search_input();
         }
         self.ivars().launch_receiver.replace(None);
-        if let Some(window) = self.ivars().alias_rules.borrow().clone() {
-            window.window.orderOut(None);
-        }
         if let Some(settings) = self.app_shortcuts_window() {
             settings.window.orderOut(None);
         }
@@ -307,7 +304,7 @@ impl Delegate {
     }
 
     pub(super) fn end_session(&self) {
-        self.ivars().settings_focus_pending.set(false);
+        self.cancel_settings_focus();
         self.ivars().project_open.take();
         self.cancel_scoped_refresh();
         self.clear_quicklink_input();

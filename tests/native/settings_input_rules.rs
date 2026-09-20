@@ -32,6 +32,21 @@ pub(crate) fn verify(target: &AnyObject, mtm: MainThreadMarker) {
         assert_eq!(control.action(), Some(sel!(settingsChanged:)));
     }
     let rows = page.rows.borrow().clone();
+    assert!(!page.global_view.isHidden());
+    assert!(rows.iter().all(|row| row.view.isHidden()));
+    assert_eq!(rows[1].navigation.action(), Some(sel!(selectInputRule:)));
+    settings.select_input_rule(2);
+    assert!(page.global_view.isHidden());
+    assert!(rows[0].view.isHidden());
+    assert!(!rows[1].view.isHidden());
+    assert_eq!(rows[1].navigation.state(), NSControlStateValueOn);
+    settings.select_input_rule(1);
+    settings.select_input_rule(0);
+    assert_eq!(
+        settings.candidate().unwrap(),
+        config,
+        "selection preserves every rule"
+    );
     assert!(!rows[0].remove.isEnabled());
     assert!(!rows[0].choose.isEnabled());
     assert!(rows[1].remove.isEnabled());
@@ -69,7 +84,22 @@ pub(crate) fn verify(target: &AnyObject, mtm: MainThreadMarker) {
     );
     settings.remove_input_rule(0);
     assert_eq!(page.rows.borrow().len(), 2, "built-in rule stays available");
+    settings.select_input_rule(2);
     settings.remove_input_rule(1);
+    assert_eq!(page.selected.get(), 1);
+    assert!(
+        !rows[0].view.isHidden(),
+        "deleting selects a surviving rule"
+    );
+    assert!(rows[1].navigation.window().is_none());
+    for row in page.rows.borrow().iter() {
+        for view in row.view.subviews().iter() {
+            let frame = view.frame();
+            assert!(frame.origin.x >= 0.0 && frame.origin.y >= 0.0);
+            assert!(frame.origin.x + frame.size.width <= row.view.bounds().size.width);
+            assert!(frame.origin.y + frame.size.height <= row.view.bounds().size.height);
+        }
+    }
     assert_eq!(settings.candidate().unwrap().input_rules.apps.len(), 1);
     let invalid = page.append_row();
     InputRulesPage::set_application(&invalid, config.input_rules.apps[0].application.clone());

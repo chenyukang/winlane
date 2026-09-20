@@ -269,27 +269,3 @@ impl WindowsPage {
         Ok(())
     }
 }
-
-pub(super) fn build_aliases(aliases: &NSView, target: &AnyObject, mtm: MainThreadMarker) {
-    let alias_card = settings_group(
-        aliases,
-        tr!("应用与项目", "Apps & projects"),
-        570.0,
-        172.0,
-        mtm,
-    );
-    alias_card.addSubview(&label(
-        tr!("固定常用窗口的字母", "Keep familiar aliases"),
-        16.0,
-        rect(20.0, 130.0, 700.0, 25.0),
-        mtm,
-    ));
-    alias_card.addSubview(&hint(tr!("例如 w → WeChat，ck → Code 的 ckb 项目。\n规则优先于自动分配，重启后保留；标题关键词不区分大小写。", "For example, w → WeChat, ck → the ckb project in Code.\nRules override automatic aliases and survive restarts. Title matching ignores case."), rect(20.0, 68.0, 700.0, 50.0), mtm));
-    alias_card.addSubview(&button(
-        tr!("配置 Alias 规则…", "Alias Rules…"),
-        target,
-        sel!(showAliasRules:),
-        rect(500.0, 20.0, 220.0, 30.0),
-        mtm,
-    ));
-}

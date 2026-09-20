@@ -13,7 +13,7 @@ define_class!(
         fn became_active(&self, _: &NSNotification) {
             self.check_language();
             if let Some(settings) = self.settings_window() { settings.update_login_status(); }
-            self.finish_settings_focus();
+            self.finish_settings_focus(false);
         }
         #[unsafe(method(applicationDidFinishLaunching:))]
         fn did_launch(&self, _: &NSNotification) {
@@ -97,7 +97,7 @@ define_class!(
             if let Some(window) = notification.object().and_then(|object| object.downcast::<NSWindow>().ok())
                 && self.settings_window().is_some_and(|settings| settings.window == window)
             {
-                self.ivars().settings_focus_pending.set(false);
+                self.cancel_settings_focus();
                 self.ivars().settings_release_pending.set(true);
                 self.ivars().wake.get().unwrap().signal();
             }
@@ -242,13 +242,15 @@ define_class!(
             self.cancel_routing();
             self.end_session();
             let settings = self.ensure_settings_window();
-            self.ivars().settings_focus_pending.set(true);
-            settings.bring_to_front();
-            let app = NSApplication::sharedApplication(self.mtm());
-            app.activate();
-            if app.isActive() { self.finish_settings_focus(); }
+            self.request_settings_focus(&settings);
             self.update_update_settings();
             self.report_shortcut_status();
+        }
+        #[unsafe(method(retrySettingsFocus:))]
+        fn retry_settings_focus(&self, timer: &NSTimer) {
+            let current = self.ivars().settings_focus_timer.borrow().as_ref()
+                .is_some_and(|pending| std::ptr::eq(&**pending, timer));
+            if current { self.finish_settings_focus(true); }
         }
         #[unsafe(method(checkForUpdates:))]
         fn check_for_updates(&self, _: Option<&AnyObject>) {
@@ -274,6 +276,10 @@ define_class!(
         #[unsafe(method(standardUserDriverWillHandleShowingUpdate:forUpdate:state:))]
         fn update_will_show(&self, showing: bool, _: &AnyObject, _: &AnyObject) {
             if showing { self.prepare_update_ui(); }
+        }
+        #[unsafe(method(selectInputRule:))]
+        fn select_input_rule(&self, sender: &NSButton) {
+            if let Some(settings) = self.settings_window() { settings.select_input_rule(sender.tag() as usize); }
         }
         #[unsafe(method(addInputRule:))]
         fn add_input_rule(&self, _: Option<&AnyObject>) {
@@ -321,7 +327,8 @@ define_class!(
                         if let Some(window) = self.app_shortcuts_window() {
                             window.fill(&self.ivars().config.borrow().app_shortcuts, self, self.mtm());
                         }
-                        if let Some(window) = self.ivars().alias_rules.borrow().clone() {
+                        self.ivars().alias_rules_draft.take();
+                        if let Some(window) = self.ivars().alias_rules_editor.borrow().clone() {
                             window.fill(&self.ivars().config.borrow().alias_rules, self, self.mtm());
                         }
                     }
@@ -345,26 +352,22 @@ define_class!(
                 }
             }
         }
-        #[unsafe(method(showAliasRules:))]
-        fn show_alias_rules(&self, _: Option<&AnyObject>) {
-            self.cancel_routing(); self.end_session();
-            let window = self.ensure_alias_rules_window();
-            window.fill(&self.ivars().config.borrow().alias_rules, self, self.mtm());
-            NSApplication::sharedApplication(self.mtm()).activate();
-            window.window.center(); window.window.makeKeyAndOrderFront(None);
+        #[unsafe(method(selectAliasRule:))]
+        fn select_alias_rule(&self, sender: &NSButton) {
+            self.ensure_alias_rules_editor().select(sender.tag() as usize);
         }
         #[unsafe(method(addAliasRule:))]
         fn add_alias_rule(&self, _: Option<&AnyObject>) {
-            self.ensure_alias_rules_window().add(self, self.mtm());
+            self.ensure_alias_rules_editor().add(self, self.mtm());
         }
         #[unsafe(method(removeAliasRule:))]
         fn remove_alias_rule(&self, sender: &NSButton) {
-            self.ensure_alias_rules_window().remove(sender.tag() as usize);
+            self.ensure_alias_rules_editor().remove(sender.tag() as usize);
             self.autosave_alias_rules();
         }
         #[unsafe(method(chooseAliasApp:))]
         fn choose_alias_app(&self, sender: &NSButton) {
-            self.ensure_alias_rules_window().choose(sender.tag() as usize, self.mtm());
+            self.ensure_alias_rules_editor().choose(sender.tag() as usize, self.mtm());
         }
         #[unsafe(method(aliasRulesChanged:))]
         fn alias_rules_changed(&self, _: Option<&AnyObject>) { self.autosave_alias_rules(); }
@@ -436,10 +439,7 @@ define_class!(
         #[unsafe(method(closeWindow:))]
         fn close_window(&self, _: Option<&AnyObject>) {
             if let Some(form) = self.ivars().snippet_arguments.borrow().as_ref() && form.window().isKeyWindow() { form.window().close(); return; }
-            let alias_rules = self.ivars().alias_rules.borrow().clone();
-            if let Some(window) = alias_rules && window.window.isKeyWindow() {
-                window.window.makeFirstResponder(None); window.window.close();
-            } else if let Some(settings) = self.settings_window() && settings.window.isKeyWindow() {
+            if let Some(settings) = self.settings_window() && settings.window.isKeyWindow() {
                 settings.window.makeFirstResponder(None);
                 settings.window.close();
             } else if self.any_panel_key() { self.dismiss(); }
@@ -555,8 +555,6 @@ define_class!(
         }
         #[unsafe(method(quitApp:))]
         fn quit(&self, _: Option<&AnyObject>) {
-            let alias_rules = self.ivars().alias_rules.borrow().clone();
-            if let Some(window) = alias_rules { window.window.makeFirstResponder(None); }
             if let Some(settings) = self.settings_window() {
                 settings.window.makeFirstResponder(None);
             }

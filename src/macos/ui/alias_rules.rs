@@ -1,16 +1,18 @@
-use crate::macos::ui::controls::{button, hint, label, preferences_window, rect};
+use super::rule_list::RuleListButton;
+use crate::macos::ui::controls::{button, hint, label, rect};
 use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{MainThreadOnly, sel};
 use objc2_app_kit::*;
-use objc2_foundation::{MainThreadMarker, NSArray, NSPoint, NSSize, NSString, NSURL, ns_string};
-use std::cell::RefCell;
+use objc2_foundation::{MainThreadMarker, NSArray, NSSize, NSString, NSURL, ns_string};
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use winlane::core::config::{AliasRule, ApplicationTarget, Config};
 use winlane::tr;
 
 struct Row {
+    navigation: Retained<RuleListButton>,
     view: Retained<NSView>,
     choose: Retained<NSButton>,
     remove: Retained<NSButton>,
@@ -23,7 +25,30 @@ impl Row {
     fn set_application(&self, app: ApplicationTarget) {
         self.choose.setTitle(&NSString::from_str(&app.name));
         self.choose.setToolTip(Some(&NSString::from_str(&app.path)));
+        self.navigation.set_application_icon(&app.path);
         self.application.replace(Some(app));
+        self.refresh_label();
+    }
+    fn refresh_label(&self) {
+        let application = self.application.borrow();
+        let name = application
+            .as_ref()
+            .map_or(tr!("新规则", "New rule"), |app| app.name.as_str());
+        let alias = self.alias.stringValue().to_string();
+        let title = self.title.stringValue().to_string();
+        let label = if alias.trim().is_empty() {
+            name.to_owned()
+        } else {
+            format!("{} · {name}", alias.trim())
+        };
+        self.navigation.set_label(&label);
+        if !title.trim().is_empty() {
+            self.navigation
+                .setToolTip(Some(&NSString::from_str(&format!(
+                    "{label} — {}",
+                    title.trim()
+                ))));
+        }
     }
     fn notify_changed(&self) {
         // SAFETY: The controls target the application delegate for its lifetime.
@@ -34,91 +59,120 @@ impl Row {
     }
 }
 
-pub struct AliasRulesWindow {
-    pub window: Retained<NSWindow>,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AliasRulesDraft {
+    rows: Vec<RowDraft>,
+    selected: Option<usize>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RowDraft {
+    application: Option<ApplicationTarget>,
+    alias: String,
+    title: String,
+}
+
+pub struct AliasRulesEditor {
+    root: Retained<NSView>,
     document: Retained<NSView>,
     scroll: Retained<NSScrollView>,
     rows: RefCell<Vec<Rc<Row>>>,
     message: Retained<NSTextField>,
+    detail: Retained<NSView>,
+    empty: Retained<NSTextField>,
+    selected: Cell<Option<usize>>,
 }
 
-impl AliasRulesWindow {
+impl AliasRulesEditor {
     pub fn new(target: &AnyObject, mtm: MainThreadMarker) -> Self {
-        let window = preferences_window(rect(0.0, 0.0, 700.0, 570.0), mtm);
-        window.setTitle(&NSString::from_str(tr!(
-            "Winlane · Alias 规则",
-            "Winlane · Alias Rules"
-        )));
-        let root = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 700.0, 570.0));
-        window.setContentView(Some(&root));
-        root.addSubview(&label(
-            tr!("自定义 Alias", "Custom aliases"),
-            23.0,
-            rect(30.0, 508.0, 480.0, 32.0),
-            mtm,
-        ));
-        root.addSubview(&hint(tr!("选择应用，填写 1–2 个小写字母。标题关键词可选，用于区分项目窗口。", "Choose an app and 1–2 lowercase letters. Optional title keywords target a project window."), rect(30.0, 456.0, 640.0, 44.0), mtm));
+        let root = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 740.0, 574.0));
         root.addSubview(&button(
-            tr!("＋ 添加", "＋ Add"),
+            tr!("＋ 添加规则", "＋ Add Rule"),
             target,
             sel!(addAliasRule:),
-            rect(555.0, 508.0, 115.0, 30.0),
+            rect(0.0, 10.0, 250.0, 30.0),
             mtm,
         ));
         let scroll =
-            NSScrollView::initWithFrame(NSScrollView::alloc(mtm), rect(20.0, 104.0, 660.0, 338.0));
+            NSScrollView::initWithFrame(NSScrollView::alloc(mtm), rect(0.0, 50.0, 250.0, 514.0));
         scroll.setHasVerticalScroller(true);
         scroll.setAutohidesScrollers(true);
+        scroll.setScrollerStyle(NSScrollerStyle::Overlay);
         scroll.setDrawsBackground(false);
-        let document = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 660.0, 338.0));
+        let document = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 250.0, 514.0));
         scroll.setDocumentView(Some(&document));
         root.addSubview(&scroll);
-        let message = NSTextField::wrappingLabelWithString(
-            &NSString::from_str(tr!(
-                "完整规则自动保存。自定义字母不会被自动分配占用。",
-                "Complete rules save automatically. Custom aliases are reserved from automatic assignment."
-            )),
+        let divider = NSBox::initWithFrame(NSBox::alloc(mtm), rect(262.0, 10.0, 1.0, 554.0));
+        divider.setBoxType(NSBoxType::Separator);
+        root.addSubview(&divider);
+        let detail = NSView::initWithFrame(NSView::alloc(mtm), rect(274.0, 50.0, 466.0, 514.0));
+        root.addSubview(&detail);
+        let empty = hint(
+            tr!(
+                "添加规则，为应用或项目窗口设置专用字母。",
+                "Add a rule to assign an alias to an app or project window."
+            ),
+            rect(20.0, 406.0, 426.0, 60.0),
             mtm,
         );
-        message.setFont(Some(&NSFont::systemFontOfSize(12.0)));
-        message.setFrame(rect(30.0, 38.0, 640.0, 50.0));
+        detail.addSubview(&empty);
+        let message = hint(
+            tr!("完整规则自动保存。", "Complete rules save automatically."),
+            rect(294.0, 4.0, 426.0, 42.0),
+            mtm,
+        );
         root.addSubview(&message);
         Self {
-            window,
+            root,
             document,
             scroll,
+            detail,
+            empty,
+            selected: Cell::new(None),
             rows: RefCell::default(),
             message,
         }
     }
 
+    pub fn view(&self) -> &NSView {
+        &self.root
+    }
+
+    fn finish_editing(&self) {
+        if let Some(window) = self.root.window() {
+            window.makeFirstResponder(None);
+        }
+    }
+
     fn add_row(&self, target: &AnyObject, mtm: MainThreadMarker) -> Rc<Row> {
-        let view = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 660.0, 86.0));
+        let view = NSView::initWithFrame(NSView::alloc(mtm), self.detail.bounds());
+        let navigation = RuleListButton::new(target, sel!(selectAliasRule:), mtm);
+        navigation.set_symbol("app.dashed");
         let choose = button(
             tr!("选择应用…", "Choose App…"),
             target,
             sel!(chooseAliasApp:),
-            rect(10.0, 48.0, 450.0, 28.0),
+            rect(20.0, 460.0, 426.0, 30.0),
             mtm,
         );
         let remove = button(
-            tr!("移除", "Remove"),
+            tr!("移除规则", "Remove Rule"),
             target,
             sel!(removeAliasRule:),
-            rect(555.0, 48.0, 95.0, 28.0),
+            rect(314.0, 12.0, 132.0, 30.0),
             mtm,
         );
         view.addSubview(&choose);
         view.addSubview(&remove);
         let alias =
-            NSTextField::initWithFrame(NSTextField::alloc(mtm), rect(15.0, 10.0, 70.0, 28.0));
+            NSTextField::initWithFrame(NSTextField::alloc(mtm), rect(20.0, 376.0, 90.0, 28.0));
         alias.setPlaceholderString(Some(ns_string!("ck")));
         alias.setAccessibilityLabel(Some(&NSString::from_str(tr!(
             "Alias 字母",
             "Alias letters"
         ))));
         let title =
-            NSTextField::initWithFrame(NSTextField::alloc(mtm), rect(103.0, 10.0, 540.0, 28.0));
+            NSTextField::initWithFrame(NSTextField::alloc(mtm), rect(20.0, 294.0, 426.0, 28.0));
         title.setPlaceholderString(Some(&NSString::from_str(tr!(
             "标题包含（可选），例如 ckb",
             "Title contains (optional), e.g. ckb"
@@ -135,7 +189,33 @@ impl AliasRulesWindow {
             }
             view.addSubview(field);
         }
+        view.addSubview(&label(
+            tr!("Alias 字母", "Alias letters"),
+            14.0,
+            rect(20.0, 412.0, 426.0, 24.0),
+            mtm,
+        ));
+        view.addSubview(&hint(
+            tr!("1–2 个小写字母", "1–2 lowercase letters"),
+            rect(122.0, 376.0, 324.0, 24.0),
+            mtm,
+        ));
+        view.addSubview(&label(
+            tr!("窗口标题包含", "Window title contains"),
+            14.0,
+            rect(20.0, 330.0, 426.0, 24.0),
+            mtm,
+        ));
+        view.addSubview(&hint(
+            tr!(
+                "可选。留空则匹配此应用的所有窗口。",
+                "Optional. Leave empty to match all windows in this app."
+            ),
+            rect(20.0, 242.0, 426.0, 40.0),
+            mtm,
+        ));
         let row = Rc::new(Row {
+            navigation,
             view,
             choose,
             remove,
@@ -143,7 +223,10 @@ impl AliasRulesWindow {
             title,
             application: RefCell::default(),
         });
-        self.document.addSubview(&row.view);
+        row.refresh_label();
+        row.view.setHidden(true);
+        self.detail.addSubview(&row.view);
+        self.document.addSubview(&row.navigation);
         self.rows.borrow_mut().push(row.clone());
         row
     }
@@ -151,6 +234,7 @@ impl AliasRulesWindow {
     pub fn fill(&self, rules: &[AliasRule], target: &AnyObject, mtm: MainThreadMarker) {
         for row in self.rows.take() {
             row.view.removeFromSuperview();
+            row.navigation.removeFromSuperview();
         }
         for rule in rules {
             let row = self.add_row(target, mtm);
@@ -159,18 +243,37 @@ impl AliasRulesWindow {
             row.title
                 .setStringValue(&NSString::from_str(&rule.title_contains));
         }
+        self.selected.set((!rules.is_empty()).then_some(0));
         self.layout();
     }
 
-    pub fn copy_draft_from(&self, previous: &Self, target: &AnyObject, mtm: MainThreadMarker) {
-        for old in previous.rows.borrow().iter() {
+    pub fn draft(&self) -> AliasRulesDraft {
+        AliasRulesDraft {
+            rows: self
+                .rows
+                .borrow()
+                .iter()
+                .map(|row| RowDraft {
+                    application: row.application.borrow().clone(),
+                    alias: row.alias.stringValue().to_string(),
+                    title: row.title.stringValue().to_string(),
+                })
+                .collect(),
+            selected: self.selected.get(),
+        }
+    }
+
+    pub fn restore_draft(&self, draft: AliasRulesDraft, target: &AnyObject, mtm: MainThreadMarker) {
+        self.fill(&[], target, mtm);
+        for old in draft.rows {
             let row = self.add_row(target, mtm);
-            if let Some(app) = old.application.borrow().clone() {
+            if let Some(app) = old.application {
                 row.set_application(app);
             }
-            row.alias.setStringValue(&old.alias.stringValue());
-            row.title.setStringValue(&old.title.stringValue());
+            row.alias.setStringValue(&NSString::from_str(&old.alias));
+            row.title.setStringValue(&NSString::from_str(&old.title));
         }
+        self.selected.set(draft.selected);
         self.layout();
     }
 
@@ -182,29 +285,58 @@ impl AliasRulesWindow {
             );
             return;
         }
-        let row = self.add_row(target, mtm);
-        self.layout();
-        row.view.scrollRectToVisible(row.view.bounds());
+        self.finish_editing();
+        self.add_row(target, mtm);
+        let index = self.rows.borrow().len() - 1;
+        self.select(index);
     }
 
     pub fn remove(&self, index: usize) {
+        self.finish_editing();
         if index < self.rows.borrow().len() {
-            self.rows
-                .borrow_mut()
-                .remove(index)
-                .view
-                .removeFromSuperview();
+            let row = self.rows.borrow_mut().remove(index);
+            row.view.removeFromSuperview();
+            row.navigation.removeFromSuperview();
+            let count = self.rows.borrow().len();
+            let selected = self.selected.get().unwrap_or(0);
+            self.selected.set(if count == 0 {
+                None
+            } else {
+                Some(if selected > index {
+                    selected - 1
+                } else {
+                    selected.min(count - 1)
+                })
+            });
             self.layout();
         }
     }
 
+    pub fn select(&self, index: usize) {
+        if index >= self.rows.borrow().len() {
+            return;
+        }
+        // Finish editing before hiding the field, so switching rules also autosaves it.
+        self.finish_editing();
+        self.selected.set(Some(index));
+        self.layout();
+        let row = &self.rows.borrow()[index];
+        row.navigation.scrollRectToVisible(row.navigation.bounds());
+    }
+
     fn layout(&self) {
         let rows = self.rows.borrow();
-        let height = (rows.len() as f64 * 86.0).max(self.scroll.contentSize().height);
-        self.document.setFrameSize(NSSize::new(660.0, height));
+        let height = (rows.len() as f64 * 42.0).max(self.scroll.contentSize().height);
+        self.document.setFrameSize(NSSize::new(250.0, height));
+        self.empty.setHidden(!rows.is_empty());
         for (index, row) in rows.iter().enumerate() {
-            row.view
-                .setFrameOrigin(NSPoint::new(0.0, height - (index + 1) as f64 * 86.0));
+            row.navigation
+                .setFrame(rect(4.0, height - (index + 1) as f64 * 42.0, 242.0, 40.0));
+            row.navigation.setTag(index as isize);
+            row.navigation
+                .set_selected(self.selected.get() == Some(index));
+            row.refresh_label();
+            row.view.setHidden(self.selected.get() != Some(index));
             row.choose.setTag(index as isize);
             row.remove.setTag(index as isize);
         }
@@ -212,6 +344,9 @@ impl AliasRulesWindow {
 
     pub fn choose(&self, index: usize, mtm: MainThreadMarker) {
         let Some(row) = self.rows.borrow().get(index).cloned() else {
+            return;
+        };
+        let Some(window) = self.root.window() else {
             return;
         };
         let panel = NSOpenPanel::openPanel(mtm);
@@ -226,6 +361,7 @@ impl AliasRulesWindow {
         let message = self.message.clone();
         let completion = RcBlock::new(move |response| {
             if response == NSModalResponseOK
+                && row.view.window().is_some()
                 && let Some(url) = selected.URL()
             {
                 match crate::macos::platform::applications::target_at_url(&url) {
@@ -240,10 +376,13 @@ impl AliasRulesWindow {
                 }
             }
         });
-        panel.beginSheetModalForWindow_completionHandler(&self.window, &completion);
+        panel.beginSheetModalForWindow_completionHandler(&window, &completion);
     }
 
     pub fn candidate(&self) -> Result<Vec<AliasRule>, String> {
+        for row in self.rows.borrow().iter() {
+            row.refresh_label();
+        }
         let rules: Vec<_> = self
             .rows
             .borrow()
