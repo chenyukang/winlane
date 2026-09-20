@@ -10,14 +10,13 @@ use std::sync::{
     mpsc::{self, Receiver, Sender},
 };
 use std::time::{Duration, Instant};
-use winlane::features::files::query::{Kind, Matcher, Options};
+use winlane::features::files::query::Matcher;
 use winlane::features::files::{self, Entry, Settings};
 use winlane::{tr, trf};
 
 pub struct Request {
     pub generation: u64,
     pub query: String,
-    pub options: Options,
     pub settings: Settings,
     pub recent: Vec<Entry>,
 }
@@ -112,14 +111,8 @@ fn search(
             wake.signal();
         }
     };
-    let matcher = match Matcher::new(&request.query, home, request.options) {
-        Ok(matcher) => matcher,
-        Err(error) => {
-            send(Vec::new(), false, false, Some(error));
-            return;
-        }
-    };
-    if request.query.trim().is_empty() && request.options.kind == Kind::All {
+    let matcher = Matcher::new(&request.query, home);
+    if request.query.trim().is_empty() {
         let mut entries: Vec<_> = request
             .recent
             .into_iter()
@@ -137,16 +130,19 @@ fn search(
         return;
     }
     if matcher.directory.is_some() {
-        match files::browse_with(&matcher, cancelled) {
-            Ok(entries) => {
-                let limited = entries.len() >= files::MAX_CANDIDATES;
-                send(
-                    matcher.matching(&entries, &request.recent),
-                    false,
-                    limited,
-                    None,
-                );
-            }
+        match files::browse::search(
+            &matcher,
+            &request.recent,
+            request.settings.hide_generated,
+            cancelled,
+            |entries| send(entries.to_vec(), true, false, matcher.error.clone()),
+        ) {
+            Ok(listing) => send(
+                listing.entries,
+                false,
+                listing.limited,
+                matcher.error.clone(),
+            ),
             Err(error) => send(Vec::new(), false, false, Some(error)),
         }
         return;
@@ -214,7 +210,8 @@ fn search(
                     let count = query.resultCount();
                     let deadline = Instant::now() + Duration::from_secs(2);
                     let mut scanned = 0;
-                    let entries: Vec<_> = (0..count)
+                    let mut entries = Vec::new();
+                    for entry in (0..count)
                         .take_while(|i| {
                             let read = !cancelled() && Instant::now() < deadline;
                             if read {
@@ -253,15 +250,19 @@ fn search(
                             })
                         })
                         .filter(|entry| matcher.score(entry).is_some())
-                        .take(files::MAX_CANDIDATES)
-                        .collect();
+                    {
+                        entries.push(entry);
+                        if entries.len() >= files::MAX_RESULTS * 2 {
+                            entries = matcher.matching(&entries, &request.recent);
+                        }
+                    }
                     let gathering = query.isGathering();
                     query.enableUpdates();
                     send(
                         matcher.matching(&entries, &request.recent),
                         gathering,
                         scanned < count,
-                        None,
+                        matcher.error.clone(),
                     );
                     last = Instant::now();
                 }
@@ -352,50 +353,28 @@ pub(crate) fn predicate(text: &str) -> Option<objc2::rc::Retained<NSPredicate>> 
 
 pub(crate) fn search_predicate(matcher: &Matcher) -> objc2::rc::Retained<NSPredicate> {
     let mut conditions = Vec::new();
-    if matcher.options.regex {
-        if let Some(literals) = matcher.literals() {
-            let predicates: Vec<_> = literals
-                .iter()
-                .map(|literal| unsafe {
-                    NSPredicate::predicateWithFormat_argumentArray(
-                        ns_string!("kMDItemFSName CONTAINS[cd] %@"),
-                        Some(&NSArray::from_slice(&[
-                            &*NSString::from_str(literal) as &AnyObject
-                        ])),
-                    )
-                })
-                .collect();
-            conditions.push(if predicates.len() == 1 {
-                predicates[0].clone()
-            } else {
-                NSCompoundPredicate::orPredicateWithSubpredicates(&NSArray::from_retained_slice(
-                    &predicates,
-                ))
-                .into_super()
-            });
-        }
-    } else if let Some(predicate) = predicate(&matcher.term) {
+    if let Some(predicate) = predicate(&matcher.term) {
         conditions.push(predicate);
     }
-    let kind = matcher.options.kind;
-    if kind != Kind::All {
-        let directory =
-            "(kMDItemContentType == 'public.folder' OR kMDItemContentType == 'public.directory')";
-        let format = match kind {
-            Kind::Folders => directory.into(),
-            Kind::Files => format!("NOT {directory}"),
-            _ => format!(
-                "NOT {directory} AND ({})",
-                kind.extensions()
-                    .iter()
-                    .map(|ext| format!("kMDItemFSName ENDSWITH[cd] '.{ext}'"))
-                    .collect::<Vec<_>>()
-                    .join(" OR ")
-            ),
-        };
-        conditions.push(unsafe {
-            NSPredicate::predicateWithFormat_argumentArray(&NSString::from_str(&format), None)
-        });
+    if matcher.is_pattern() && matcher.error.is_none() {
+        if let Some(literals) = matcher.literals() {
+            conditions.extend(literals.iter().map(|literal| unsafe {
+                NSPredicate::predicateWithFormat_argumentArray(
+                    ns_string!("kMDItemFSName CONTAINS[cd] %@"),
+                    Some(&NSArray::from_slice(&[
+                        &*NSString::from_str(literal) as &AnyObject
+                    ])),
+                )
+            }));
+        } else {
+            // No safe literal prefilter: collect names, then match on the worker.
+            return unsafe {
+                NSPredicate::predicateWithFormat_argumentArray(
+                    ns_string!("kMDItemFSName LIKE '*'"),
+                    None,
+                )
+            };
+        }
     }
     match conditions.len() {
         0 => unsafe {
@@ -405,7 +384,7 @@ pub(crate) fn search_predicate(matcher: &Matcher) -> objc2::rc::Retained<NSPredi
             )
         },
         1 => conditions.pop().unwrap(),
-        _ => NSCompoundPredicate::andPredicateWithSubpredicates(&NSArray::from_retained_slice(
+        _ => NSCompoundPredicate::orPredicateWithSubpredicates(&NSArray::from_retained_slice(
             &conditions,
         ))
         .into_super(),

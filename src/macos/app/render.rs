@@ -119,7 +119,7 @@ impl Delegate {
         let mut height = panel_height(count, switching, !trusted || demo, show_mode_label, density)
             + argument_height;
         if in_files {
-            height = (132.0
+            height = (100.0
                 + count.max(3) as f64 * row_height
                 + if !trusted || demo { 28.0 } else { 0.0 })
             .clamp(280.0, HEIGHT);
@@ -222,9 +222,9 @@ impl Delegate {
         }));
         ui.clipboard_actions.setHidden(!in_clipboard);
         ui.file_controls
-            .render(in_files, height, files.options, !files.matches.is_empty());
+            .render(in_files, height, !files.matches.is_empty());
         ui.shortcut_label
-            .setHidden(in_clipboard || inline || scope_loading);
+            .setHidden(in_clipboard || in_files || inline || scope_loading);
         if let Some(item) = ui.clipboard_actions.itemAtIndex(3) {
             item.setTitle(&NSString::from_str(
                 if state.config.borrow().clipboard.enabled {
@@ -311,10 +311,7 @@ impl Delegate {
             } else {
                 0.0
             };
-        let list_top = height
-            - if switching { 36.0 } else { HEIGHT - LIST_TOP }
-            - argument_height
-            - if in_files { 32.0 } else { 0.0 };
+        let list_top = height - if switching { 36.0 } else { HEIGHT - LIST_TOP } - argument_height;
         let list_height = list_top - list_bottom;
         let scroll_frame = rect(10.0, list_bottom, LIST_WIDTH, list_height);
         if ui.scroll.frame() != scroll_frame {

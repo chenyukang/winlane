@@ -1,13 +1,13 @@
 //! File search policy, ranking and a small local recently-opened list.
-use crate::{tr, trf};
+use crate::tr;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 
+pub mod browse;
 pub mod history;
 pub mod query;
 pub const MAX_RESULTS: usize = 50;
-pub const MAX_CANDIDATES: usize = 5000;
 pub const MAX_RECENT: usize = 25;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -302,48 +302,12 @@ pub fn browse(
     home: &Path,
     cancelled: impl Fn() -> bool,
 ) -> Result<Vec<Entry>, String> {
-    browse_with(
-        &query::Matcher::new(query, home, query::Options::default())?,
-        cancelled,
-    )
+    browse_with(&query::Matcher::new(query, home), cancelled)
 }
 
 pub fn browse_with(
     matcher: &query::Matcher,
     cancelled: impl Fn() -> bool,
 ) -> Result<Vec<Entry>, String> {
-    let directory = matcher
-        .directory
-        .as_ref()
-        .ok_or_else(|| tr!("路径无效。", "Invalid path.").to_owned())?;
-    let reader = std::fs::read_dir(directory).map_err(|e| {
-        trf!(
-            "无法读取目录 {}：{}",
-            "Cannot read folder {}: {}",
-            directory.display(),
-            e
-        )
-    })?;
-    let mut entries = Vec::new();
-    for item in reader {
-        if cancelled() {
-            break;
-        }
-        let Ok(item) = item else {
-            continue;
-        };
-        let name = item.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') && (!matcher.term.starts_with('.') || matcher.options.regex) {
-            continue;
-        }
-        if let Ok(entry) = Entry::read(item.path())
-            && matcher.score(&entry).is_some()
-        {
-            entries.push(entry);
-        }
-        if entries.len() >= MAX_CANDIDATES {
-            break;
-        }
-    }
-    Ok(entries)
+    browse::search(matcher, &[], true, cancelled, |_| {}).map(|listing| listing.entries)
 }

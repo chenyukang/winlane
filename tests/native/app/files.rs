@@ -124,7 +124,7 @@ pub(crate) fn verify_files(mtm: MainThreadMarker) {
     assert!(ui.project_progress.isHidden() != app.files.borrow().loading);
     verify_completion(&delegate, &ui);
     verify_navigation(&delegate, &ui);
-    verify_filters_and_actions(&delegate, &ui);
+    verify_patterns_and_actions(&delegate, &ui);
 
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("preview.txt");
@@ -372,12 +372,11 @@ fn verify_navigation(delegate: &Delegate, ui: &PanelUi) {
     assert!(!ui.panel.isVisible());
 }
 
-fn verify_filters_and_actions(delegate: &Delegate, ui: &PanelUi) {
-    use winlane::features::files::query::Kind;
+fn verify_patterns_and_actions(delegate: &Delegate, ui: &PanelUi) {
     let app = delegate.ivars();
     let entries: Vec<_> = [
-        ("report.pdf", false),
-        ("photo.png", false),
+        ("report[12].pdf", false),
+        ("report1.pdf", false),
         ("Documents", true),
     ]
     .into_iter()
@@ -389,28 +388,40 @@ fn verify_filters_and_actions(delegate: &Delegate, ui: &PanelUi) {
     })
     .collect();
     app.files.borrow_mut().entries = entries.clone();
-    app.query.replace("o".into());
+    app.query.replace("report[12].pdf".into());
     delegate.filter();
-    delegate.set_files_kind(
-        Kind::ALL
-            .iter()
-            .position(|kind| *kind == Kind::Images)
-            .unwrap() as isize,
+    assert_eq!(
+        delegate.selected_file(),
+        Some(entries[0].clone()),
+        "cached literal matches are usable before compiling a pattern"
     );
-    assert_eq!(delegate.selected_file(), Some(entries[1].clone()));
     assert!(app.files.borrow().loading);
+    assert_eq!(
+        ui.file_controls.view.subviews().len(),
+        1,
+        "only the actions button remains"
+    );
     assert!(!ui.file_controls.view.isHidden());
     assert!(ui.file_controls.actions.isEnabled());
     assert!(
-        ui.scroll.frame().origin.y + ui.scroll.frame().size.height
-            <= ui.file_controls.view.frame().origin.y
+        ui.input.frame().origin.x + ui.input.frame().size.width
+            <= ui.file_controls.view.frame().origin.x
     );
-    for panel in delegate.panels() {
-        assert_eq!(panel.file_controls.kind.indexOfSelectedItem(), 4);
-    }
+    let generation = app.files.borrow().generation;
+    delegate.apply_files_update(Update::Results {
+        generation,
+        entries: entries[..2].to_vec(),
+        gathering: false,
+        limited: false,
+        error: None,
+    });
+    assert_eq!(
+        app.files.borrow().matches,
+        entries[..2],
+        "worker relevance order survives rendering"
+    );
     let menu = delegate.file_actions_menu();
     assert_eq!(menu.numberOfItems(), 5);
-    assert_eq!(menu.itemAtIndex(0).unwrap().tag(), 0);
     let copy_path = menu.itemAtIndex(4).unwrap();
     assert_eq!(copy_path.keyEquivalent().to_string(), "c");
     assert_eq!(
@@ -418,7 +429,9 @@ fn verify_filters_and_actions(delegate: &Delegate, ui: &PanelUi) {
         NSEventModifierFlags::Command | NSEventModifierFlags::Shift
     );
 
-    delegate.set_files_kind(1);
+    app.files.borrow_mut().entries = entries.clone();
+    app.query.replace("Doc".into());
+    delegate.filter();
     let menu = delegate.file_actions_menu();
     assert_eq!(menu.numberOfItems(), 6);
     assert_eq!(menu.itemAtIndex(0).unwrap().tag(), 1);
@@ -427,46 +440,47 @@ fn verify_filters_and_actions(delegate: &Delegate, ui: &PanelUi) {
         NSEventModifierFlags::Control
     );
     app.files.borrow_mut().entries = vec![entries[1].clone()];
-    delegate.set_files_kind(0);
+    app.query.replace("report".into());
+    delegate.filter();
     delegate.file_menu_action(&menu.itemAtIndex(0).unwrap());
     assert_eq!(
         *app.query.borrow(),
         "~/Documents/",
-        "menu actions keep the original target across background updates"
+        "menu keeps its target during async updates"
     );
     assert!(delegate.searching_files());
 
-    app.query.replace("[".into());
-    app.files.borrow_mut().entries = entries.clone();
-    delegate.set_files_regex(true);
+    app.query.replace(r"^unmatched\.pdf$".into());
+    app.files.borrow_mut().entries = entries;
+    delegate.filter();
     assert!(
         delegate.selected_file().is_none(),
-        "a pending expression must not activate an old unmatched result"
+        "a changed pattern cannot activate stale results"
     );
-    assert_eq!(ui.file_controls.regex.state(), NSControlStateValueOn);
+    assert!(!ui.file_controls.actions.isEnabled());
+    app.query.replace("[".into());
+    app.files.borrow_mut().entries.clear();
+    delegate.filter();
     let generation = app.files.borrow().generation;
     delegate.apply_files_update(Update::Results {
         generation,
         entries: Vec::new(),
         gathering: false,
         limited: false,
-        error: Some("Invalid regular expression: unclosed character class".into()),
+        error: Some("Invalid pattern; searching literal names only".into()),
     });
-    assert!(delegate.selected_file().is_none());
-    assert!(!ui.file_controls.actions.isEnabled());
     assert!(!ui.footer.isHidden());
     assert!(
         ui.footer
             .stringValue()
             .to_string()
-            .contains("Invalid regular expression")
+            .contains("Invalid pattern")
     );
     assert_eq!(*app.query.borrow(), "[");
     assert!(
         app.files.borrow().service.is_none(),
-        "UI controls do not perform disk access or compile expressions"
+        "UI does no disk access or pattern compilation"
     );
-    delegate.set_files_regex(false);
     delegate.leave_scoped_search();
     assert!(ui.file_controls.view.isHidden());
     delegate.activate_selected();
@@ -503,7 +517,6 @@ fn verify_worker(delegate: &Delegate) {
     let generation = service.cancel();
     service.search(Request {
         generation,
-        options: Options::default(),
         query: format!("{}/", temp.path().display()),
         settings: files::Settings::default(),
         recent: Vec::new(),
@@ -551,7 +564,6 @@ fn verify_worker(delegate: &Delegate) {
         let generation = service.cancel();
         service.search(Request {
             generation,
-            options: Options::default(),
             query: word.into(),
             settings: files::Settings {
                 roots: vec![temp.path().to_string_lossy().into_owned()],
@@ -576,9 +588,10 @@ fn verify_worker(delegate: &Delegate) {
                 if result_generation != generation {
                     continue;
                 }
-                assert!(
-                    error.is_none(),
-                    "native query {word:?} must complete: {error:?}"
+                assert_eq!(
+                    error,
+                    winlane::features::files::query::Matcher::new(word, temp.path()).error,
+                    "native query {word:?} must complete, with only a pattern validation warning"
                 );
                 if !gathering {
                     break;
@@ -586,38 +599,45 @@ fn verify_worker(delegate: &Delegate) {
             }
         }
     }
-    for kind in winlane::features::files::query::Kind::ALL {
-        let options = Options { kind, regex: true };
-        for pattern in [r"\.(txt|md)$", r"^\d+$"] {
-            let (entries, error) = worker_result(&service, pattern.into(), options, temp.path());
-            assert!(
-                error.is_none(),
-                "native {kind:?} predicate must be accepted: {error:?}"
-            );
-            assert!(entries.iter().all(|entry| kind.allows(entry)));
-        }
+    for pattern in [r"\.(txt|md)$", r"^\d+$", "*.txt"] {
+        let (_, error) = worker_result(&service, pattern.into(), temp.path());
+        assert!(
+            error.is_none(),
+            "native pattern predicate must be accepted: {error:?}"
+        );
     }
+    std::fs::create_dir(temp.path().join("nested")).unwrap();
+    std::fs::write(temp.path().join("nested/child.txt"), "fixture").unwrap();
+    let (entries, error) = worker_result(
+        &service,
+        format!("{}/*.txt", temp.path().display()),
+        temp.path(),
+    );
+    assert!(error.is_none());
+    assert_eq!(
+        entries.len(),
+        2,
+        "explicit patterns recurse through the worker without Spotlight"
+    );
     let (entries, error) = worker_result(
         &service,
         format!("{}/^sample\\.txt$", temp.path().display()),
-        Options {
-            regex: true,
-            ..Options::default()
-        },
         temp.path(),
     );
     assert!(error.is_none());
     assert_eq!(entries.len(), 1);
-    let (_, error) = worker_result(
+    std::fs::write(temp.path().join("["), "literal fixture").unwrap();
+    let (entries, error) = worker_result(
         &service,
-        "[".into(),
-        Options {
-            regex: true,
-            ..Options::default()
-        },
+        format!("{}/[", temp.path().display()),
         temp.path(),
     );
     assert!(error.is_some());
+    assert_eq!(
+        entries.len(),
+        1,
+        "invalid regex still finds its literal filename"
+    );
     service.cancel();
     service.save(Vec::new());
     let deadline = Instant::now() + Duration::from_secs(3);
@@ -635,14 +655,12 @@ fn verify_worker(delegate: &Delegate) {
 fn worker_result(
     service: &Service,
     query: String,
-    options: Options,
     root: &std::path::Path,
 ) -> (Vec<Entry>, Option<String>) {
     let generation = service.cancel();
     service.search(Request {
         generation,
         query,
-        options,
         settings: files::Settings {
             roots: vec![root.to_string_lossy().into_owned()],
             excluded: Vec::new(),

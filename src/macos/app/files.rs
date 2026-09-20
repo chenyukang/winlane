@@ -1,7 +1,6 @@
 use super::*;
 use crate::macos::platform::files::{Request, Service, Update};
 use std::path::PathBuf;
-use winlane::features::files::query::Options;
 use winlane::features::files::{self, Entry};
 
 mod actions;
@@ -13,10 +12,9 @@ pub(super) use controls::Controls;
 pub(super) struct State {
     service: Option<Service>,
     generation: u64,
-    requested: Option<(String, files::Settings, Options)>,
-    pub options: Options,
+    requested: Option<(String, files::Settings)>,
     pub menu_open: bool,
-    regex_pending: bool,
+    pattern_pending: bool,
     entries: Vec<Entry>,
     pub recent: Vec<Entry>,
     recent_changed: bool,
@@ -59,8 +57,8 @@ impl Delegate {
         let query = self.ivars().query.borrow().clone();
         let settings = self.ivars().config.borrow().files.clone();
         let mut state = self.ivars().files.borrow_mut();
-        let options = state.options;
-        let changed = state.requested.as_ref() != Some(&(query.clone(), settings.clone(), options));
+        let matcher = files::query::Matcher::literal(&query, &home());
+        let changed = state.requested.as_ref() != Some(&(query.clone(), settings.clone()));
         if changed {
             if let Some(timer) = state.timer.take() {
                 timer.invalidate();
@@ -68,11 +66,11 @@ impl Delegate {
             if let Some(service) = &state.service {
                 state.generation = service.cancel();
             }
-            state.requested = Some((query.clone(), settings.clone(), options));
+            state.requested = Some((query.clone(), settings.clone()));
             state.loading = true;
             state.error = None;
             state.limited = false;
-            state.regex_pending = options.regex && !query.trim().is_empty();
+            state.pattern_pending = matcher.is_pattern();
             // Return to AppKit before any disk access, then debounce successive keystrokes.
             let timer = unsafe {
                 NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
@@ -89,7 +87,6 @@ impl Delegate {
             state.timer = Some(timer);
         }
         let home = home();
-        let direct = files::query::search_path(&query, &home, options.regex);
         let candidates: Vec<_> =
             if query.trim().is_empty() && state.loading && !state.recent.is_empty() {
                 state
@@ -103,8 +100,12 @@ impl Delegate {
                     .entries
                     .iter()
                     .filter(|entry| {
-                        if let Some((parent, _)) = &direct {
-                            entry.path.parent() == Some(parent.as_path())
+                        if let Some(parent) = &matcher.directory {
+                            if matcher.is_pattern() {
+                                entry.path.starts_with(parent)
+                            } else {
+                                entry.path.parent() == Some(parent.as_path())
+                            }
                         } else {
                             settings.allows(&entry.path, &home)
                         }
@@ -112,18 +113,11 @@ impl Delegate {
                     .cloned()
                     .collect()
             };
-        let candidates: Vec<_> = candidates
-            .into_iter()
-            .filter(|entry| options.kind.allows(entry))
-            .collect();
-        state.matches = if state.regex_pending {
-            Vec::new()
-        } else if options.regex {
-            files::matching(&candidates, "", &state.recent)
+        state.matches = if matcher.is_pattern() && !state.pattern_pending {
+            // The worker has already ranked literal matches ahead of pattern-only matches.
+            candidates
         } else {
-            files::query::Matcher::new(&query, &home, options)
-                .expect("plain matching needs no regex compilation")
-                .matching(&candidates, &state.recent)
+            matcher.matching(&candidates, &state.recent)
         };
         let position = match selected {
             Some(SelectedResult::File(path)) => {
@@ -178,7 +172,6 @@ impl Delegate {
         state.service.as_ref().unwrap().search(Request {
             generation: state.generation,
             query: self.ivars().query.borrow().clone(),
-            options: state.options,
             settings: self.ivars().config.borrow().files.clone(),
             recent: state.recent.clone(),
         });
@@ -267,11 +260,9 @@ impl Delegate {
                 if state.generation != generation || !self.searching_files() {
                     return;
                 }
-                if (error.is_none() && (!gathering || !entries.is_empty()))
-                    || (state.options.regex && error.is_some())
-                {
+                if !entries.is_empty() || (!gathering && error.is_none()) {
                     state.entries = entries;
-                    state.regex_pending = false;
+                    state.pattern_pending = false;
                 }
                 state.loading = gathering;
                 state.limited = limited;
@@ -356,11 +347,7 @@ impl Delegate {
             return true;
         }
         if event.keyCode() == 51 && flags == NSEventModifierFlags::Control {
-            let parent = files::query::parent_search_path(
-                &self.ivars().query.borrow(),
-                &home(),
-                self.ivars().files.borrow().options.regex,
-            );
+            let parent = files::query::parent_search_path(&self.ivars().query.borrow(), &home());
             if let Some(parent) = parent {
                 self.set_file_query(parent);
                 return true;
@@ -425,7 +412,6 @@ impl Delegate {
     }
 
     fn complete_file_entry(&self, entry: &Entry) {
-        self.ivars().files.borrow_mut().options.regex = false;
         self.set_file_query(entry.completion(&home()));
     }
 

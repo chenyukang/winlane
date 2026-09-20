@@ -457,10 +457,6 @@ define_class!(
         fn refresh_files_timer(&self, timer: &NSTimer) { self.files_timer_fired(timer); }
         #[unsafe(method(clearRecentFiles:))]
         fn clear_recent_files_action(&self, _: Option<&AnyObject>) { self.clear_recent_files(); }
-        #[unsafe(method(fileKindChanged:))]
-        fn file_kind_changed(&self, sender: &NSPopUpButton) { self.set_files_kind(sender.indexOfSelectedItem()); }
-        #[unsafe(method(fileRegexChanged:))]
-        fn file_regex_changed(&self, sender: &NSButton) { self.set_files_regex(sender.state() == NSControlStateValueOn); }
         #[unsafe(method(showFileActions:))]
         fn show_file_actions_button(&self, _: Option<&AnyObject>) { self.show_file_actions(); }
         #[unsafe(method(performFileAction:))]

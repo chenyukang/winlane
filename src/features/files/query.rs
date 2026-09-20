@@ -4,99 +4,48 @@ use regex::{Regex, RegexBuilder};
 use regex_syntax::hir::literal::{ExtractKind, Extractor};
 use std::path::{Path, PathBuf};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Kind {
-    #[default]
-    All,
-    Folders,
-    Files,
-    Documents,
-    Images,
-    Audio,
-    Video,
-    Archives,
-}
-
-impl Kind {
-    pub const ALL: [Self; 8] = [
-        Self::All,
-        Self::Folders,
-        Self::Files,
-        Self::Documents,
-        Self::Images,
-        Self::Audio,
-        Self::Video,
-        Self::Archives,
-    ];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::All => tr!("全部类型", "All types"),
-            Self::Folders => tr!("目录", "Folders"),
-            Self::Files => tr!("文件", "Files"),
-            Self::Documents => tr!("文档", "Documents"),
-            Self::Images => tr!("图片", "Images"),
-            Self::Audio => tr!("音频", "Audio"),
-            Self::Video => tr!("视频", "Video"),
-            Self::Archives => tr!("压缩包", "Archives"),
-        }
-    }
-
-    pub fn extensions(self) -> &'static [&'static str] {
-        match self {
-            Self::Documents => &[
-                "pdf", "txt", "md", "rtf", "doc", "docx", "pages", "xls", "xlsx", "numbers", "csv",
-                "ppt", "pptx", "key", "odt",
-            ],
-            Self::Images => &[
-                "png", "jpg", "jpeg", "gif", "heic", "heif", "webp", "svg", "tif", "tiff", "bmp",
-                "avif", "ico",
-            ],
-            Self::Audio => &["mp3", "m4a", "wav", "flac", "aac", "aiff", "ogg", "opus"],
-            Self::Video => &["mp4", "mov", "mkv", "webm", "avi", "m4v", "mpeg", "mpg"],
-            Self::Archives => &["zip", "gz", "tar", "7z", "rar", "bz2", "xz", "zst", "tgz"],
-            _ => &[],
-        }
-    }
-
-    pub fn allows(self, entry: &Entry) -> bool {
-        match self {
-            Self::All => true,
-            Self::Folders => entry.directory,
-            Self::Files => !entry.directory,
-            _ => {
-                !entry.directory
-                    && entry
-                        .path
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .is_some_and(|e| {
-                            self.extensions()
-                                .iter()
-                                .any(|ext| e.eq_ignore_ascii_case(ext))
-                        })
-            }
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Options {
-    pub kind: Kind,
-    pub regex: bool,
-}
-
 pub struct Matcher {
     pub directory: Option<PathBuf>,
     pub term: String,
-    pub options: Options,
+    pub error: Option<String>,
+    pattern: bool,
+    expression: Option<String>,
     regex: Option<Regex>,
 }
 
-pub fn search_path(query: &str, home: &Path, regex: bool) -> Option<(PathBuf, String)> {
-    if !regex {
-        return super::path_query(query, home);
+/// Regex-specific operators take precedence over shell-style wildcards.
+fn expression(term: &str) -> Option<String> {
+    if term.contains(['\\', '^', '$', '(', ')', '{', '}', '|', '+']) || term.contains(".*") {
+        Some(term.to_owned())
+    } else if term.contains(['*', '?']) {
+        let mut expression = String::from("^");
+        let mut class = false;
+        for ch in term.chars() {
+            match ch {
+                '[' => {
+                    class = true;
+                    expression.push(ch);
+                }
+                ']' => {
+                    class = false;
+                    expression.push(ch);
+                }
+                '*' if !class => expression.push_str(".*"),
+                '?' if !class => expression.push('.'),
+                _ if class => expression.push(ch),
+                _ => expression.push_str(&regex::escape(&ch.to_string())),
+            }
+        }
+        expression.push('$');
+        Some(expression)
+    } else if term.contains(['[', ']']) {
+        Some(term.to_owned())
+    } else {
+        None
     }
+}
+
+pub fn search_path(query: &str, home: &Path) -> Option<(PathBuf, String)> {
     let query = query.trim();
     if query == "~" {
         return Some((home.into(), String::new()));
@@ -123,9 +72,8 @@ pub fn search_path(query: &str, home: &Path, regex: bool) -> Option<(PathBuf, St
     Some((expand(&query[..=slash], home)?, query[slash + 1..].into()))
 }
 
-pub fn parent_search_path(query: &str, home: &Path, regex: bool) -> Option<String> {
-    if regex
-        && let Some((_, term)) = search_path(query, home, true)
+pub fn parent_search_path(query: &str, home: &Path) -> Option<String> {
+    if let Some((_, term)) = search_path(query, home)
         && !term.is_empty()
     {
         let query = query.trim();
@@ -135,52 +83,71 @@ pub fn parent_search_path(query: &str, home: &Path, regex: bool) -> Option<Strin
 }
 
 impl Matcher {
-    pub fn new(query: &str, home: &Path, options: Options) -> Result<Self, String> {
-        let (directory, term) = match search_path(query, home, options.regex) {
+    /// Parse without compiling a pattern or accessing disk; safe for cached UI filtering.
+    pub fn literal(query: &str, home: &Path) -> Self {
+        let (directory, term) = match search_path(query, home) {
             Some((directory, leaf)) => (Some(directory), leaf),
             None => (None, query.trim().to_owned()),
         };
-        let regex = if options.regex && !term.is_empty() {
-            if term.len() > 1024 {
-                return Err(tr!(
-                    "正则表达式过长，请缩短后重试。",
-                    "Regular expression is too long. Shorten it and try again."
-                )
-                .into());
+        let pattern = term.contains([
+            '*', '?', '[', ']', '\\', '^', '$', '(', ')', '{', '}', '|', '+',
+        ]);
+        Self {
+            directory,
+            term,
+            error: None,
+            pattern,
+            expression: None,
+            regex: None,
+        }
+    }
+
+    pub fn new(query: &str, home: &Path) -> Self {
+        let mut matcher = Self::literal(query, home);
+        if matcher.pattern {
+            if matcher.term.len() > 1024 {
+                matcher.error = Some(
+                    tr!(
+                        "表达式过长，仅按普通名称查找。",
+                        "Pattern is too long; searching literal names only."
+                    )
+                    .into(),
+                );
+                return matcher;
             }
-            Some(
-                RegexBuilder::new(&term)
+            matcher.expression = expression(&matcher.term);
+            if let Some(expression) = &matcher.expression {
+                match RegexBuilder::new(expression)
                     .case_insensitive(true)
                     .size_limit(512 * 1024)
                     .dfa_size_limit(512 * 1024)
                     .build()
-                    .map_err(|error| {
-                        trf!(
-                            "正则表达式无效：{}",
-                            "Invalid regular expression: {}",
+                {
+                    Ok(regex) => matcher.regex = Some(regex),
+                    Err(error) => {
+                        matcher.error = Some(trf!(
+                            "表达式无效，仅按普通名称查找：{}",
+                            "Invalid pattern; searching literal names only: {}",
                             error.to_string().lines().last().unwrap_or("")
-                        )
-                    })?,
-            )
-        } else {
-            None
-        };
-        Ok(Self {
-            directory,
-            term,
-            options,
-            regex,
-        })
+                        ))
+                    }
+                }
+            }
+        }
+        matcher
+    }
+
+    pub fn is_pattern(&self) -> bool {
+        self.pattern
+    }
+
+    pub fn recursive(&self) -> bool {
+        self.directory.is_some() && self.regex.is_some()
     }
 
     pub fn score(&self, entry: &Entry) -> Option<u8> {
-        if !self.options.kind.allows(entry) {
-            return None;
-        }
-        match &self.regex {
-            Some(regex) => regex.is_match(&entry.name).then_some(0),
-            None => score_with_parent(entry, &self.term, self.directory.is_none()),
-        }
+        score_with_parent(entry, &self.term, self.directory.is_none())
+            .or_else(|| self.regex.as_ref()?.is_match(&entry.name).then_some(5))
     }
 
     pub fn matching(&self, entries: &[Entry], recent: &[Entry]) -> Vec<Entry> {
@@ -190,7 +157,9 @@ impl Matcher {
     /// Conservative Spotlight hints: every regex match contains at least one literal.
     pub fn literals(&self) -> Option<Vec<String>> {
         self.regex.as_ref()?;
-        let hir = regex_syntax::Parser::new().parse(&self.term).ok()?;
+        let hir = regex_syntax::Parser::new()
+            .parse(self.expression.as_deref()?)
+            .ok()?;
         [ExtractKind::Prefix, ExtractKind::Suffix]
             .into_iter()
             .filter_map(|kind| {
