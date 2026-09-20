@@ -3,7 +3,7 @@ use super::*;
 pub(crate) fn verify(target: &AnyObject, mtm: MainThreadMarker) {
     let settings = SettingsWindow::new(target, mtm);
     let mut config = Config {
-        input_method: InputMethod::Chinese,
+        input_rules: winlane::features::input_rules::Settings::for_winlane(InputMethod::Chinese),
         ..Config::default()
     };
     config
@@ -60,7 +60,7 @@ pub(crate) fn verify(target: &AnyObject, mtm: MainThreadMarker) {
     page.displays.selectItemAtIndex(1);
     page.color.setColor(&native_color(Color(123, 50, 200)));
     let config = settings.candidate().unwrap();
-    assert_eq!(config.input_method, InputMethod::Chinese);
+    assert_eq!(config.input_rules.winlane_policy(), InputMethod::Chinese);
     let indicator = &config.input_indicator;
     assert!(indicator.enabled);
     assert_eq!(indicator.style, Style::Badge);

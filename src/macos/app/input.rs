@@ -70,7 +70,7 @@ impl Delegate {
 
     pub(super) fn prepare_search_input(&self) {
         let current = Source::current(self.mtm()).and_then(|source| source.id());
-        let policy = self.ivars().config.borrow().input_method;
+        let policy = self.ivars().config.borrow().input_rules.winlane_policy();
         self.ivars()
             .input_session
             .borrow_mut()
@@ -81,9 +81,12 @@ impl Delegate {
     pub(super) fn prepare_search_field(&self) {
         self.remember_search_input();
         self.cancel_input_start();
-        let policy = self.ivars().config.borrow().input_method;
+        let policy = self.ivars().config.borrow().input_rules.winlane_policy();
         self.ivars().input_session.borrow_mut().set_policy(policy);
-        let preference = input_source::Preference::resolve(policy, self.mtm());
+        let preference = input_source::Preference::for_rules(
+            &self.ivars().config.borrow().input_rules,
+            self.mtm(),
+        );
         self.ivars().input_layout_source.replace(preference.layout);
         self.ivars().input_start_locales.replace(preference.locales);
         self.ivars()

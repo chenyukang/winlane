@@ -62,7 +62,8 @@ pub(super) fn verify_input_language_is_prepared_before_focus(mtm: MainThreadMark
         (InputMethod::Current, None),
         (InputMethod::LastUsed, None),
     ] {
-        delegate.ivars().config.borrow_mut().input_method = policy;
+        delegate.ivars().config.borrow_mut().input_rules =
+            winlane::features::input_rules::Settings::for_winlane(policy);
         delegate.prepare_panel(PanelMode::Search, 1, 0);
         let layout_id = delegate
             .ivars()
@@ -219,8 +220,10 @@ pub(super) fn verify_search_composition_survives_refresh(mtm: MainThreadMarker) 
     use objc2_foundation::{NSNotFound, NSRange};
 
     let delegate = responsive_fixture(mtm);
-    delegate.ivars().config.borrow_mut().input_method =
-        winlane::core::input_method::InputMethod::Chinese;
+    delegate.ivars().config.borrow_mut().input_rules =
+        winlane::features::input_rules::Settings::for_winlane(
+            winlane::core::input_method::InputMethod::Chinese,
+        );
     delegate.ivars().mode.set(Some(PanelMode::Search));
     delegate.sync_displays();
     delegate.filter();
@@ -302,7 +305,8 @@ pub(super) fn verify_direct_layout_input(mtm: MainThreadMarker) {
     use objc2_foundation::{NSNotFound, NSRange};
     let before = Source::current(mtm).and_then(|source| source.id());
     let delegate = responsive_fixture(mtm);
-    delegate.ivars().config.borrow_mut().input_method = InputMethod::Current;
+    delegate.ivars().config.borrow_mut().input_rules =
+        winlane::features::input_rules::Settings::for_winlane(InputMethod::Current);
     delegate.prepare_panel(PanelMode::Search, 1, 0);
     let ui = delegate.panels().remove(0);
     assert!(ui.panel.makeFirstResponder(Some(&ui.input)));

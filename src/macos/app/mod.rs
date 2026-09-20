@@ -5,6 +5,7 @@ mod commands;
 mod delegate;
 mod input;
 mod input_indicator;
+mod input_rules;
 mod launch;
 mod layout;
 mod menus;
@@ -209,6 +210,8 @@ struct AppState {
     settings: RefCell<Option<Rc<SettingsWindow>>>,
     settings_release_pending: Cell<bool>,
     settings_focus_pending: Cell<bool>,
+    app_input_rules: RefCell<winlane::features::input_rules::Runtime>,
+    app_input_pending: Cell<bool>,
     settings_last_tab: Cell<Option<isize>>,
     snippet_editor_draft: RefCell<Option<crate::macos::ui::snippets::SnippetEditorDraft>>,
     quicklink_editor_draft: RefCell<Option<crate::macos::ui::quicklinks::QuicklinkEditorDraft>>,

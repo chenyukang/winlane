@@ -337,8 +337,8 @@ pub struct Config {
     pub show_usage_hints: bool,
     pub switch_delay_ms: u16,
     pub language: Language,
-    pub input_method: crate::core::input_method::InputMethod,
     pub input_indicator: crate::features::input_indicator::Settings,
+    pub input_rules: crate::features::input_rules::Settings,
     pub include_minimized: bool,
     pub excluded_apps: Vec<String>,
 }
@@ -362,8 +362,8 @@ impl Default for Config {
             show_usage_hints: true,
             switch_delay_ms: 100,
             language: Language::System,
-            input_method: crate::core::input_method::InputMethod::default(),
             input_indicator: Default::default(),
+            input_rules: Default::default(),
             include_minimized: true,
             excluded_apps: Vec::new(),
         }
@@ -376,6 +376,7 @@ impl Config {
         crate::features::quicklinks::validate(&self.quicklinks)?;
         self.clipboard.validate()?;
         self.input_indicator.validate()?;
+        self.input_rules.validate()?;
         if self.alias_rules.len() > 64 {
             return Err(tr!(
                 "最多设置 64 条 alias 规则。",
@@ -620,12 +621,31 @@ impl Config {
             )
         })?;
         let legacy = value.get("switch_shortcut").is_none();
+        let legacy_input = if value.get("input_rules").is_none() {
+            value
+                .get("input_method")
+                .map(|value| {
+                    serde_json::from_value::<crate::core::input_method::InputMethod>(value.clone())
+                })
+                .transpose()
+                .map_err(|_| {
+                    tr!(
+                        "保存的输入法设置无效。",
+                        "Saved input source settings are invalid."
+                    )
+                })?
+        } else {
+            None
+        };
         let mut config: Self = serde_json::from_value(value).map_err(|_| {
             tr!(
                 "保存的设置无法读取，请在设置中重新保存。",
                 "Saved settings could not be read. Save them again in Settings."
             )
         })?;
+        if let Some(policy) = legacy_input {
+            config.input_rules = crate::features::input_rules::Settings::for_winlane(policy);
+        }
         if legacy
             && config
                 .shortcut

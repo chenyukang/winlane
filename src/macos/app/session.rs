@@ -54,6 +54,7 @@ impl Delegate {
     ) {
         self.ivars().settings_focus_pending.set(false);
         self.ivars().project_open.take();
+        self.remember_app_input();
         self.ivars().preparing_panel.set(true);
         self.cancel_scoped_refresh();
         self.clear_quicklink_input();
@@ -337,6 +338,7 @@ impl Delegate {
         }
         state.switch_selection.replace(None);
         state.check_panel_focus.set(false);
+        state.wake.get().unwrap().signal();
         for ui in self.panels() {
             // SAFETY: This main-thread AppKit action accepts a nil sender.
             unsafe { ui.project_progress.stopAnimation(None) };

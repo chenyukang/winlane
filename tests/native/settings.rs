@@ -7,6 +7,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
     verify_lazy_pages(target, mtm);
     verify_card_appearances(mtm);
     input::tests::verify(target, mtm);
+    input_rules::tests::verify(target, mtm);
     use winlane::core::i18n::Locale;
     for (locale, title, tabs) in [
         (
@@ -15,13 +16,14 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
             [
                 "Shortcuts",
                 "Appearance",
-                "Input",
+                "Input Indicator",
                 "Windows",
                 "General",
                 "Aliases",
                 "Snippets",
                 "Clipboard",
                 "Quicklinks",
+                "Input Rules",
             ],
         ),
         (
@@ -30,13 +32,14 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
             [
                 "快捷键",
                 "外观",
-                "输入",
+                "输入法指示器",
                 "窗口列表",
                 "常规",
                 "Alias 规则",
                 "文本片段",
                 "剪贴板",
                 "快捷链接",
+                "输入法规则",
             ],
         ),
     ] {
@@ -71,7 +74,6 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
             &*settings.appearance().appearance,
             &*settings.appearance().density,
             &*settings.windows().sort,
-            &*settings.input().input_method,
         ] {
             assert_eq!(control.action(), Some(sel!(settingsChanged:)));
         }
@@ -138,7 +140,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
                 .iter()
                 .map(|button| button.tag())
                 .collect::<Vec<_>>(),
-            [4, 1, 0, 2, 3, 5, 6, 7, 8]
+            [4, 1, 0, 9, 2, 3, 5, 6, 7, 8]
         );
         for button in &settings.navigation {
             assert_eq!(button.action(), Some(sel!(selectSettingsSection:)));
@@ -188,7 +190,11 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
                 let scroll = scroll.downcast_ref::<NSScrollView>().unwrap();
                 verify_settings_bounds(&scroll.documentView().unwrap());
                 assert!(
-                    scroll.documentVisibleRect().origin.y > 0.0,
+                    (scroll.documentVisibleRect().origin.y
+                        + scroll.documentVisibleRect().size.height
+                        - scroll.documentView().unwrap().bounds().size.height)
+                        .abs()
+                        < 1.0,
                     "Input opens at the top of its scrollable page"
                 );
             }
@@ -278,28 +284,28 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
         }
         settings.general().language.selectItemAtIndex(0);
         assert_eq!(settings.candidate().unwrap().language, Language::System);
-        for (index, input_method) in [
+        for input_method in [
             InputMethod::Current,
             InputMethod::English,
             InputMethod::Chinese,
             InputMethod::LastUsed,
-        ]
-        .into_iter()
-        .enumerate()
-        {
+        ] {
             let config = Config {
-                input_method,
+                input_rules: winlane::features::input_rules::Settings::for_winlane(input_method),
                 ..Config::default()
             };
             settings.fill(&config);
             assert_eq!(
-                settings.input().input_method.indexOfSelectedItem(),
-                index as isize
+                settings.candidate().unwrap().input_rules.winlane_policy(),
+                input_method
             );
             assert_eq!(settings.candidate().unwrap(), config);
         }
         settings.fill(&Config::default());
-        assert_eq!(settings.input().input_method.indexOfSelectedItem(), 1);
+        assert_eq!(
+            settings.candidate().unwrap().input_rules.winlane_policy(),
+            InputMethod::English
+        );
         assert_eq!(settings.appearance().density.indexOfSelectedItem(), 1);
         assert_eq!(
             settings
@@ -424,7 +430,7 @@ fn verify_lazy_pages(target: &AnyObject, mtm: MainThreadMarker) {
     let mut config = Config {
         appearance: Appearance::Dark,
         display_density: DisplayDensity::Compact,
-        input_method: InputMethod::Chinese,
+        input_rules: winlane::features::input_rules::Settings::for_winlane(InputMethod::Chinese),
         sort: SortOrder::Title,
         excluded_apps: vec!["com.example.hidden".into()],
         ..Config::default()
@@ -539,9 +545,7 @@ pub fn verify_autosave_controls(settings: &SettingsWindow, saved: impl Fn() -> C
         .windows()
         .switch_delay
         .setStringValue(ns_string!("150"));
-    settings.input().input_method.selectItemAtIndex(2);
-    send(&settings.input().input_method);
-    assert_eq!(saved().input_method, InputMethod::Chinese);
+    input_rules::tests::verify_autosave(settings, &saved);
     settings
         .windows()
         .minimized

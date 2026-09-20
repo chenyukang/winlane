@@ -6,8 +6,9 @@ use core_foundation::string::{CFString, CFStringRef};
 use objc2::rc::Retained;
 use objc2_app_kit::{NSEvent, NSEventModifierFlags, NSEventType, NSTextInputClient, NSTextView};
 use objc2_foundation::{MainThreadMarker, NSArray, NSString, NSUserDefaults, ns_string};
-use std::cell::Cell;
+use std::cell::RefCell;
 use winlane::core::input_method::InputMethod;
+use winlane::features::input_rules::{RestoreStrategy, Settings, SourceRule, WINLANE_ID};
 
 #[link(name = "Carbon", kind = "framework")]
 unsafe extern "C" {
@@ -182,15 +183,29 @@ pub fn preferred(policy: InputMethod, mtm: MainThreadMarker) -> Option<Source> {
 }
 
 thread_local! {
-    static POLICY: Cell<InputMethod> = const { Cell::new(InputMethod::English) };
+    static RULES: RefCell<Settings> = RefCell::new(Settings::default());
 }
 
-pub fn set_policy(policy: InputMethod, _: MainThreadMarker) {
-    POLICY.set(policy);
+pub fn set_rules(rules: &Settings, _: MainThreadMarker) {
+    RULES.with_borrow_mut(|current| *current = rules.clone());
+}
+
+#[cfg(test)]
+pub fn set_policy(policy: InputMethod, mtm: MainThreadMarker) {
+    set_rules(&Settings::for_winlane(policy), mtm);
 }
 
 pub fn policy(_: MainThreadMarker) -> InputMethod {
-    POLICY.get()
+    RULES.with_borrow(Settings::winlane_policy)
+}
+
+pub fn resolve_rule(rule: &SourceRule, mtm: MainThreadMarker) -> Option<Source> {
+    match rule {
+        SourceRule::Source(source) => Source::by_id(&source.id, mtm),
+        SourceRule::English => Source::for_language("en", mtm),
+        SourceRule::Chinese => Source::for_language("zh", mtm),
+        SourceRule::Global | SourceRule::Current => None,
+    }
 }
 
 pub struct Preference {
@@ -200,8 +215,20 @@ pub struct Preference {
 }
 
 impl Preference {
-    pub fn resolve(policy: InputMethod, mtm: MainThreadMarker) -> Self {
-        let target = preferred(policy, mtm);
+    pub fn configured(mtm: MainThreadMarker) -> Self {
+        RULES.with_borrow(|rules| Self::for_rules(rules, mtm))
+    }
+
+    pub fn for_rules(rules: &Settings, mtm: MainThreadMarker) -> Self {
+        let (source, restore) = rules.resolve(WINLANE_ID);
+        let target = (restore == RestoreStrategy::LastUsed)
+            .then(|| preferred(InputMethod::LastUsed, mtm))
+            .flatten()
+            .or_else(|| resolve_rule(source, mtm));
+        Self::with_target(rules.winlane_policy(), target)
+    }
+
+    fn with_target(policy: InputMethod, target: Option<Source>) -> Self {
         let layout = target
             .as_ref()
             .filter(|source| {

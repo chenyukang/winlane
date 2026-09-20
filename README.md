@@ -124,7 +124,8 @@ Use the sidebar to move between settings. Each section has its own grouped contr
 | **General** | Interface language, launch at login, daily update checks, and Check for Updates. |
 | **Appearance** | System, light, or dark appearance; Compact or Normal display density; background opacity; a toggle for footer hints, refresh status, and the Settings button. |
 | **Shortcuts** | Separate shortcuts for search and switching, plus fixed app shortcuts. |
-| **Input** | Default input source for Winlane fields, plus an optional on-screen input source indicator with custom colors and placement. |
+| **Input Rules** | Global input source and restore strategy, with overrides for individual apps, including Winlane. |
+| **Input Indicator** | Optional on-screen input source indicator with custom colors and placement. |
 | **Windows** | Sorting, minimized windows, and apps to exclude. Recent sorting follows window focus, including mouse, Dock, and shortcut switches. |
 | **Aliases** | Fixed letters for apps or project windows matched by title. |
 | **Snippets** | Saved text and dynamic placeholders. |
@@ -137,9 +138,11 @@ Settings save automatically. Menus, switches, and sliders apply immediately; tex
 
 Language changes update the interface without a restart. By default, Winlane uses the first supported language in your macOS preferences, falling back to English.
 
-The input preference applies when opening search, entering a command such as `projects` or `open-url`, switching Quicklink argument fields, and focusing text fields in settings or snippet forms. Pressing Space from switch mode uses the same preference. The default is **Always English**. English and Chinese use an enabled input source chosen by macOS; if it is unavailable, the current source is kept. **Last used in Winlane** remembers the input source used in Winlane across restarts and keeps the current source when there is no available saved source. Updates preserve your saved preference. You can still switch input sources manually while typing. Switch-mode aliases work independently of this setting.
+**Settings → Input Rules** manages input sources for all apps. The built-in **Winlane** rule defaults to **English (automatic)**; existing input preferences migrate to this rule. It applies to search, command pages, Quicklink arguments, Settings and snippet forms. You can choose a specific enabled input source, keep the current source, or inherit the global setting. Choose **Use default input source** on each entry, or **Restore last used in that app**, which falls back to the default when no saved source is available. Winlane retains its input preparation, early-key buffering, and direct keyboard-layout input behavior.
 
-Enable **Settings → Input → Always show the current input source** to keep an input-source indicator on screen while using other apps. Choose a **Color bar**, **Name badge**, **Circle**, or **Rounded rectangle**, with configurable size, position, and X/Y offsets. Show it on all displays or only the main display. Each input source has its own color and visibility setting. The indicator starts disabled, lets clicks pass through, and does not change the input source or keyboard focus. See [input source indicator](docs/input-indicator.md) for details.
+Enable **automatic switching for other apps** to apply rules when changing apps. Use **Add App…** to override the global source or restore strategy for an application. Manual changes are remembered without forcing the source back while typing. Rules save automatically; per-app input history survives normal Winlane restarts. External switching starts disabled, and the Winlane rule remains active. See [input rules](docs/input-rules.md).
+
+Enable **Settings → Input Indicator → Always show the current input source** to keep an input-source indicator on screen while using other apps. Choose a **Color bar**, **Name badge**, **Circle**, or **Rounded rectangle**, with configurable size, position, and X/Y offsets. Show it on all displays or only the main display. Each input source has its own color and visibility setting. The indicator starts disabled, lets clicks pass through, and does not change the input source or keyboard focus. See [input source indicator](docs/input-indicator.md) for details.
 
 The **Window** menu lets you limit searches to the current app, minimize or restore a window, hide its app, and copy its title. **Command + R** refreshes the list if something looks out of date.
 

@@ -28,7 +28,7 @@ define_class!(
                 Err(error) => { self.ivars().hotkey_error.replace(Some(error)); }
             }
             preference_store::apply_language(self.ivars().config.borrow().language);
-            input_source::set_policy(self.ivars().config.borrow().input_method, self.mtm());
+            input_source::set_rules(&self.ivars().config.borrow().input_rules, self.mtm());
             self.restore_recency(NSUserDefaults::standardUserDefaults());
             match preference_store::load_aliases() {
                 Ok(aliases) => {
@@ -47,7 +47,9 @@ define_class!(
                     self.ivars().updater_error.replace(Some(error));
                 }
             }
+            self.restore_app_input_history();
             self.build_ui();
+            self.configure_app_input_rules();
             self.update_input_indicator();
             self.preload_projects();
             self.ivars().clipboard.replace(Some(crate::macos::platform::clipboard::ClipboardRuntime::new(self.ivars().config.borrow().clipboard.clone())));
@@ -58,6 +60,7 @@ define_class!(
         #[unsafe(method(applicationWillTerminate:))]
         fn will_terminate(&self, _: &NSNotification) {
             self.save_recency();
+            self.save_app_input_history();
             self.ivars().clipboard.take();
         }
         #[unsafe(method(applicationShouldHandleReopen:hasVisibleWindows:))]
@@ -104,6 +107,7 @@ define_class!(
             let Some(window) = notification.object().and_then(|object| object.downcast::<NSWindow>().ok()) else { return; };
             if window.downcast_ref::<SearchPanel>().is_none() {
                 window.makeFirstResponder(None);
+                self.ivars().wake.get().unwrap().signal();
                 return;
             }
             self.ivars().check_panel_focus.set(true);
@@ -190,7 +194,12 @@ define_class!(
             { self.present_panels(); }
         }
         #[unsafe(method(workspaceActivated:))]
-        fn workspace_activated(&self, _: &NSNotification) { self.track_frontmost(); }
+        fn workspace_activated(&self, _: &NSNotification) {
+            self.request_app_input_rules();
+            self.track_frontmost();
+        }
+        #[unsafe(method(appInputSourceChanged:))]
+        fn app_input_source_changed(&self, _: &NSNotification) { self.remember_app_input(); }
         #[unsafe(method(workspaceTerminated:))]
         fn workspace_terminated(&self, _: &NSNotification) { self.check_window_liveness(); }
         #[unsafe(method(warmPanelCache:))]
@@ -265,6 +274,19 @@ define_class!(
         #[unsafe(method(standardUserDriverWillHandleShowingUpdate:forUpdate:state:))]
         fn update_will_show(&self, showing: bool, _: &AnyObject, _: &AnyObject) {
             if showing { self.prepare_update_ui(); }
+        }
+        #[unsafe(method(addInputRule:))]
+        fn add_input_rule(&self, _: Option<&AnyObject>) {
+            if let Some(settings) = self.settings_window() { settings.add_input_rule(); }
+        }
+        #[unsafe(method(removeInputRule:))]
+        fn remove_input_rule(&self, sender: &NSButton) {
+            if let Some(settings) = self.settings_window() { settings.remove_input_rule(sender.tag() as usize); }
+            self.autosave_settings();
+        }
+        #[unsafe(method(chooseInputRuleApp:))]
+        fn choose_input_rule_app(&self, sender: &NSButton) {
+            if let Some(settings) = self.settings_window() { settings.choose_input_rule_app(sender.tag() as usize); }
         }
         #[unsafe(method(settingsChanged:))]
         fn settings_changed(&self, _: Option<&AnyObject>) { self.autosave_settings(); }
@@ -492,6 +514,7 @@ define_class!(
         fn clear_clipboard_action(&self, _: Option<&AnyObject>) { self.confirm_clear_clipboard(); }
         #[unsafe(method(poll:))]
         fn poll(&self, _: Option<&AnyObject>) {
+            self.update_app_input_rules();
             self.release_closed_settings();
             if self.ivars().check_panel_focus.replace(false)
                 && self.ivars().mode.get().is_some()

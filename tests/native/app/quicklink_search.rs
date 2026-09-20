@@ -123,7 +123,7 @@ fn verify_quicklink_shortcut_input(mtm: MainThreadMarker) {
     state.query.replace("old query".into());
     state.search_scope.set(Some(SearchScope::Clipboard));
     let template = winlane::features::quicklinks::Template::parse(&link.link).unwrap();
-    let expected = input_source::preferred(state.config.borrow().input_method, mtm)
+    let expected = input_source::preferred(state.config.borrow().input_rules.winlane_policy(), mtm)
         .and_then(|source| source.id());
     delegate.prepare_quicklink_shortcut_input(link, template, 77);
     assert_eq!(state.input_gate.borrow().target(), expected.as_deref());

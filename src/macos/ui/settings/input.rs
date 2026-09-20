@@ -4,7 +4,6 @@ use crate::macos::ui::input_indicator::native_color;
 use winlane::features::input_indicator::{Color, InputSource, Position, Size, Style};
 
 pub(super) struct InputPage {
-    pub(super) input_method: Retained<NSPopUpButton>,
     pub(super) enabled: Retained<NSButton>,
     pub(super) style: Retained<NSPopUpButton>,
     pub(super) position: Retained<NSPopUpButton>,
@@ -29,47 +28,10 @@ impl InputPage {
         scroll.setAutohidesScrollers(true);
         scroll.setScrollerStyle(NSScrollerStyle::Overlay);
         scroll.setDrawsBackground(false);
-        let document = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 740.0, 718.0));
+        let document = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 740.0, 574.0));
         scroll.setDocumentView(Some(&document));
         host.addSubview(&scroll);
         let host = &*document;
-        let group = settings_group(
-            host,
-            tr!("Winlane 输入法", "Winlane input source"),
-            714.0,
-            96.0,
-            mtm,
-        );
-        group.addSubview(&label(
-            tr!("开始输入时使用", "When input begins"),
-            14.0,
-            rect(20.0, 57.0, 285.0, 24.0),
-            mtm,
-        ));
-        let input_method = popup(
-            &[
-                tr!("跟随当前输入法", "Keep current input source"),
-                tr!("始终英文", "Always English"),
-                tr!("始终中文", "Always Chinese"),
-                tr!("记住 Winlane 上次使用", "Last used in Winlane"),
-            ],
-            rect(330.0, 54.0, 390.0, 28.0),
-            mtm,
-        );
-        input_method.setAccessibilityLabel(Some(&NSString::from_str(tr!(
-            "Winlane 输入法",
-            "Winlane input method"
-        ))));
-        group.addSubview(&input_method);
-        group.addSubview(&hint(
-            tr!(
-                "应用于所有 Winlane 输入框；输入时仍可手动切换。",
-                "Applies to all Winlane fields. You can still switch sources while typing."
-            ),
-            rect(20.0, 9.0, 700.0, 34.0),
-            mtm,
-        ));
-
         let group = settings_group(
             host,
             tr!("屏幕输入法指示器", "On-screen input source indicator"),
@@ -217,8 +179,7 @@ impl InputPage {
             mtm,
         ));
         for control in [
-            &*input_method as &NSControl,
-            &*enabled,
+            &*enabled as &NSControl,
             &*style,
             &*position,
             &*size,
@@ -234,9 +195,8 @@ impl InputPage {
             set_action(control, target, sel!(settingsChanged:));
         }
         set_action(&source, target, sel!(indicatorSourceSelected:));
-        document.scrollRectToVisible(rect(0.0, 717.0, 740.0, 1.0));
+        document.scrollRectToVisible(rect(0.0, document.bounds().size.height - 1.0, 740.0, 1.0));
         Self {
-            input_method,
             enabled,
             style,
             position,
@@ -256,13 +216,6 @@ impl InputPage {
     }
 
     pub(super) fn fill(&self, config: &Config) {
-        self.input_method
-            .selectItemAtIndex(match config.input_method {
-                InputMethod::Current => 0,
-                InputMethod::English => 1,
-                InputMethod::Chinese => 2,
-                InputMethod::LastUsed => 3,
-            });
         let indicator = &config.input_indicator;
         self.enabled.setState(if indicator.enabled {
             NSControlStateValueOn
@@ -397,12 +350,6 @@ impl InputPage {
     }
 
     pub(super) fn read(&self, config: &mut Config) -> Result<(), String> {
-        config.input_method = match self.input_method.indexOfSelectedItem() {
-            0 => InputMethod::Current,
-            2 => InputMethod::Chinese,
-            3 => InputMethod::LastUsed,
-            _ => InputMethod::English,
-        };
         let settings = &mut config.input_indicator;
         settings.enabled = self.enabled.state() == NSControlStateValueOn;
         settings.style = self.selected_style();

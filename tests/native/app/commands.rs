@@ -149,7 +149,8 @@ fn verify_command_shortcut_scope(mtm: MainThreadMarker) {
         (CommandId::Snippets, InputMethod::Current),
         (CommandId::Snippets, InputMethod::LastUsed),
     ] {
-        state.config.borrow_mut().input_method = policy;
+        state.config.borrow_mut().input_rules =
+            winlane::features::input_rules::Settings::for_winlane(policy);
         let expected = input_source::preferred(policy, mtm).and_then(|source| source.id());
         state.mode.set(Some(PanelMode::Switch));
         state.query.replace("old query".into());

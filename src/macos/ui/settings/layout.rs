@@ -36,7 +36,7 @@ impl SettingsWindow {
         ));
         sidebar.addSubview(&hint(
             tr!("工具", "TOOLS"),
-            rect(24.0, 314.0, 178.0, 20.0),
+            rect(24.0, 270.0, 178.0, 20.0),
             mtm,
         ));
         let divider = NSBox::initWithFrame(NSBox::alloc(mtm), rect(219.0, 0.0, 1.0, 740.0));
@@ -54,19 +54,21 @@ impl SettingsWindow {
         view.addSubview(&tabs);
         settings_tab(&tabs, tr!("快捷键", "Shortcuts"), mtm);
         settings_tab(&tabs, tr!("外观", "Appearance"), mtm);
-        settings_tab(&tabs, tr!("输入", "Input"), mtm);
+        settings_tab(&tabs, tr!("输入法指示器", "Input Indicator"), mtm);
         settings_tab(&tabs, tr!("窗口列表", "Windows"), mtm);
         settings_tab(&tabs, tr!("常规", "General"), mtm);
         settings_tab(&tabs, tr!("Alias 规则", "Aliases"), mtm);
         settings_tab(&tabs, tr!("文本片段", "Snippets"), mtm);
         settings_tab(&tabs, tr!("剪贴板", "Clipboard"), mtm);
         settings_tab(&tabs, tr!("快捷链接", "Quicklinks"), mtm);
+        settings_tab(&tabs, tr!("输入法规则", "Input Rules"), mtm);
         let mut navigation = Vec::new();
         for (position, (index, symbol, color)) in [
             (4, "gearshape.fill", NSColor::systemGrayColor()),
             (1, "paintpalette.fill", NSColor::systemPinkColor()),
             (0, "keyboard", NSColor::systemPurpleColor()),
-            (2, "character.cursor.ibeam", NSColor::systemBlueColor()),
+            (9, "character.cursor.ibeam", NSColor::systemBlueColor()),
+            (2, "circle.fill", NSColor::systemCyanColor()),
             (3, "macwindow.on.rectangle", NSColor::systemIndigoColor()),
             (5, "textformat.abc", NSColor::systemTealColor()),
             (6, "text.quote", NSColor::systemGreenColor()),
@@ -76,10 +78,10 @@ impl SettingsWindow {
         .into_iter()
         .enumerate()
         {
-            let y = if position < 6 {
+            let y = if position < 7 {
                 568.0 - position as f64 * 44.0
             } else {
-                264.0 - (position - 6) as f64 * 44.0
+                220.0 - (position - 7) as f64 * 44.0
             };
             let item = tabs.tabViewItemAtIndex(index);
             let control = SettingsNavigationButton::new(
@@ -122,6 +124,7 @@ impl SettingsWindow {
             appearance: OnceCell::new(),
             general: OnceCell::new(),
             input: OnceCell::new(),
+            input_rules: OnceCell::new(),
             windows: OnceCell::new(),
             aliases: OnceCell::new(),
             clipboard: OnceCell::new(),

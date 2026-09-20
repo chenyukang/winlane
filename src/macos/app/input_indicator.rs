@@ -9,6 +9,10 @@ impl Delegate {
             for (name, selector) in [
                 (
                     input_source::selection_notification(),
+                    sel!(appInputSourceChanged:),
+                ),
+                (
+                    input_source::selection_notification(),
                     sel!(indicatorSourceChanged:),
                 ),
                 (

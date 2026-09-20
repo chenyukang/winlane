@@ -28,8 +28,7 @@ impl WindowInput {
                 .prepare(Source::current(mtm).and_then(|source| source.id()), policy);
         }
         self.session.borrow_mut().set_policy(policy);
-        self.preference
-            .replace(Some(Preference::resolve(policy, mtm)));
+        self.preference.replace(Some(Preference::configured(mtm)));
     }
 
     pub fn select(&self, mtm: MainThreadMarker) {

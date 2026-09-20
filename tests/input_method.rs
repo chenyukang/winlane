@@ -4,7 +4,10 @@ use winlane::core::input_method::{InputGate, InputMethod, InputSession};
 #[test]
 fn missing_input_policy_defaults_to_english_and_saved_choices_survive_restart() {
     assert_eq!(
-        Config::from_json("{}").unwrap().input_method,
+        Config::from_json("{}")
+            .unwrap()
+            .input_rules
+            .winlane_policy(),
         InputMethod::English
     );
     for input_method in [
@@ -14,7 +17,7 @@ fn missing_input_policy_defaults_to_english_and_saved_choices_survive_restart() 
         InputMethod::LastUsed,
     ] {
         let config = Config {
-            input_method,
+            input_rules: winlane::features::input_rules::Settings::for_winlane(input_method),
             ..Config::default()
         };
         assert_eq!(

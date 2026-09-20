@@ -1,6 +1,7 @@
 mod appearance;
 mod command_shortcuts;
 mod input;
+mod input_rules;
 mod layout;
 mod navigation;
 mod pages;
@@ -10,6 +11,7 @@ use super::controls::*;
 use super::shortcut::ShortcutControls;
 use appearance::AppearancePage;
 use input::InputPage;
+use input_rules::InputRulesPage;
 use navigation::SettingsNavigationButton;
 use objc2::rc::{Retained, Weak};
 use objc2::runtime::AnyObject;
@@ -24,6 +26,7 @@ use winlane::core::config::{
     Appearance, Config, DisplayDensity, Shortcut, SortOrder, parse_excluded,
 };
 use winlane::core::i18n::Language;
+#[cfg(test)]
 use winlane::core::input_method::InputMethod;
 use winlane::{tr, trf};
 
@@ -41,6 +44,7 @@ pub struct SettingsWindow {
     appearance: OnceCell<AppearancePage>,
     general: OnceCell<GeneralPage>,
     input: OnceCell<InputPage>,
+    input_rules: OnceCell<InputRulesPage>,
     windows: OnceCell<WindowsPage>,
     aliases: OnceCell<()>,
     clipboard: OnceCell<crate::macos::ui::clipboard_settings::ClipboardControls>,
@@ -67,6 +71,9 @@ impl SettingsWindow {
         if let Some(page) = self.input.get() {
             page.fill(config);
         }
+        if let Some(page) = self.input_rules.get() {
+            page.fill(config);
+        }
         if let Some(page) = self.windows.get() {
             page.fill(config);
         }
@@ -89,6 +96,9 @@ impl SettingsWindow {
     }
 
     pub fn refresh_input_sources(&self) {
+        if let Some(page) = self.input_rules.get() {
+            page.refresh_sources();
+        }
         if let Some(page) = self.input.get() {
             page.refresh_sources(&self.config.borrow());
         }
@@ -133,6 +143,24 @@ impl SettingsWindow {
             page.fill(&self.config.borrow());
             page
         })
+    }
+    fn input_rules(&self) -> &InputRulesPage {
+        self.input_rules.get_or_init(|| {
+            let target = self.target.load().expect("settings target is alive");
+            let page = InputRulesPage::new(&self.host(9), &target, self.window.mtm());
+            page.fill(&self.config.borrow());
+            page
+        })
+    }
+    pub fn add_input_rule(&self) {
+        self.input_rules().add(&self.window, &self.message);
+    }
+    pub fn remove_input_rule(&self, index: usize) {
+        self.input_rules().remove(index);
+    }
+    pub fn choose_input_rule_app(&self, index: usize) {
+        self.input_rules()
+            .choose(index, &self.window, &self.message);
     }
     fn windows(&self) -> &WindowsPage {
         self.windows.get_or_init(|| {
@@ -187,6 +215,9 @@ impl SettingsWindow {
                     page
                 });
             }
+            9 => {
+                self.input_rules();
+            }
             _ => {}
         }
     }
@@ -215,6 +246,9 @@ impl SettingsWindow {
         }
         if let Some(page) = self.clipboard.get() {
             config.clipboard = page.read()?;
+        }
+        if let Some(page) = self.input_rules.get() {
+            page.read(&mut config);
         }
         config.validate()?;
         Ok(config)
@@ -301,8 +335,8 @@ impl SettingsWindow {
                 "Make search and switch panels feel right for you."
             ),
             2 => tr!(
-                "配置 Winlane 默认输入法和屏幕常驻指示器。",
-                "Choose Winlane’s input source and an always-visible screen indicator."
+                "配置屏幕常驻输入法指示器的外观和位置。",
+                "Choose the appearance and position of the input source indicator."
             ),
             3 => tr!(
                 "控制候选窗口、排列顺序和面板响应速度。",
@@ -323,6 +357,10 @@ impl SettingsWindow {
             7 => tr!(
                 "管理复制的文本和图片，以及它们在本机的保留方式。",
                 "Control how copied text and images are kept on this Mac."
+            ),
+            9 => tr!(
+                "为 Winlane 和其他应用统一管理输入法规则。",
+                "Manage input source rules for Winlane and other apps."
             ),
             _ => tr!(
                 "为网址、文件和常用搜索创建快捷入口。",

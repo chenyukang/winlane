@@ -298,13 +298,17 @@ impl Delegate {
         if let Some(settings) = self.settings_window() {
             settings.sync_saved_config(&candidate);
         }
+        let input_rules_changed = candidate.input_rules != previous.input_rules;
         let language_changed = candidate.language != previous.language
             && preference_store::apply_language(candidate.language);
         if let Some(clipboard) = self.ivars().clipboard.borrow_mut().as_mut() {
             clipboard.configure(candidate.clipboard.clone());
         }
-        input_source::set_policy(candidate.input_method, self.mtm());
+        input_source::set_rules(&candidate.input_rules, self.mtm());
         self.ivars().config.replace(candidate);
+        if input_rules_changed {
+            self.configure_app_input_rules();
+        }
         self.configure_clipboard_timer();
         self.update_input_indicator();
         self.update_aliases(&self.ivars().windows.borrow());

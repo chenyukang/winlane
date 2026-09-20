@@ -1,6 +1,6 @@
 # Input source indicator
 
-Open **Settings → Input** and enable **Always show the current input source**. The indicator follows the system input source while you use any app, including when Winlane's search and settings windows are closed.
+Open **Settings → Input Indicator** and enable **Always show the current input source**. The indicator follows the system input source while you use any app, including when Winlane's search and settings windows are closed.
 
 - **Color bar** draws a strip at a screen edge. Choose a small, normal, or large thickness and a length of 25%, 50%, or 100% of that edge.
 - **Name badge** shows the system's input-source name in a rounded color badge. Its text uses black or white for contrast.
@@ -15,4 +15,4 @@ For a small dot, choose **Circle**, set the diameter to **10 pt**, select a corn
 
 Default colors distinguish English (blue), Chinese (orange), Japanese (purple), Korean (green), and other sources (teal). Custom colors are stored by input-source ID, so changing its display name does not lose the color. The indicator starts disabled; its settings persist across restarts.
 
-The indicator is display-only: clicks pass through, it never becomes the key window, and it does not select an input source. Winlane's default input preference is configured separately on the same page. It uses macOS input-source notifications instead of a polling timer. If an input method changes an internal mode without reporting a different source to macOS, the indicator continues to show the source reported by the system.
+The indicator is display-only: clicks pass through, it never becomes the key window, and it does not select an input source. Input switching rules, including Winlane’s default source, are configured in **Settings → Input Rules**. It uses macOS input-source notifications instead of a polling timer. If an input method changes an internal mode without reporting a different source to macOS, the indicator continues to show the source reported by the system.

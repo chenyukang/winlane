@@ -2,6 +2,7 @@ mod bluetooth;
 mod clipboard;
 mod commands;
 pub(crate) mod diagnostics;
+mod input_rules;
 mod input_start;
 mod launch_search;
 mod main_wake;
@@ -105,6 +106,7 @@ pub fn verify_hidden_panels() {
     verify_input_language_is_prepared_before_focus(mtm);
     input_start::verify_command_reapplies_input_policy(mtm);
     verify_direct_layout_input(mtm);
+    input_rules::verify(mtm);
     verify_async_focus_order(mtm);
     verify_recency_persistence(mtm);
     verify_async_window_snapshot(mtm);
@@ -138,7 +140,8 @@ pub fn verify_hidden_panels() {
             }
         }
         .and_then(|source| source.id());
-        delegate.ivars().config.borrow_mut().input_method = policy;
+        delegate.ivars().config.borrow_mut().input_rules =
+            winlane::features::input_rules::Settings::for_winlane(policy);
         delegate.prepare_search_input();
         assert_eq!(
             delegate.ivars().input_gate.borrow().target(),
@@ -174,8 +177,10 @@ pub fn verify_hidden_panels() {
         assert!(delegate.ivars().input_start_timer.borrow().is_none());
         assert!(next.as_ref().is_none_or(|timer| !timer.isValid()));
     }
-    delegate.ivars().config.borrow_mut().input_method =
-        winlane::core::input_method::InputMethod::Current;
+    delegate.ivars().config.borrow_mut().input_rules =
+        winlane::features::input_rules::Settings::for_winlane(
+            winlane::core::input_method::InputMethod::Current,
+        );
     let mut distinct_frames = Vec::new();
     for screen in screens.iter() {
         if !distinct_frames.contains(&screen.frame()) {
