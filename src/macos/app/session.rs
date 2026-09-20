@@ -52,6 +52,7 @@ impl Delegate {
         direction: i8,
         scope: Option<SearchScope>,
     ) {
+        self.ivars().settings_focus_pending.set(false);
         self.ivars().project_open.take();
         self.ivars().preparing_panel.set(true);
         self.cancel_scoped_refresh();
@@ -305,6 +306,7 @@ impl Delegate {
     }
 
     pub(super) fn end_session(&self) {
+        self.ivars().settings_focus_pending.set(false);
         self.ivars().project_open.take();
         self.cancel_scoped_refresh();
         self.clear_quicklink_input();

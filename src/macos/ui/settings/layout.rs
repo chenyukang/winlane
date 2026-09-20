@@ -3,6 +3,12 @@ use super::*;
 impl SettingsWindow {
     pub fn new(target: &AnyObject, mtm: MainThreadMarker) -> Self {
         let window = preferences_window(rect(0.0, 0.0, 1020.0, 740.0), mtm);
+        window.setCollectionBehavior(
+            NSWindowCollectionBehavior::MoveToActiveSpace
+                | NSWindowCollectionBehavior::FullScreenAuxiliary
+                | NSWindowCollectionBehavior::Auxiliary,
+        );
+        window.center();
         window.setTitle(&NSString::from_str(tr!("Winlane 设置", "Winlane Settings")));
         window.setTitleVisibility(NSWindowTitleVisibility::Hidden);
         window.setTitlebarAppearsTransparent(true);

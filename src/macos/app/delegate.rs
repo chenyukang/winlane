@@ -13,6 +13,7 @@ define_class!(
         fn became_active(&self, _: &NSNotification) {
             self.check_language();
             if let Some(settings) = self.settings_window() { settings.update_login_status(); }
+            self.finish_settings_focus();
         }
         #[unsafe(method(applicationDidFinishLaunching:))]
         fn did_launch(&self, _: &NSNotification) {
@@ -47,6 +48,7 @@ define_class!(
                 }
             }
             self.build_ui();
+            self.update_input_indicator();
             self.preload_projects();
             self.ivars().clipboard.replace(Some(crate::macos::platform::clipboard::ClipboardRuntime::new(self.ivars().config.borrow().clipboard.clone())));
             self.configure_clipboard_timer();
@@ -62,6 +64,7 @@ define_class!(
         fn reopen(&self, _: &NSApplication, _: bool) -> bool { self.show(); true }
         #[unsafe(method(applicationDidChangeScreenParameters:))]
         fn screens_changed(&self, _: &NSNotification) {
+            self.update_input_indicator();
             if !self.ivars().panels.borrow().is_empty() {
                 self.sync_displays();
                 self.render();
@@ -91,6 +94,7 @@ define_class!(
             if let Some(window) = notification.object().and_then(|object| object.downcast::<NSWindow>().ok())
                 && self.settings_window().is_some_and(|settings| settings.window == window)
             {
+                self.ivars().settings_focus_pending.set(false);
                 self.ivars().settings_release_pending.set(true);
                 self.ivars().wake.get().unwrap().signal();
             }
@@ -201,6 +205,22 @@ define_class!(
                 self.remember_search_input();
             }
         }
+        #[unsafe(method(indicatorSourceChanged:))]
+        fn indicator_source_changed(&self, _: &NSNotification) { self.update_input_indicator(); }
+        #[unsafe(method(indicatorSourcesChanged:))]
+        fn indicator_sources_changed(&self, _: &NSNotification) {
+            if let Some(settings) = self.settings_window() { settings.refresh_input_sources(); }
+            self.update_input_indicator();
+        }
+        #[unsafe(method(indicatorSourceSelected:))]
+        fn indicator_source_selected(&self, _: Option<&AnyObject>) {
+            if let Some(settings) = self.settings_window() { settings.indicator_source_selected(); }
+        }
+        #[unsafe(method(resetIndicatorColor:))]
+        fn reset_indicator_color(&self, _: Option<&AnyObject>) {
+            if let Some(settings) = self.settings_window() { settings.reset_indicator_color(); }
+            self.autosave_settings();
+        }
         #[unsafe(method(finishSearchInputStart:))]
         fn finish_input_start(&self, timer: &NSTimer) {
             if self.ivars().input_start_timer.borrow().as_ref()
@@ -213,8 +233,11 @@ define_class!(
             self.cancel_routing();
             self.end_session();
             let settings = self.ensure_settings_window();
-            NSApplication::sharedApplication(self.mtm()).activate();
-            settings.show(&self.ivars().config.borrow());
+            self.ivars().settings_focus_pending.set(true);
+            settings.bring_to_front();
+            let app = NSApplication::sharedApplication(self.mtm());
+            app.activate();
+            if app.isActive() { self.finish_settings_focus(); }
             self.update_update_settings();
             self.report_shortcut_status();
         }
@@ -569,6 +592,7 @@ impl Delegate {
                     None,
                 );
         }
+        self.observe_input_indicator();
         self.track_frontmost();
         // SAFETY: The application retains this delegate for the entire run loop; poll: has NSTimer signature.
         let timer = unsafe {

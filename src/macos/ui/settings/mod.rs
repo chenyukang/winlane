@@ -1,5 +1,6 @@
 mod appearance;
 mod command_shortcuts;
+mod input;
 mod layout;
 mod navigation;
 mod pages;
@@ -8,6 +9,7 @@ mod shortcuts;
 use super::controls::*;
 use super::shortcut::ShortcutControls;
 use appearance::AppearancePage;
+use input::InputPage;
 use navigation::SettingsNavigationButton;
 use objc2::rc::{Retained, Weak};
 use objc2::runtime::AnyObject;
@@ -15,7 +17,7 @@ use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::*;
 use objc2_foundation::{MainThreadMarker, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString};
 use objc2_service_management::{SMAppService, SMAppServiceStatus};
-use pages::{GeneralPage, InputPage, WindowsPage};
+use pages::{GeneralPage, WindowsPage};
 use shortcuts::ShortcutsPage;
 use std::cell::{OnceCell, RefCell};
 use winlane::core::config::{
@@ -75,11 +77,30 @@ impl SettingsWindow {
 
     pub fn sync_saved_config(&self, config: &Config) {
         self.config.replace(config.clone());
+        if let Some(page) = self.input.get() {
+            page.sync_controls();
+        }
         if let Some(page) = self.shortcuts.get() {
             page.command_shortcuts.fill(&config.command_shortcuts);
         }
         if let Some(page) = self.clipboard.get() {
             page.fill(&config.clipboard);
+        }
+    }
+
+    pub fn refresh_input_sources(&self) {
+        if let Some(page) = self.input.get() {
+            page.refresh_sources(&self.config.borrow());
+        }
+    }
+    pub fn indicator_source_selected(&self) {
+        if let Some(page) = self.input.get() {
+            page.select_source(&self.config.borrow());
+        }
+    }
+    pub fn reset_indicator_color(&self) {
+        if let Some(page) = self.input.get() {
+            page.reset_color();
         }
     }
 
@@ -190,12 +211,7 @@ impl SettingsWindow {
             };
         }
         if let Some(page) = self.input.get() {
-            config.input_method = match page.input_method.indexOfSelectedItem() {
-                0 => InputMethod::Current,
-                2 => InputMethod::Chinese,
-                3 => InputMethod::LastUsed,
-                _ => InputMethod::English,
-            };
+            page.read(&mut config)?;
         }
         if let Some(page) = self.clipboard.get() {
             config.clipboard = page.read()?;
@@ -285,8 +301,8 @@ impl SettingsWindow {
                 "Make search and switch panels feel right for you."
             ),
             2 => tr!(
-                "统一设置 Winlane 所有输入框的默认输入法。",
-                "Choose the default input source for all Winlane text fields."
+                "配置 Winlane 默认输入法和屏幕常驻指示器。",
+                "Choose Winlane’s input source and an always-visible screen indicator."
             ),
             3 => tr!(
                 "控制候选窗口、排列顺序和面板响应速度。",
@@ -342,7 +358,13 @@ impl SettingsWindow {
         self.fill(config);
         self.select_tab(self.selected_tab());
         self.report("", false);
-        self.window.center();
+        self.bring_to_front();
+    }
+    pub fn bring_to_front(&self) {
+        if self.window.isMiniaturized() {
+            self.window.deminiaturize(None);
+        }
+        self.window.orderFrontRegardless();
         self.window.makeKeyAndOrderFront(None);
     }
     pub fn update_updater(&self, available: bool, automatic: bool, error: Option<&str>) {

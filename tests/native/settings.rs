@@ -6,6 +6,7 @@ use winlane::core::i18n;
 pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
     verify_lazy_pages(target, mtm);
     verify_card_appearances(mtm);
+    input::tests::verify(target, mtm);
     use winlane::core::i18n::Locale;
     for (locale, title, tabs) in [
         (
@@ -181,6 +182,16 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
                 .layoutSubtreeIfNeeded();
             let view = item.view(mtm).unwrap();
             verify_settings_bounds(&view);
+            if index == 2 {
+                let subviews = view.subviews();
+                let scroll = subviews.objectAtIndex(0);
+                let scroll = scroll.downcast_ref::<NSScrollView>().unwrap();
+                verify_settings_bounds(&scroll.documentView().unwrap());
+                assert!(
+                    scroll.documentVisibleRect().origin.y > 0.0,
+                    "Input opens at the top of its scrollable page"
+                );
+            }
             for child in view.subviews() {
                 let frame = child.frame();
                 assert!(frame.origin.x >= 0.0 && frame.origin.y >= 0.0);

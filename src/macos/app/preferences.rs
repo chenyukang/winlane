@@ -2,6 +2,18 @@ use super::*;
 use crate::macos::platform::preferences as preference_store;
 
 impl Delegate {
+    pub(super) fn finish_settings_focus(&self) {
+        // App activation can finish after the nonactivating search panel has gone away.
+        // Consume the request once so unrelated future activations cannot steal focus.
+        if self.ivars().settings_focus_pending.replace(false)
+            && self.ivars().mode.get().is_none()
+            && let Some(settings) = self.settings_window()
+            && settings.window.isVisible()
+        {
+            settings.bring_to_front();
+        }
+    }
+
     pub(super) fn settings_window(&self) -> Option<Rc<SettingsWindow>> {
         self.ivars().settings.borrow().clone()
     }
@@ -294,6 +306,7 @@ impl Delegate {
         input_source::set_policy(candidate.input_method, self.mtm());
         self.ivars().config.replace(candidate);
         self.configure_clipboard_timer();
+        self.update_input_indicator();
         self.update_aliases(&self.ivars().windows.borrow());
         if language_changed {
             self.rebuild_localized_ui();

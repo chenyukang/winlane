@@ -16,6 +16,11 @@ unsafe extern "C" {
     fn TISCreateInputSourceList(properties: CFDictionaryRef, include_all: u8) -> CFArrayRef;
     fn TISGetInputSourceProperty(source: CFTypeRef, key: CFStringRef) -> CFTypeRef;
     fn TISSelectInputSource(source: CFTypeRef) -> i32;
+    static kTISPropertyLocalizedName: CFStringRef;
+    static kTISPropertyInputSourceCategory: CFStringRef;
+    static kTISCategoryKeyboardInputSource: CFStringRef;
+    static kTISNotifySelectedKeyboardInputSourceChanged: CFStringRef;
+    static kTISNotifyEnabledKeyboardInputSourcesChanged: CFStringRef;
     static kTISPropertyInputSourceID: CFStringRef;
     static kTISPropertyInputSourceLanguages: CFStringRef;
     static kTISPropertyInputSourceIsSelectCapable: CFStringRef;
@@ -39,6 +44,52 @@ impl Source {
             // SAFETY: Callers pass only objects returned by TIS Copy functions.
             Some(Self(unsafe { CFType::wrap_under_create_rule(raw) }))
         }
+    }
+
+    pub fn description(&self) -> Option<winlane::features::input_indicator::InputSource> {
+        let id = self.id()?;
+        let name = self
+            .property(unsafe { kTISPropertyLocalizedName })
+            .and_then(|value| value.downcast_into::<CFString>())
+            .map_or_else(|| id.clone(), |name| name.to_string());
+        Some(winlane::features::input_indicator::InputSource {
+            id,
+            name,
+            language: self.primary_language(),
+        })
+    }
+
+    pub fn enabled(_: MainThreadMarker) -> Vec<winlane::features::input_indicator::InputSource> {
+        // SAFETY: Carbon returns an owned array; false limits it to enabled sources.
+        let raw = unsafe { TISCreateInputSourceList(std::ptr::null(), 0) };
+        if raw.is_null() {
+            return Vec::new();
+        }
+        let sources = unsafe { CFArray::<CFTypeRef>::wrap_under_create_rule(raw) };
+        let mut result: Vec<_> = sources
+            .iter()
+            .filter_map(|raw| {
+                let source = Self(unsafe { CFType::wrap_under_get_rule(*raw) });
+                let selectable = source
+                    .property(unsafe { kTISPropertyInputSourceIsSelectCapable })
+                    .and_then(|v| v.downcast_into::<CFBoolean>())
+                    .is_some_and(bool::from);
+                let keyboard = source
+                    .property(unsafe { kTISPropertyInputSourceCategory })
+                    .and_then(|v| v.downcast_into::<CFString>())
+                    .is_some_and(|v| {
+                        v == unsafe {
+                            CFString::wrap_under_get_rule(kTISCategoryKeyboardInputSource)
+                        }
+                    });
+                (selectable && keyboard)
+                    .then(|| source.description())
+                    .flatten()
+            })
+            .collect();
+        result.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
+        result.dedup_by(|a, b| a.id == b.id);
+        result
     }
 
     pub fn for_language(language: &str, _: MainThreadMarker) -> Option<Self> {
@@ -232,4 +283,20 @@ pub fn insert_keyboard_layout_text(editor: &NSTextView, event: &NSEvent) -> bool
         );
     }
     true
+}
+
+pub fn selection_notification() -> Retained<NSString> {
+    // SAFETY: The framework owns this immutable notification name.
+    NSString::from_str(
+        &unsafe { CFString::wrap_under_get_rule(kTISNotifySelectedKeyboardInputSourceChanged) }
+            .to_string(),
+    )
+}
+
+pub fn sources_notification() -> Retained<NSString> {
+    // SAFETY: The framework owns this immutable notification name.
+    NSString::from_str(
+        &unsafe { CFString::wrap_under_get_rule(kTISNotifyEnabledKeyboardInputSourcesChanged) }
+            .to_string(),
+    )
 }

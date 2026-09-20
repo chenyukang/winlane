@@ -4,6 +4,7 @@ mod clipboard;
 mod commands;
 mod delegate;
 mod input;
+mod input_indicator;
 mod launch;
 mod layout;
 mod menus;
@@ -183,6 +184,7 @@ struct AppState {
     preparing_panel: Cell<bool>,
     saving_settings: Cell<bool>,
     input_session: RefCell<InputSession>,
+    input_indicator: RefCell<Option<crate::macos::ui::input_indicator::Indicator>>,
     input_target: RefCell<Option<Source>>,
     input_layout_source: RefCell<Option<String>>,
     input_start_locales: RefCell<Option<Retained<NSArray<NSString>>>>,
@@ -206,6 +208,7 @@ struct AppState {
     aliases_writable: Cell<bool>,
     settings: RefCell<Option<Rc<SettingsWindow>>>,
     settings_release_pending: Cell<bool>,
+    settings_focus_pending: Cell<bool>,
     settings_last_tab: Cell<Option<isize>>,
     snippet_editor_draft: RefCell<Option<crate::macos::ui::snippets::SnippetEditorDraft>>,
     quicklink_editor_draft: RefCell<Option<crate::macos::ui::quicklinks::QuicklinkEditorDraft>>,

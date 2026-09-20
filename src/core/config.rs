@@ -338,6 +338,7 @@ pub struct Config {
     pub switch_delay_ms: u16,
     pub language: Language,
     pub input_method: crate::core::input_method::InputMethod,
+    pub input_indicator: crate::features::input_indicator::Settings,
     pub include_minimized: bool,
     pub excluded_apps: Vec<String>,
 }
@@ -362,6 +363,7 @@ impl Default for Config {
             switch_delay_ms: 100,
             language: Language::System,
             input_method: crate::core::input_method::InputMethod::default(),
+            input_indicator: Default::default(),
             include_minimized: true,
             excluded_apps: Vec::new(),
         }
@@ -373,6 +375,7 @@ impl Config {
         crate::features::snippets::validate(&self.snippets)?;
         crate::features::quicklinks::validate(&self.quicklinks)?;
         self.clipboard.validate()?;
+        self.input_indicator.validate()?;
         if self.alias_rules.len() > 64 {
             return Err(tr!(
                 "最多设置 64 条 alias 规则。",

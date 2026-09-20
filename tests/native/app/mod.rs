@@ -13,6 +13,7 @@ mod recency;
 mod responsiveness;
 mod scoped_loading;
 mod settings;
+mod settings_focus;
 mod snippet_search;
 mod window_liveness;
 mod window_search;
@@ -58,6 +59,7 @@ pub fn verify_hidden_panels() {
     app.setActivationPolicy(NSApplicationActivationPolicy::Prohibited);
     crate::macos::ui::material::tests::verify_panel_materials(mtm);
     crate::macos::ui::input::tests::verify_shared_input(mtm);
+    crate::macos::ui::input_indicator::tests::verify(mtm);
     verify_main_wake(mtm);
     verify_switch_alias_prefix(mtm);
     verify_distinct_window_aliases(mtm);
@@ -65,6 +67,7 @@ pub fn verify_hidden_panels() {
     let delegate = Delegate::new(mtm);
     crate::macos::ui::settings::tests::verify_localized_settings(&delegate, mtm);
     verify_autosave(mtm);
+    settings_focus::verify_settings_focus(mtm);
     for language in ["en", "zh"] {
         if let Some(source) = Source::for_language(language, mtm) {
             let id = source
