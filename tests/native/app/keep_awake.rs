@@ -3,6 +3,8 @@ use super::*;
 pub(super) fn verify(mtm: MainThreadMarker) {
     let delegate = Delegate::new(mtm);
     let state = delegate.ivars();
+    assert!(!delegate.update_keep_awake_indicator(false));
+    assert!(state.keep_awake_indicator.borrow().is_none());
     state.demo.set(true);
     state.config.borrow_mut().show_usage_hints = false;
     assert!(delegate.prepare_command_search(CommandId::KeepAwake, 100));

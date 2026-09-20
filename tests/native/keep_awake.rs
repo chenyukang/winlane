@@ -21,12 +21,21 @@ fn exists(id: u32) -> bool {
 
 pub fn verify() {
     let mut runtime = KeepAwake::default();
+    assert!(runtime.indicator_status(SystemTime::now()).is_none());
     runtime
         .apply(Choice::Start {
             minutes: Some(30),
             display: false,
         })
         .unwrap();
+    assert_eq!(
+        runtime
+            .indicator_status(SystemTime::now())
+            .unwrap()
+            .remaining_minutes,
+        Some(30)
+    );
+    assert!(!runtime.indicator_status(SystemTime::now()).unwrap().display);
     let first = runtime.active.as_ref().unwrap()._assertions[0].0;
     assert!(exists(first));
     assert!(!runtime.expire(SystemTime::now()));
@@ -37,6 +46,9 @@ pub fn verify() {
         })
         .unwrap();
     assert!(!exists(first));
+    let status = runtime.indicator_status(SystemTime::now()).unwrap();
+    assert!(status.display);
+    assert!(status.remaining_minutes.is_none());
     let ids: Vec<_> = runtime
         .active
         .as_ref()
@@ -49,6 +61,7 @@ pub fn verify() {
     assert!(ids.iter().all(|id| exists(*id)));
     assert!(!runtime.expire(SystemTime::now() + std::time::Duration::from_secs(86400)));
     runtime.apply(Choice::Stop).unwrap();
+    assert!(runtime.indicator_status(SystemTime::now()).is_none());
     assert!(ids.iter().all(|id| !exists(*id)));
     runtime.apply(Choice::Stop).unwrap();
     runtime
@@ -59,6 +72,7 @@ pub fn verify() {
         .unwrap();
     let id = runtime.active.as_ref().unwrap()._assertions[0].0;
     let deadline = runtime.active.as_ref().unwrap().deadline.unwrap();
+    assert!(runtime.indicator_status(deadline).is_none());
     assert!(runtime.expire(deadline));
     assert!(!exists(id));
     // The system must also release a timed assertion without polling Winlane.

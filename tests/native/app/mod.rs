@@ -62,6 +62,7 @@ pub fn verify_hidden_panels() {
     crate::macos::ui::material::tests::verify_panel_materials(mtm);
     crate::macos::ui::input::tests::verify_shared_input(mtm);
     crate::macos::ui::input_indicator::tests::verify(mtm);
+    crate::macos::ui::keep_awake_indicator::tests::verify(mtm);
     verify_main_wake(mtm);
     verify_switch_alias_prefix(mtm);
     verify_distinct_window_aliases(mtm);

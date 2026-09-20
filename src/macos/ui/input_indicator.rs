@@ -21,6 +21,34 @@ define_class!(
     }
 );
 
+impl IndicatorPanel {
+    pub(crate) fn new(mtm: MainThreadMarker) -> Retained<Self> {
+        // SAFETY: This owned, borderless panel never activates the app; retained
+        // ownership replaces AppKit's release-on-close behavior.
+        let panel: Retained<IndicatorPanel> = unsafe {
+            msg_send![super(IndicatorPanel::alloc(mtm).set_ivars(())), initWithContentRect: rect(0.0, 0.0, 1.0, 1.0),
+                styleMask: NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel,
+                backing: NSBackingStoreType::Buffered, defer: false]
+        };
+        unsafe { panel.setReleasedWhenClosed(false) };
+        panel.setBackgroundColor(Some(&NSColor::clearColor()));
+        panel.setOpaque(false);
+        panel.setHasShadow(false);
+        panel.setIgnoresMouseEvents(true);
+        panel.setHidesOnDeactivate(false);
+        panel.setExcludedFromWindowsMenu(true);
+        panel.setAnimationBehavior(NSWindowAnimationBehavior::None);
+        panel.setLevel(NSStatusWindowLevel + 1);
+        panel.setCollectionBehavior(
+            NSWindowCollectionBehavior::CanJoinAllSpaces
+                | NSWindowCollectionBehavior::Stationary
+                | NSWindowCollectionBehavior::IgnoresCycle
+                | NSWindowCollectionBehavior::FullScreenAuxiliary,
+        );
+        panel
+    }
+}
+
 pub(crate) struct Screen {
     pub id: u32,
     pub frame: Rect,
@@ -82,28 +110,7 @@ struct Surface {
 
 impl Surface {
     fn new(id: u32, mtm: MainThreadMarker) -> Self {
-        // SAFETY: This owned, borderless panel never activates the app; retained
-        // ownership replaces AppKit's release-on-close behavior.
-        let panel: Retained<IndicatorPanel> = unsafe {
-            msg_send![super(IndicatorPanel::alloc(mtm).set_ivars(())), initWithContentRect: rect(0.0, 0.0, 1.0, 1.0),
-                styleMask: NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel,
-                backing: NSBackingStoreType::Buffered, defer: false]
-        };
-        unsafe { panel.setReleasedWhenClosed(false) };
-        panel.setBackgroundColor(Some(&NSColor::clearColor()));
-        panel.setOpaque(false);
-        panel.setHasShadow(false);
-        panel.setIgnoresMouseEvents(true);
-        panel.setHidesOnDeactivate(false);
-        panel.setExcludedFromWindowsMenu(true);
-        panel.setAnimationBehavior(NSWindowAnimationBehavior::None);
-        panel.setLevel(NSStatusWindowLevel + 1);
-        panel.setCollectionBehavior(
-            NSWindowCollectionBehavior::CanJoinAllSpaces
-                | NSWindowCollectionBehavior::Stationary
-                | NSWindowCollectionBehavior::IgnoresCycle
-                | NSWindowCollectionBehavior::FullScreenAuxiliary,
-        );
+        let panel = IndicatorPanel::new(mtm);
         let root = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 1.0, 1.0));
         panel.setContentView(Some(&root));
         let background = NSBox::initWithFrame(NSBox::alloc(mtm), root.bounds());
@@ -212,6 +219,13 @@ impl Indicator {
                 .update(settings, source, screen);
         }
         self.surfaces.retain(|surface| ids.contains(&surface.id));
+    }
+
+    pub(crate) fn frames(&self) -> Vec<Rect> {
+        self.surfaces
+            .iter()
+            .map(|surface| from_rect(surface.panel.frame()))
+            .collect()
     }
 
     pub(crate) fn show(&self) {

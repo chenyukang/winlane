@@ -49,6 +49,11 @@ impl Delegate {
     }
 
     pub(super) fn update_input_indicator(&self) {
+        self.configure_input_indicator();
+        self.update_keep_awake_indicator(true);
+    }
+
+    fn configure_input_indicator(&self) {
         let config = self.ivars().config.borrow();
         if !config.input_indicator.enabled {
             self.ivars().input_indicator.take();

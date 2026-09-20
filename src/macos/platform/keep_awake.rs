@@ -3,7 +3,10 @@ use core_foundation::{
     string::{CFString, CFStringRef},
 };
 use std::time::SystemTime;
-use winlane::{features::keep_awake::Choice, tr, trf};
+use winlane::{
+    features::keep_awake::{Choice, IndicatorStatus},
+    tr, trf,
+};
 
 #[link(name = "IOKit", kind = "framework")]
 unsafe extern "C" {
@@ -110,17 +113,21 @@ impl KeepAwake {
                 let duration = active.deadline.map_or_else(
                     || tr!("直到手动关闭", "until turned off").into(),
                     |end| {
-                        let minutes = end
-                            .duration_since(SystemTime::now())
-                            .unwrap_or_default()
-                            .as_secs()
-                            .div_ceil(60);
+                        let remaining = end.duration_since(SystemTime::now()).unwrap_or_default();
+                        let minutes = (remaining.as_secs()
+                            + u64::from(remaining.subsec_nanos() > 0))
+                        .div_ceil(60);
                         trf!("剩余 {} 分钟", "{} minutes remaining", minutes)
                     },
                 );
                 format!("{} · {}", active.choice.detail(), duration)
             }
         }
+    }
+
+    pub fn indicator_status(&self, now: SystemTime) -> Option<IndicatorStatus> {
+        let active = self.active.as_ref()?;
+        IndicatorStatus::new(active.choice, active.deadline, now)
     }
 }
 

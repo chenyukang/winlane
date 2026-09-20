@@ -81,3 +81,94 @@ pub fn matching(query: &str) -> Vec<Choice> {
         })
         .collect()
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IndicatorStatus {
+    pub display: bool,
+    pub remaining_minutes: Option<u64>,
+}
+
+impl IndicatorStatus {
+    pub fn new(choice: Choice, deadline: Option<SystemTime>, now: SystemTime) -> Option<Self> {
+        let Choice::Start { display, .. } = choice else {
+            return None;
+        };
+        let remaining_minutes = if let Some(end) = deadline {
+            let remaining = end
+                .duration_since(now)
+                .ok()
+                .filter(|duration| !duration.is_zero())?;
+            // A partial final second still represents an active session.
+            Some((remaining.as_secs() + u64::from(remaining.subsec_nanos() > 0)).div_ceil(60))
+        } else {
+            None
+        };
+        Some(Self {
+            display,
+            remaining_minutes,
+        })
+    }
+
+    pub fn label(self) -> String {
+        let mode = if self.display {
+            tr!("屏幕常亮", "Display on")
+        } else {
+            tr!("防休眠", "Awake")
+        };
+        let duration = self.remaining_minutes.map_or_else(
+            || tr!("持续", "Until off").into(),
+            |minutes| trf!("{} 分钟", "{}m", minutes),
+        );
+        format!("☕ {mode} · {duration}")
+    }
+}
+
+pub fn indicator_frame(
+    safe: crate::core::displays::Rect,
+    text_width: f64,
+    occupied: &[crate::core::displays::Rect],
+) -> crate::core::displays::Rect {
+    use crate::core::displays::Rect;
+    let width = (text_width + 20.0).clamp(100.0, 280.0).min(safe.width);
+    let height = 24.0_f64.min(safe.height);
+    let frame = Rect {
+        x: safe.x + (safe.width - width - 8.0).max(0.0),
+        y: safe.y + (safe.height - height - 8.0).max(0.0),
+        width,
+        height,
+    };
+    let overlaps = |candidate: Rect| {
+        occupied.iter().any(|other| {
+            candidate.x < other.x + other.width
+                && candidate.x + candidate.width > other.x
+                && candidate.y < other.y + other.height
+                && candidate.y + candidate.height > other.y
+        })
+    };
+    if !overlaps(frame) {
+        return frame;
+    }
+    // Try below, then left of input indicators without leaving the usable screen.
+    occupied
+        .iter()
+        .flat_map(|other| {
+            [
+                Rect {
+                    y: other.y - height - 6.0,
+                    ..frame
+                },
+                Rect {
+                    x: other.x - width - 6.0,
+                    ..frame
+                },
+            ]
+        })
+        .find(|candidate| {
+            candidate.x >= safe.x
+                && candidate.y >= safe.y
+                && candidate.x + width <= safe.x + safe.width
+                && candidate.y + height <= safe.y + safe.height
+                && !overlaps(*candidate)
+        })
+        .unwrap_or(frame)
+}

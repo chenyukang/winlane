@@ -184,6 +184,7 @@ struct AppState {
     keep_awake: RefCell<crate::macos::platform::keep_awake::KeepAwake>,
     keep_awake_matches: RefCell<Vec<winlane::features::keep_awake::Choice>>,
     keep_awake_error: RefCell<Option<String>>,
+    keep_awake_indicator: RefCell<Option<crate::macos::ui::keep_awake_indicator::Indicator>>,
     panels: RefCell<Vec<Rc<PanelUi>>>,
     query: RefCell<String>,
     search_scope: Cell<Option<SearchScope>>,

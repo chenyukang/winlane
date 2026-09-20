@@ -4,6 +4,7 @@ pub(crate) mod clipboard_settings;
 pub(crate) mod controls;
 pub(crate) mod input;
 pub(crate) mod input_indicator;
+pub(crate) mod keep_awake_indicator;
 pub(crate) mod material;
 pub(crate) mod quicklinks;
 mod rule_list;
