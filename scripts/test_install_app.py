@@ -145,6 +145,42 @@ class InstallAppTests(unittest.TestCase):
 
 
 class PlatformChecks(unittest.TestCase):
+    def test_gui_launch_environment_removes_codex_task_context(self):
+        environment = installer.gui_launch_environment({
+            "HOME": "/Users/example",
+            "PATH": "/usr/bin",
+            "NO_COLOR": "1",
+            "TERM": "dumb",
+            "COLORTERM": "",
+            "CODEX_SHELL": "1",
+            "CODEX_THREAD_ID": "thread-id",
+        })
+        self.assertEqual(environment, {"HOME": "/Users/example", "PATH": "/usr/bin"})
+
+    def test_gui_launch_environment_preserves_normal_user_environment(self):
+        environment = {
+            "PATH": "/usr/bin",
+            "NO_COLOR": "1",
+            "TERM": "xterm-256color",
+        }
+        self.assertEqual(installer.gui_launch_environment(environment), environment)
+
+    def test_launch_app_uses_sanitized_environment(self):
+        inherited = {
+            "PATH": "/usr/bin",
+            "NO_COLOR": "1",
+            "CODEX_INTERNAL_ORIGINATOR_OVERRIDE": "Codex",
+        }
+        with (
+            patch.dict(installer.os.environ, inherited, clear=True),
+            patch.object(installer, "command") as command,
+            patch.object(installer, "installed_pids", return_value=[123]),
+            patch.object(installer.time, "sleep"),
+        ):
+            self.assertEqual(installer.launch_app(Path("/Applications/Winlane.app"), 1), [123])
+        self.assertEqual(command.call_args.args, ("open", "/Applications/Winlane.app"))
+        self.assertEqual(command.call_args.kwargs["env"], {"PATH": "/usr/bin"})
+
     def test_requirement_on_stdout_is_used_for_identity_check(self):
         requirement = 'identifier "app.windowlane.desktop" and certificate leaf = H"example"'
         with patch.object(installer, "command") as command:

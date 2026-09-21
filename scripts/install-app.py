@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import plistlib
 import shutil
@@ -17,13 +18,29 @@ BUNDLE_ID = "app.windowlane.desktop"
 PREFERENCES_KEY = "WindowlanePreferencesV1"
 DEFAULT_SOURCE = Path(__file__).resolve().parent.parent / "dist/Winlane.app"
 DEFAULT_DESTINATION = Path("/Applications/Winlane.app")
+TRANSIENT_CODEX_VARIABLES = {"NO_COLOR", "TERM", "COLORTERM"}
 
 
-def command(*args, timeout=30):
-    result = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+def command(*args, timeout=30, env=None):
+    result = subprocess.run(args, capture_output=True, text=True, timeout=timeout, env=env)
     if result.returncode:
         raise RuntimeError(f"{args[0]} failed: {(result.stderr or result.stdout).strip()}")
     return result
+
+
+def gui_launch_environment(environment=None):
+    environment = dict(os.environ if environment is None else environment)
+    launched_from_codex = environment.get("CODEX_INTERNAL_ORIGINATOR_OVERRIDE") == "Codex" or (
+        "CODEX_SHELL" in environment
+        and ("CODEX_THREAD_ID" in environment or "CODEX_SESSION_ID" in environment)
+    )
+    if not launched_from_codex:
+        return environment
+    return {
+        key: value
+        for key, value in environment.items()
+        if not key.startswith("CODEX_") and key not in TRANSIENT_CODEX_VARIABLES
+    }
 
 
 def verify_bundle(path):
@@ -96,7 +113,7 @@ def quit_app(destination, timeout):
 
 
 def launch_app(destination, timeout):
-    command("open", str(destination), timeout=timeout)
+    command("open", str(destination), timeout=timeout, env=gui_launch_environment())
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         pids = installed_pids(destination)
