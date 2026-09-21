@@ -285,6 +285,9 @@ impl Delegate {
         } else {
             None
         };
+        if candidate.logging != previous.logging {
+            crate::macos::platform::logging::configure(&candidate.logging)?;
+        }
         preference_store::save(
             &candidate,
             self.ivars()
@@ -318,7 +321,6 @@ impl Delegate {
         if let Some(clipboard) = self.ivars().clipboard.borrow_mut().as_mut() {
             clipboard.configure(candidate.clipboard.clone());
         }
-        crate::macos::platform::logging::set_debug(candidate.debug_logging);
         self.ivars()
             .auto_cleanup
             .borrow_mut()

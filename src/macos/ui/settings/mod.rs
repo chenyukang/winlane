@@ -101,6 +101,9 @@ impl SettingsWindow {
 
     pub fn sync_saved_config(&self, config: &Config) {
         self.config.replace(config.clone());
+        if let Some(page) = self.auto_cleanup.get() {
+            page.update_grace(config);
+        }
         if let Some(page) = self.input.get() {
             page.sync_controls();
         }
@@ -315,7 +318,7 @@ impl SettingsWindow {
             page.read(&mut config)?;
         }
         if let Some(page) = self.general.get() {
-            config.debug_logging = page.debug_logging.state() == NSControlStateValueOn;
+            page.read_logging(&mut config);
             config.language = match page.language.indexOfSelectedItem() {
                 1 => Language::Chinese,
                 2 => Language::English,

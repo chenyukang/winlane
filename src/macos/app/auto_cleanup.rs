@@ -35,15 +35,25 @@ impl State {
             return;
         }
         self.cancel();
-        self.generation = self.generation.wrapping_add(1);
+        let rules_changed =
+            self.settings.enabled != settings.enabled || self.settings.rules != settings.rules;
+        if rules_changed {
+            self.generation = self.generation.wrapping_add(1);
+            self.planner = Planner::default();
+        }
         self.settings = settings.clone();
-        self.planner = Planner::default();
-        self.next_scan = None;
+        // An interval edit must not retry a close still awaiting the user's save decision.
+        self.next_scan = if rules_changed {
+            None
+        } else {
+            Some(Instant::now() + settings.interval())
+        };
         record(Level::Info, "auto-cleanup", "configuration", || {
             format!(
-                "enabled={} rules={}",
+                "enabled={} rules={} interval_secs={}",
                 settings.enabled,
-                settings.rules.len()
+                settings.rules.len(),
+                settings.interval_secs,
             )
         });
     }
@@ -138,7 +148,7 @@ impl Delegate {
             && state.job.is_none()
             && state.next_scan.is_none_or(|next| now >= next)
         {
-            state.next_scan = Some(now + Duration::from_secs(5));
+            state.next_scan = Some(now + state.settings.interval());
             let rules = state.settings.rules.clone();
             let pending = state.planner.pending().cloned().collect::<Vec<_>>();
             let (tx, rx) = mpsc::channel();

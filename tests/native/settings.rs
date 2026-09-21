@@ -139,20 +139,25 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
                     })
                 })
         );
-        assert!(!settings.candidate().unwrap().debug_logging);
-        settings
-            .general()
-            .debug_logging
-            .setState(NSControlStateValueOn);
-        assert!(settings.candidate().unwrap().debug_logging);
-        settings
-            .general()
-            .debug_logging
-            .setState(NSControlStateValueOff);
-        assert_eq!(
-            settings.general().debug_logging.action(),
-            Some(sel!(settingsChanged:))
-        );
+        use winlane::core::logging::Level;
+        assert_eq!(settings.candidate().unwrap().logging.level, Level::Info);
+        for (index, level) in [
+            (0, Level::Debug),
+            (1, Level::Info),
+            (2, Level::Warn),
+            (3, Level::Error),
+            (4, Level::Off),
+        ] {
+            settings.general().log_level.selectItemAtIndex(index);
+            assert_eq!(settings.candidate().unwrap().logging.level, level);
+        }
+        settings.general().log_level.selectItemAtIndex(1);
+        for control in [
+            &*settings.general().log_level as &NSControl,
+            &*settings.general().log_path,
+        ] {
+            assert_eq!(control.action(), Some(sel!(settingsChanged:)));
+        }
         assert_eq!(settings.window.title().to_string(), title);
         assert_eq!(settings.tabs.tabViewType(), NSTabViewType::NoTabsNoBorder);
         assert_eq!(settings.selected_tab(), 4, "open settings on General");
@@ -547,6 +552,28 @@ pub fn verify_autosave_controls(settings: &SettingsWindow, saved: impl Fn() -> C
     let send = |control: &NSControl| unsafe {
         assert!(control.sendAction_to(control.action(), control.target().as_deref()));
     };
+    use winlane::core::logging::{DEFAULT_FILE_PATH, Level};
+    settings.general().log_level.selectItemAtIndex(0);
+    send(&settings.general().log_level);
+    assert_eq!(saved().logging.level, Level::Debug);
+    settings
+        .general()
+        .log_path
+        .setStringValue(ns_string!("~/Logs/example.log"));
+    send(&settings.general().log_path);
+    assert_eq!(saved().logging.file_path, "~/Logs/example.log");
+    settings
+        .general()
+        .log_path
+        .setStringValue(ns_string!("relative.log"));
+    send(&settings.general().log_path);
+    assert_eq!(saved().logging.file_path, "~/Logs/example.log");
+    settings.general().log_path.setStringValue(ns_string!(""));
+    send(&settings.general().log_path);
+    assert_eq!(saved().logging.file_path, DEFAULT_FILE_PATH);
+    settings.general().log_level.selectItemAtIndex(1);
+    send(&settings.general().log_level);
+    assert_eq!(saved().logging.level, Level::Info);
     for (index, density) in [(0, DisplayDensity::Compact), (1, DisplayDensity::Normal)] {
         settings.appearance().density.selectItemAtIndex(index);
         send(&settings.appearance().density);

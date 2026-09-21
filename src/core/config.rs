@@ -335,7 +335,7 @@ pub struct Config {
     pub display_density: DisplayDensity,
     pub background_opacity: u8,
     pub show_usage_hints: bool,
-    pub debug_logging: bool,
+    pub logging: crate::core::logging::Settings,
     pub auto_cleanup: crate::features::auto_cleanup::Settings,
     pub switch_delay_ms: u16,
     pub language: Language,
@@ -364,7 +364,7 @@ impl Default for Config {
             display_density: DisplayDensity::default(),
             background_opacity: 100,
             show_usage_hints: true,
-            debug_logging: false,
+            logging: Default::default(),
             auto_cleanup: Default::default(),
             switch_delay_ms: 100,
             language: Language::System,
@@ -380,6 +380,7 @@ impl Default for Config {
 
 impl Config {
     pub fn validate(&self) -> Result<(), String> {
+        self.logging.validate()?;
         self.auto_cleanup.validate()?;
         crate::features::snippets::validate(&self.snippets)?;
         crate::features::quicklinks::validate(&self.quicklinks)?;
@@ -648,12 +649,17 @@ impl Config {
         } else {
             None
         };
+        let legacy_debug = value.get("logging").is_none()
+            && value.get("debug_logging").and_then(|value| value.as_bool()) == Some(true);
         let mut config: Self = serde_json::from_value(value).map_err(|_| {
             tr!(
                 "保存的设置无法读取，请在设置中重新保存。",
                 "Saved settings could not be read. Save them again in Settings."
             )
         })?;
+        if legacy_debug {
+            config.logging.level = crate::core::logging::Level::Debug;
+        }
         if let Some(policy) = legacy_input {
             config.input_rules = crate::features::input_rules::Settings::for_winlane(policy);
         }

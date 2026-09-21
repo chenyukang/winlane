@@ -175,7 +175,7 @@ Custom scrolling starts disabled. Quit other scroll modifiers before enabling it
 
 In **Settings → Auto Cleanup**, add an app and choose how many windows to keep. For example, set Visual Studio Code to **3** to close its least recently used windows when more than three are open. A single **Enable Auto Cleanup** switch controls all rules and starts off; turning it off keeps your rules.
 
-Winlane preserves the active window and gives newly discovered windows a short grace period. It uses each app's normal close button and pauses that app's cleanup if a window remains open or needs a save decision. [Cleanup behavior and logs](docs/auto-cleanup.md).
+The check interval is configurable and defaults to **10 seconds**. Winlane preserves the active window and gives newly discovered windows a grace period of **twice the interval**. It uses each app's normal close button and pauses that app's cleanup if a window remains open or needs a save decision. [Cleanup behavior and logs](docs/auto-cleanup.md).
 
 ## Privacy and permissions
 
@@ -198,7 +198,7 @@ See [clipboard storage and retention](docs/clipboard.md#retention-and-privacy) f
 - **A shortcut does nothing:** check Spotlight, other launchers, and keyboard remappers for competing bindings.
 - **Chrome history cannot be read:** follow the access-settings action in `open-url`. If you grant Full Disk Access, restart Winlane and try again.
 - **An input rule does not affect another app:** enable automatic switching for other apps in **Input Rules**, then switch away from and back to that app.
-- **Collect diagnostics:** enable **Settings → General → Debug logging** and use **Open Logs Folder**. Logs stay on this Mac; turn debugging off when finished.
+- **Collect diagnostics:** choose **Debug** in **Settings → General → Logging**, then use **Open Logs Folder**. You can change the log file path here. Logs stay on this Mac; return to **Info** when finished.
 
 For help or feature requests, choose **Feedback…** from the menu bar or [open an issue](https://github.com/chenyukang/winlane/issues). Include your macOS version, Winlane version, and steps to reproduce the problem.
 

@@ -43,16 +43,83 @@ fn saved_preferences_round_trip_without_window_data() {
 }
 
 #[test]
-fn debug_logging_is_opt_in_and_persists() {
-    assert!(!Config::from_json("{}").unwrap().debug_logging);
-    let config = Config {
-        debug_logging: true,
-        ..Config::default()
-    };
+fn logging_defaults_and_legacy_debug_migrate_without_overriding_new_settings() {
+    use winlane::core::logging::{DEFAULT_FILE_PATH, Level};
+    let config = Config::from_json("{}").unwrap();
+    assert_eq!(config.logging.level, Level::Info);
+    assert_eq!(config.logging.file_path, DEFAULT_FILE_PATH);
     assert_eq!(
-        Config::from_json(&config.to_json().unwrap()).unwrap(),
-        config
+        Config::from_json(r#"{"debug_logging":true}"#)
+            .unwrap()
+            .logging
+            .level,
+        Level::Debug
     );
+    assert_eq!(
+        Config::from_json(r#"{"debug_logging":false}"#)
+            .unwrap()
+            .logging
+            .level,
+        Level::Info
+    );
+    let config = Config::from_json(
+        r#"{"debug_logging":true,"logging":{"level":"off","file_path":"/tmp/example.log"}}"#,
+    )
+    .unwrap();
+    assert_eq!(config.logging.level, Level::Off);
+    let json = config.to_json().unwrap();
+    assert!(!json.contains("debug_logging"));
+    assert_eq!(Config::from_json(&json).unwrap(), config);
+}
+
+#[test]
+fn logging_levels_and_paths_validate_and_round_trip() {
+    use winlane::core::logging::Level;
+    for level in [
+        Level::Off,
+        Level::Error,
+        Level::Warn,
+        Level::Info,
+        Level::Debug,
+    ] {
+        let mut config = Config::default();
+        config.logging.level = level;
+        config.logging.file_path = "~/Logs/example.log".into();
+        assert_eq!(
+            Config::from_json(&config.to_json().unwrap()).unwrap(),
+            config
+        );
+        assert_eq!(
+            config
+                .logging
+                .resolve_path(Some(std::path::Path::new("/Users/example")))
+                .unwrap(),
+            std::path::Path::new("/Users/example/Logs/example.log")
+        );
+        assert!(config.logging.resolve_path(None).is_err());
+        config.logging.file_path = "/tmp/example.log".into();
+        assert_eq!(
+            config.logging.resolve_path(None).unwrap(),
+            std::path::Path::new("/tmp/example.log")
+        );
+    }
+    for path in [
+        "",
+        "relative.log",
+        "~other/file.log",
+        "~/",
+        "/",
+        "/tmp/",
+        "/tmp/..",
+        "/tmp/.",
+        "/tmp/bad\nfile",
+        "/tmp/bad\0file",
+    ] {
+        let mut config = Config::default();
+        config.logging.file_path = path.into();
+        assert!(config.to_json().is_err(), "accepted {path:?}");
+    }
+    assert!(Config::from_json(r#"{"logging":{"level":"unknown"}}"#).is_err());
 }
 
 #[test]

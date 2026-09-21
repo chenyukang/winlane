@@ -2,11 +2,22 @@ use crate::{core::config::ApplicationTarget, tr};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub enabled: bool,
+    pub interval_secs: u16,
     pub rules: Vec<Rule>,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: 10,
+            rules: Vec::new(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -16,7 +27,22 @@ pub struct Rule {
 }
 
 impl Settings {
+    pub fn interval(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(u64::from(self.interval_secs))
+    }
+
+    pub fn grace_period_ms(&self) -> u64 {
+        u64::from(self.interval_secs) * 2_000
+    }
+
     pub fn validate(&self) -> Result<(), String> {
+        if !(1..=3600).contains(&self.interval_secs) {
+            return Err(tr!(
+                "检查间隔应为 1–3600 秒的整数。",
+                "Check interval must be an integer from 1 to 3600 seconds."
+            )
+            .into());
+        }
         if self.rules.len() > 64 {
             return Err(tr!(
                 "最多设置 64 条自动清理规则。",
@@ -122,10 +148,9 @@ impl Planner {
                 .filter(|w| {
                     !w.protected
                         && w.server_id.is_some()
-                        && self
-                            .seen
-                            .get(&w.id)
-                            .is_some_and(|first| now_ms.saturating_sub(*first) >= 10_000)
+                        && self.seen.get(&w.id).is_some_and(|first| {
+                            now_ms.saturating_sub(*first) >= settings.grace_period_ms()
+                        })
                 })
                 .max_by_key(|w| {
                     (

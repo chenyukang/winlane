@@ -14,6 +14,8 @@ struct Row {
 
 pub(super) struct AutoCleanupPage {
     enabled: Retained<NSButton>,
+    interval: Retained<NSTextField>,
+    grace: Retained<NSTextField>,
     scroll: Retained<NSScrollView>,
     document: Retained<NSView>,
     rows: RefCell<Vec<Rc<Row>>>,
@@ -29,24 +31,49 @@ impl AutoCleanupPage {
         host.addSubview(&enabled);
         host.addSubview(&hint(tr!("超过上限时，关闭最久未使用的窗口。保留当前窗口和刚打开的窗口，遇到保存提示时暂停该应用的清理。", "Close the least recently used windows above each limit. Keep the active and newly opened windows; pause an app when a close needs your attention."), rect(4.0, 480.0, 730.0, 44.0), mtm));
         host.addSubview(&label(
+            tr!("检查间隔", "Check interval"),
+            13.0,
+            rect(4.0, 442.0, 144.0, 26.0),
+            mtm,
+        ));
+        let interval =
+            NSTextField::initWithFrame(NSTextField::alloc(mtm), rect(156.0, 442.0, 88.0, 30.0));
+        interval.setFont(Some(&NSFont::systemFontOfSize(14.0)));
+        interval.setAlignment(NSTextAlignment::Center);
+        interval.setAccessibilityLabel(Some(&NSString::from_str(tr!(
+            "检查间隔（秒）",
+            "Check interval in seconds"
+        ))));
+        interval.cell().unwrap().setSendsActionOnEndEditing(true);
+        set_action(&interval, target, sel!(settingsChanged:));
+        host.addSubview(&interval);
+        host.addSubview(&label(
+            tr!("秒", "seconds"),
+            13.0,
+            rect(254.0, 442.0, 86.0, 26.0),
+            mtm,
+        ));
+        let grace = hint("", rect(348.0, 440.0, 388.0, 32.0), mtm);
+        host.addSubview(&grace);
+        host.addSubview(&label(
             tr!("应用", "Application"),
             13.0,
-            rect(10.0, 449.0, 410.0, 24.0),
+            rect(10.0, 409.0, 410.0, 24.0),
             mtm,
         ));
         host.addSubview(&label(
             tr!("保留窗口数", "Keep windows"),
             13.0,
-            rect(444.0, 449.0, 156.0, 24.0),
+            rect(444.0, 409.0, 156.0, 24.0),
             mtm,
         ));
         let scroll =
-            NSScrollView::initWithFrame(NSScrollView::alloc(mtm), rect(0.0, 66.0, 740.0, 378.0));
+            NSScrollView::initWithFrame(NSScrollView::alloc(mtm), rect(0.0, 66.0, 740.0, 338.0));
         scroll.setHasVerticalScroller(true);
         scroll.setAutohidesScrollers(true);
         scroll.setScrollerStyle(NSScrollerStyle::Overlay);
         scroll.setDrawsBackground(false);
-        let document = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 740.0, 378.0));
+        let document = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 740.0, 338.0));
         scroll.setDocumentView(Some(&document));
         host.addSubview(&scroll);
         host.addSubview(&button(
@@ -61,6 +88,8 @@ impl AutoCleanupPage {
         host.addSubview(&status);
         Self {
             enabled,
+            interval,
+            grace,
             scroll,
             document,
             rows: RefCell::default(),
@@ -70,6 +99,10 @@ impl AutoCleanupPage {
     }
 
     pub(super) fn fill(&self, config: &Config) {
+        self.interval.setStringValue(&NSString::from_str(
+            &config.auto_cleanup.interval_secs.to_string(),
+        ));
+        self.update_grace(config);
         self.enabled.setState(if config.auto_cleanup.enabled {
             NSControlStateValueOn
         } else {
@@ -88,6 +121,18 @@ impl AutoCleanupPage {
     }
 
     pub(super) fn read(&self, config: &mut Config) -> Result<(), String> {
+        config.auto_cleanup.interval_secs = self
+            .interval
+            .stringValue()
+            .to_string()
+            .trim()
+            .parse()
+            .map_err(|_| {
+                tr!(
+                    "检查间隔应为 1–3600 秒的整数。",
+                    "Check interval must be an integer from 1 to 3600 seconds."
+                )
+            })?;
         let mut rules = Vec::new();
         for row in self.rows.borrow().iter() {
             if let Some(application) = row.application.borrow().clone() {
@@ -107,6 +152,14 @@ impl AutoCleanupPage {
         config.auto_cleanup.enabled = self.enabled.state() == NSControlStateValueOn;
         config.auto_cleanup.rules = rules;
         config.auto_cleanup.validate()
+    }
+
+    pub(super) fn update_grace(&self, config: &Config) {
+        self.grace.setStringValue(&NSString::from_str(&trf!(
+            "新窗口保护期：{} 秒（2×间隔）",
+            "New window grace: {} seconds (2× interval)",
+            config.auto_cleanup.grace_period_ms() / 1_000
+        )));
     }
 
     fn append(&self) -> Rc<Row> {

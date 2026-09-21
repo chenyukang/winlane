@@ -23,7 +23,7 @@ define_class!(
                 Ok(config) => { self.ivars().config.replace(config); }
                 Err(error) => { self.ivars().hotkey_error.replace(Some(error)); }
             }
-            crate::macos::platform::logging::init(self.ivars().config.borrow().debug_logging);
+            crate::macos::platform::logging::init(&self.ivars().config.borrow().logging);
             preference_store::apply_language(self.ivars().config.borrow().language);
             input_source::set_rules(&self.ivars().config.borrow().input_rules, self.mtm());
             self.restore_recency(NSUserDefaults::standardUserDefaults());
@@ -406,7 +406,7 @@ define_class!(
         }
         #[unsafe(method(openLogs:))]
         fn open_logs(&self, _: Option<&AnyObject>) {
-            if let Some(path) = crate::macos::platform::logging::directory() {
+            if let Ok(path) = crate::macos::platform::logging::directory(&self.ivars().config.borrow().logging) {
                 let _ = std::fs::create_dir_all(&path);
                 NSWorkspace::sharedWorkspace().openURL(&NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy())));
             }

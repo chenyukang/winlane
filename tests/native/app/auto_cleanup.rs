@@ -23,7 +23,9 @@ pub fn verify(mtm: MainThreadMarker) {
     let settings = Settings {
         enabled: true,
         rules: vec![rule.clone()],
+        ..Settings::default()
     };
+    verify_interval(mtm, &settings, &target);
     let delegate = Delegate::new(mtm);
     let app = delegate.ivars();
     app.config.borrow_mut().auto_cleanup = settings.clone();
@@ -103,5 +105,54 @@ pub fn verify(mtm: MainThreadMarker) {
     assert!(!app.auto_cleanup.borrow().settings.enabled);
     println!(
         "Auto Cleanup: MRU cancellation, global off, late workers, one in-flight operation and close confirmation verified; no real windows closed."
+    );
+}
+
+fn verify_interval(mtm: MainThreadMarker, settings: &Settings, target: &Target) {
+    let delegate = Delegate::new(mtm);
+    let app = delegate.ivars();
+    app.config.borrow_mut().auto_cleanup = settings.clone();
+    let before = Instant::now();
+    delegate.poll_auto_cleanup();
+    let after = Instant::now();
+    let next = app.auto_cleanup.borrow().next_scan.unwrap();
+    assert!(next >= before + Duration::from_secs(10) && next <= after + Duration::from_secs(10));
+    assert!(matches!(app.auto_cleanup.borrow().job, Some(Job::Scan(..))));
+    // This scan only names a nonexistent test bundle. Never close a real window.
+    app.auto_cleanup.borrow_mut().job.take();
+    app.auto_cleanup
+        .borrow_mut()
+        .planner
+        .attempted(target.clone());
+    let generation = app.auto_cleanup.borrow().generation;
+    let (_tx, rx) = mpsc::channel();
+    let token = Arc::new(AtomicBool::new(false));
+    app.auto_cleanup.borrow_mut().job =
+        Some(Job::Close(rx, target.clone(), generation, token.clone()));
+    let mut slower = settings.clone();
+    slower.interval_secs = 30;
+    app.config.borrow_mut().auto_cleanup = slower.clone();
+    let before = Instant::now();
+    app.auto_cleanup.borrow_mut().configure(&slower);
+    let after = Instant::now();
+    let state = app.auto_cleanup.borrow();
+    let next = state.next_scan.unwrap();
+    assert!(next >= before + Duration::from_secs(30) && next <= after + Duration::from_secs(30));
+    assert!(token.load(Ordering::Acquire));
+    assert_eq!(
+        state.generation, generation,
+        "interval edits still accept in-flight close confirmations"
+    );
+    assert_eq!(
+        state.planner.pending().count(),
+        1,
+        "interval edits preserve pending save decisions"
+    );
+    drop(state);
+    app.auto_cleanup.borrow_mut().job.take();
+    delegate.poll_auto_cleanup();
+    assert!(
+        app.auto_cleanup.borrow().job.is_none(),
+        "no scan before the new interval expires"
     );
 }

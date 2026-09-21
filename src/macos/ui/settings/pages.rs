@@ -1,7 +1,8 @@
 use super::*;
 
 pub(super) struct GeneralPage {
-    pub(super) debug_logging: Retained<NSButton>,
+    pub(super) log_level: Retained<NSPopUpButton>,
+    pub(super) log_path: Retained<NSTextField>,
     pub(super) language: Retained<NSPopUpButton>,
     pub(super) login: Retained<NSButton>,
     pub(super) login_status: Retained<NSTextField>,
@@ -27,24 +28,24 @@ impl GeneralPage {
             mtm,
         );
         localization.addSubview(&language);
-        let startup = settings_group(general, tr!("启动", "Startup"), 436.0, 114.0, mtm);
+        let startup = settings_group(general, tr!("启动", "Startup"), 448.0, 88.0, mtm);
         let login = checkbox(tr!("登录时自动启动", "Launch at login"), mtm);
-        login.setFrame(rect(20.0, 72.0, 360.0, 26.0));
+        login.setFrame(rect(20.0, 52.0, 360.0, 26.0));
         set_action(&login, target, sel!(toggleLogin:));
         startup.addSubview(&login);
         startup.addSubview(&button(
             tr!("管理登录项…", "Manage Login Items…"),
             target,
             sel!(manageLogin:),
-            rect(500.0, 69.0, 220.0, 30.0),
+            rect(500.0, 49.0, 220.0, 30.0),
             mtm,
         ));
-        let login_status = hint("", rect(22.0, 18.0, 696.0, 44.0), mtm);
+        let login_status = hint("", rect(22.0, 8.0, 696.0, 38.0), mtm);
         startup.addSubview(&login_status);
-        let updates = settings_group(general, tr!("更新", "Updates"), 268.0, 116.0, mtm);
+        let updates = settings_group(general, tr!("更新", "Updates"), 318.0, 96.0, mtm);
         let automatic_updates =
             checkbox(tr!("自动检查更新", "Automatically check for updates"), mtm);
-        automatic_updates.setFrame(rect(20.0, 73.0, 448.0, 27.0));
+        automatic_updates.setFrame(rect(20.0, 60.0, 448.0, 27.0));
         set_action(&automatic_updates, target, sel!(toggleAutomaticUpdates:));
         automatic_updates.setEnabled(false);
         updates.addSubview(&automatic_updates);
@@ -52,32 +53,55 @@ impl GeneralPage {
             tr!("检查更新…", "Check for Updates…"),
             target,
             sel!(checkForUpdates:),
-            rect(500.0, 71.0, 220.0, 28.0),
+            rect(500.0, 58.0, 220.0, 28.0),
             mtm,
         );
         check_updates.setEnabled(false);
         updates.addSubview(&check_updates);
-        let update_status = hint("", rect(22.0, 14.0, 696.0, 48.0), mtm);
+        let update_status = hint("", rect(22.0, 8.0, 696.0, 44.0), mtm);
         update_status.setMaximumNumberOfLines(3);
         updates.addSubview(&update_status);
-        let diagnostics = settings_group(general, tr!("诊断", "Diagnostics"), 114.0, 76.0, mtm);
-        let debug_logging = checkbox(tr!("启用 Debug 日志", "Debug logging"), mtm);
-        debug_logging.setFrame(rect(20.0, 40.0, 430.0, 26.0));
-        set_action(&debug_logging, target, sel!(settingsChanged:));
-        diagnostics.addSubview(&debug_logging);
+        let diagnostics = settings_group(general, tr!("日志", "Logging"), 180.0, 128.0, mtm);
+        diagnostics.addSubview(&label(
+            tr!("日志级别", "Log level"),
+            14.0,
+            rect(20.0, 89.0, 110.0, 22.0),
+            mtm,
+        ));
+        let log_level = popup(
+            &["Debug", "Info", "Warn", "Error", tr!("关闭", "Off")],
+            rect(140.0, 85.0, 220.0, 28.0),
+            mtm,
+        );
+        set_action(&log_level, target, sel!(settingsChanged:));
+        diagnostics.addSubview(&log_level);
         diagnostics.addSubview(&button(
             tr!("打开日志文件夹", "Open Logs Folder"),
             target,
             sel!(openLogs:),
-            rect(500.0, 37.0, 220.0, 28.0),
+            rect(500.0, 85.0, 220.0, 28.0),
             mtm,
         ));
+        diagnostics.addSubview(&label(
+            tr!("日志文件", "Log file"),
+            14.0,
+            rect(20.0, 53.0, 110.0, 22.0),
+            mtm,
+        ));
+        let log_path =
+            NSTextField::initWithFrame(NSTextField::alloc(mtm), rect(140.0, 48.0, 580.0, 28.0));
+        log_path.setPlaceholderString(Some(&NSString::from_str(
+            winlane::core::logging::DEFAULT_FILE_PATH,
+        )));
+        log_path.cell().unwrap().setSendsActionOnEndEditing(true);
+        set_action(&log_path, target, sel!(settingsChanged:));
+        diagnostics.addSubview(&log_path);
         diagnostics.addSubview(&hint(
             tr!(
-                "记录运行细节，不包含窗口标题或输入内容。",
-                "Record diagnostic details without window titles or typed text."
+                "留空使用默认路径；更改立即生效。",
+                "Leave blank for the default path. Changes apply immediately."
             ),
-            rect(20.0, 8.0, 700.0, 24.0),
+            rect(140.0, 12.0, 580.0, 26.0),
             mtm,
         ));
         general.addSubview(&hint(
@@ -85,13 +109,14 @@ impl GeneralPage {
                 "设置保存在本机；窗口标题与搜索历史不会保存。",
                 "Settings stay on this Mac. Window titles and search history are not saved."
             ),
-            rect(16.0, 0.0, 708.0, 36.0),
+            rect(16.0, 0.0, 708.0, 18.0),
             mtm,
         ));
 
         set_action(&language, target, sel!(settingsChanged:));
         Self {
-            debug_logging,
+            log_level,
+            log_path,
             language,
             login,
             login_status,
@@ -101,17 +126,39 @@ impl GeneralPage {
         }
     }
     pub(super) fn fill(&self, config: &Config) {
-        self.debug_logging.setState(if config.debug_logging {
-            NSControlStateValueOn
-        } else {
-            NSControlStateValueOff
-        });
+        use winlane::core::logging::Level;
+        self.log_level
+            .selectItemAtIndex(match config.logging.level {
+                Level::Debug => 0,
+                Level::Info => 1,
+                Level::Warn => 2,
+                Level::Error => 3,
+                Level::Off => 4,
+            });
+        self.log_path
+            .setStringValue(&NSString::from_str(&config.logging.file_path));
         self.language.selectItemAtIndex(match config.language {
             Language::System => 0,
             Language::Chinese => 1,
             Language::English => 2,
         });
         self.update_login_status();
+    }
+    pub(super) fn read_logging(&self, config: &mut Config) {
+        use winlane::core::logging::{DEFAULT_FILE_PATH, Level};
+        config.logging.level = match self.log_level.indexOfSelectedItem() {
+            0 => Level::Debug,
+            2 => Level::Warn,
+            3 => Level::Error,
+            4 => Level::Off,
+            _ => Level::Info,
+        };
+        let path = self.log_path.stringValue().to_string();
+        config.logging.file_path = if path.trim().is_empty() {
+            DEFAULT_FILE_PATH.into()
+        } else {
+            path.trim().into()
+        };
     }
     pub(super) fn update_updater(&self, available: bool, automatic: bool, error: Option<&str>) {
         self.automatic_updates.setEnabled(available);

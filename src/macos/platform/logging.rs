@@ -4,21 +4,17 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
-use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, SyncSender};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
+pub use winlane::core::logging::Level;
+use winlane::core::logging::Settings;
 
 static LOGGER: OnceLock<Logger> = OnceLock::new();
 const FILE_LIMIT: u64 = 2 * 1024 * 1024;
 const MESSAGE_LIMIT: usize = 16 * 1024;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Level {
-    Debug,
-    Info,
-    Warn,
-}
 struct Event {
     time: SystemTime,
     level: Level,
@@ -30,32 +26,54 @@ struct Event {
 enum Message {
     Event(Event),
     Flush(mpsc::Sender<()>),
+    Configure(LogWriter),
 }
 struct Logger {
     sender: SyncSender<Message>,
-    debug: AtomicBool,
+    destination: Mutex<Destination>,
     dropped: AtomicU64,
 }
 
-pub fn directory() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Logs/Winlane"))
+struct Destination {
+    path: PathBuf,
+    level: Level,
 }
-pub fn init(debug: bool) {
-    if let Some(directory) = directory() {
-        LOGGER.get_or_init(|| Logger::start(directory, debug));
-        record(Level::Info, "app", "start", || {
-            format!("version={} debug={debug}", env!("CARGO_PKG_VERSION"))
-        });
+
+fn file_path(settings: &Settings) -> Result<PathBuf, String> {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    settings.resolve_path(home.as_deref())
+}
+pub fn directory(settings: &Settings) -> Result<PathBuf, String> {
+    Ok(file_path(settings)?.parent().unwrap().to_path_buf())
+}
+pub fn init(settings: &Settings) {
+    match file_path(settings) {
+        Ok(path) => {
+            LOGGER.get_or_init(|| Logger::start(path, settings.level));
+            record(Level::Info, "app", "start", || {
+                format!(
+                    "version={} log_level={:?}",
+                    env!("CARGO_PKG_VERSION"),
+                    settings.level
+                )
+            });
+        }
+        Err(error) => eprintln!("Winlane logging could not start: {error}"),
     }
 }
-pub fn set_debug(enabled: bool) {
-    if let Some(logger) = LOGGER.get()
-        && logger.debug.swap(enabled, Ordering::Relaxed) != enabled
-    {
-        record(Level::Info, "logging", "debug-mode", || {
-            format!("enabled={enabled}")
-        });
+pub fn configure(settings: &Settings) -> Result<(), String> {
+    if let Some(logger) = LOGGER.get() {
+        logger
+            .configure(file_path(settings)?, settings.level)
+            .map_err(|error| {
+                winlane::trf!(
+                    "无法应用日志设置：{}",
+                    "Could not apply logging settings: {}",
+                    error
+                )
+            })?;
     }
+    Ok(())
 }
 pub fn record(level: Level, component: &str, event: &str, data: impl FnOnce() -> String) {
     if let Some(logger) = LOGGER.get() {
@@ -68,37 +86,77 @@ pub fn flush() {
     }
 }
 impl Logger {
-    fn start(directory: PathBuf, debug: bool) -> Self {
+    fn start(path: PathBuf, level: Level) -> Self {
         let (sender, receiver) = mpsc::sync_channel(256);
+        let mut worker_path = path.clone();
         std::thread::spawn(move || {
-            let result = (|| -> io::Result<()> {
-                fs::create_dir_all(&directory)?;
-                let mut writer = LogWriter::new(directory, FILE_LIMIT)?;
-                for message in receiver {
-                    match message {
-                        Message::Event(event) => {
-                            objc2::rc::autoreleasepool(|_| writer.write_event(event))?
+            let mut writer: Option<LogWriter> = None;
+            let mut error_reported = false;
+            for message in receiver {
+                let result = match message {
+                    Message::Event(event) => (|| -> io::Result<()> {
+                        if writer.is_none() {
+                            writer = Some(LogWriter::new(worker_path.clone(), FILE_LIMIT)?);
                         }
-                        Message::Flush(reply) => {
-                            writer.file.flush()?;
-                            let _ = reply.send(());
-                        }
+                        objc2::rc::autoreleasepool(|_| writer.as_mut().unwrap().write_event(event))
+                    })(),
+                    Message::Flush(reply) => {
+                        let result = writer.as_mut().map_or(Ok(()), |writer| writer.file.flush());
+                        let _ = reply.send(());
+                        result
                     }
+                    Message::Configure(new_writer) => {
+                        worker_path = new_writer.path.clone();
+                        writer = Some(new_writer);
+                        error_reported = false;
+                        Ok(())
+                    }
+                };
+                if let Err(error) = result {
+                    if !error_reported {
+                        eprintln!("Winlane logging failed: {error}");
+                        error_reported = true;
+                    }
+                    writer = None;
                 }
-                Ok(())
-            })();
-            if let Err(error) = result {
-                eprintln!("Winlane logging stopped: {error}");
             }
         });
         Self {
             sender,
-            debug: AtomicBool::new(debug),
+            destination: Mutex::new(Destination { path, level }),
             dropped: AtomicU64::new(0),
         }
     }
+    fn configure(&self, path: PathBuf, level: Level) -> io::Result<()> {
+        let changed_path = self.destination.lock().unwrap().path != path;
+        // Open the new destination before switching or saving settings. A failed path
+        // must leave the old log and severity threshold intact.
+        let writer = if changed_path {
+            Some(LogWriter::new(path.clone(), FILE_LIMIT)?)
+        } else {
+            None
+        };
+        let mut destination = self.destination.lock().unwrap();
+        if let Some(writer) = writer {
+            self.sender
+                .try_send(Message::Configure(writer))
+                .map_err(|_| {
+                    io::Error::other(winlane::tr!(
+                        "日志队列正忙，请稍后重试。",
+                        "The logging queue is busy. Try again shortly."
+                    ))
+                })?;
+        }
+        *destination = Destination { path, level };
+        Ok(())
+    }
     fn record(&self, level: Level, component: &str, event: &str, data: impl FnOnce() -> String) {
-        if level == Level::Debug && !self.debug.load(Ordering::Relaxed) {
+        if !self.destination.lock().unwrap().level.allows(level) {
+            return;
+        }
+        let data = bounded(data());
+        let destination = self.destination.lock().unwrap();
+        if !destination.level.allows(level) {
             return;
         }
         let dropped = self.dropped.swap(0, Ordering::Relaxed);
@@ -107,7 +165,7 @@ impl Logger {
             level,
             component: component.into(),
             event: event.into(),
-            data: bounded(data()),
+            data,
             dropped,
         });
         // Never wait for disk I/O in a shortcut, focus callback, or cleanup operation.
@@ -141,20 +199,41 @@ struct LogWriter {
     limit: u64,
 }
 impl LogWriter {
-    fn new(directory: PathBuf, limit: u64) -> io::Result<Self> {
-        let path = directory.join("winlane.log");
+    fn new(path: PathBuf, limit: u64) -> io::Result<Self> {
+        fs::create_dir_all(
+            path.parent()
+                .ok_or_else(|| io::Error::other("Missing log directory"))?,
+        )?;
+        let mut backup_name = path
+            .file_stem()
+            .ok_or_else(|| io::Error::other("Missing log filename"))?
+            .to_os_string();
+        backup_name.push(".previous");
+        if let Some(extension) = path.extension() {
+            backup_name.push(".");
+            backup_name.push(extension);
+        }
+        let backup = path.with_file_name(backup_name);
         let file = Self::open(&path)?;
         let bytes = file.metadata()?.len();
         Ok(Self {
             file,
             path,
-            backup: directory.join("winlane.previous.log"),
+            backup,
             bytes,
             limit,
         })
     }
     fn open(path: &PathBuf) -> io::Result<File> {
         use std::os::unix::fs::PermissionsExt;
+        if let Ok(metadata) = fs::metadata(path)
+            && !metadata.is_file()
+        {
+            return Err(io::Error::other(winlane::tr!(
+                "日志路径必须指向普通文件。",
+                "The log path must point to a regular file."
+            )));
+        }
         let file = OpenOptions::new()
             .create(true)
             .append(true)
