@@ -109,7 +109,7 @@ impl Delegate {
                 &clipboard,
                 &HashMap::new(),
             )
-            .and_then(|text| self.paste_snippet(target, text));
+            .and_then(|text| self.paste_text(target, text));
             if let Err(error) = result {
                 self.selection_failed(&error);
             }
@@ -123,7 +123,7 @@ impl Delegate {
                     let Some(delegate) = weak.load() else {
                         return Err("Winlane closed".into());
                     };
-                    delegate.paste_snippet(target.clone(), text)
+                    delegate.paste_text(target.clone(), text)
                 }),
                 self.mtm(),
             );
@@ -132,7 +132,7 @@ impl Delegate {
         }
     }
 
-    pub(super) fn paste_snippet(
+    pub(super) fn paste_text(
         &self,
         target: Retained<NSRunningApplication>,
         text: String,

@@ -14,6 +14,7 @@ For example, binding **Command + Option + U** to `open-url` opens its URL/search
 | `clipboard` | `clipboard`, `clip`, `剪贴板` | Open a dedicated list to search and paste clipboard history. |
 | `quicklink` | `quicklinks`, `links`, `快捷链接` | Browse and open saved links. |
 | `snippet` | `snippet`, `snippets`, `片段` | Open a dedicated list to browse and search saved snippets. |
+| `emoji` | `emoji`, `emojis`, `表情` | Search emoji by English or Chinese names and paste into the previous app. |
 | `show-menu` | `menu`, `菜单栏` | Temporarily reveal the macOS menu bar. |
 | `lock-screen` | `lock`, `lock screen`, `锁屏` | Lock the Mac without closing applications. |
 | `screenshot` | `screenshot`, `screen shot`, `capture area`, `截图`, `截屏` | Select an area with the mouse and copy its screenshot to the clipboard. |
@@ -24,6 +25,16 @@ For example, binding **Command + Option + U** to `open-url` opens its URL/search
 `show-menu` reveals the macOS menu bar on the display where you selected the command. It sends a mouse-move event to that display's top edge after dismissing the picker. It leaves the pointer there so the bar remains visible until you move away. It does not open a menu, change system preferences, or restart system processes. Accessibility access is required, and macOS controls the reveal animation.
 
 `mission-control` leaves the macOS overview open for you to select a window or desktop. It does not select a Space or perform any follow-up actions.
+
+`emoji` opens a dedicated chooser with common emoji first. Search English or
+Chinese names and keywords, or paste an emoji to find that exact sequence. Names
+with underscores, such as `:thumbs_up:`, also work. Up to 100 matches are shown;
+refine the search to find more. Enter or a mouse click pastes the complete emoji,
+including any skin tone or joined characters, into the app active before Winlane
+opened. This uses the same focus checks and paste mechanism as snippets and
+requires Accessibility access. Esc closes the chooser, and empty Backspace stays
+in it. The [catalog](../resources/emoji/README.md) is embedded in the executable;
+no download is needed at runtime.
 
 `screenshot` closes Winlane's picker and starts macOS's interactive area capture. Drag to select the area you want; releasing the mouse copies the image to the clipboard for pasting with **Command + V**. Press **Esc** to cancel without replacing the clipboard. It does not take an automatic full-screen capture or save a file. When clipboard history is enabled, the image follows its usual recording and retention rules.
 

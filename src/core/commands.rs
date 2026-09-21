@@ -13,6 +13,7 @@ pub enum CommandId {
     Quicklinks,
     #[serde(rename = "snippet")]
     Snippets,
+    Emoji,
     Clipboard,
     ShowMenu,
     LockScreen,
@@ -45,6 +46,14 @@ impl Command {
 }
 
 pub const COMMANDS: &[Command] = &[
+    Command {
+        id: CommandId::Emoji,
+        name: "emoji",
+        title_en: "Search emoji",
+        title_zh: "搜索表情",
+        symbol: "face.smiling",
+        keywords: &["emojis", "表情", "表情符号"],
+    },
     Command {
         id: CommandId::Files,
         name: "files",

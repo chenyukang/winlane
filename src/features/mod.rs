@@ -1,6 +1,7 @@
 pub mod auto_cleanup;
 pub mod bluetooth;
 pub mod clipboard;
+pub mod emoji;
 pub mod files;
 pub mod input_indicator;
 pub mod input_rules;

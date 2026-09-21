@@ -186,6 +186,10 @@ impl Delegate {
         self.scoped_search() && self.ivars().search_scope.get() == Some(SearchScope::Snippets)
     }
 
+    pub(super) fn searching_emoji(&self) -> bool {
+        self.scoped_search() && self.ivars().search_scope.get() == Some(SearchScope::Emoji)
+    }
+
     pub(super) fn searching_clipboard(&self) -> bool {
         self.scoped_search() && self.ivars().search_scope.get() == Some(SearchScope::Clipboard)
     }
@@ -277,6 +281,8 @@ impl Delegate {
             CommandId::Quicklinks
         } else if self.searching_clipboard() {
             CommandId::Clipboard
+        } else if self.searching_emoji() {
+            CommandId::Emoji
         } else {
             CommandId::Snippets
         };
@@ -324,6 +330,7 @@ impl Delegate {
         let open_url = self.searching_open_url();
         let bluetooth = self.searching_bluetooth();
         self.ivars().bluetooth_matches.borrow_mut().clear();
+        self.ivars().emoji_matches.borrow_mut().clear();
         self.clear_open_url_matches();
         self.ivars().search_scope.set(None);
         self.ivars().keep_awake_matches.borrow_mut().clear();

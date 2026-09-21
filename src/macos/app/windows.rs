@@ -2,6 +2,10 @@ use super::*;
 
 impl Delegate {
     pub(super) fn activate_selected(&self) {
+        if self.searching_emoji() {
+            self.use_emoji();
+            return;
+        }
         if self.searching_files() {
             self.open_selected_file(false);
             return;

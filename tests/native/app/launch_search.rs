@@ -519,6 +519,7 @@ pub(super) fn verify_typo_search(mtm: MainThreadMarker) {
             | SelectedResult::OpenUrl(_)
             | SelectedResult::Quicklink(_)
             | SelectedResult::Snippet(_)
+            | SelectedResult::Emoji(_)
             | SelectedResult::Clipboard(_) => panic!("unexpected snippet in launch test"),
             SelectedResult::Command(id) => assert_eq!(delegate.selected_command(), Some(id)),
             SelectedResult::Window(id) => {

@@ -1,6 +1,20 @@
 use winlane::core::commands::{COMMANDS, CommandId, matching_commands};
 
 #[test]
+fn emoji_command_has_an_explicit_search_entry() {
+    for query in ["emoji", "emojis", " EMOJI ", "emo", "表情", "表情符号"] {
+        assert_eq!(matching_commands(query), [CommandId::Emoji]);
+    }
+    for query in ["e", "😀", "rocket"] {
+        assert!(!matching_commands(query).contains(&CommandId::Emoji));
+    }
+    assert_eq!(
+        serde_json::to_string(&CommandId::Emoji).unwrap(),
+        "\"emoji\""
+    );
+}
+
+#[test]
 fn appearance_toggle_matches_both_modes_and_languages() {
     for query in [
         "toggle-appearance",

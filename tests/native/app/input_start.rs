@@ -14,6 +14,7 @@ pub(super) fn verify_command_reapplies_input_policy(mtm: MainThreadMarker) {
         SearchScope::OpenUrl,
         SearchScope::Quicklinks,
         SearchScope::Snippets,
+        SearchScope::Emoji,
         SearchScope::Clipboard,
     ] {
         delegate.cancel_input_start();

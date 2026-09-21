@@ -123,6 +123,7 @@ if [[ -f "$project_dir/resources/AppIcon.icns" ]]; then
     /usr/libexec/PlistBuddy -c 'Add :CFBundleIconFile string AppIcon.icns' "$bundle/Contents/Info.plist"
 fi
 /usr/bin/plutil -lint "$bundle/Contents/Info.plist"
+cp "$project_dir/resources/emoji/LICENSE.txt" "$bundle/Contents/Resources/Unicode-LICENSE.txt"
 if [[ "$with_updater" == true ]]; then
     sparkle_dir=$("$project_dir/scripts/fetch-sparkle.sh")
     framework="$bundle/Contents/Frameworks/Sparkle.framework"

@@ -59,6 +59,7 @@ impl PreparedCommand {
             | CommandId::Projects
             | CommandId::OpenUrl
             | CommandId::Snippets
+            | CommandId::Emoji
             | CommandId::Clipboard
             | CommandId::Quicklinks => {
                 return Err(tr!(

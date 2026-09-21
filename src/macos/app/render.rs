@@ -41,6 +41,8 @@ impl Delegate {
         let command_matches = state.command_matches.borrow();
         let apps = state.installed_apps.borrow();
         let snippet_matches = state.snippet_matches.borrow();
+        let emoji_matches = state.emoji_matches.borrow();
+        let in_emoji = self.searching_emoji();
         let quicklink_matches = state.quicklink_matches.borrow();
         let open_url = state.open_url_matches.borrow();
         let url_history = state.open_url_history.borrow();
@@ -79,7 +81,8 @@ impl Delegate {
         let clipboard_matches = state.clipboard_matches.borrow();
         let clipboard = state.clipboard.borrow();
         let extra_count = command_matches.len() + snippet_matches.len() + clipboard_matches.len();
-        let count = extra_count
+        let count = emoji_matches.len()
+            + extra_count
             + matched.len()
             + quicklink_matches.len()
             + launch_matches.len()
@@ -217,6 +220,8 @@ impl Delegate {
             tr!("‹ 项目", "‹ Projects")
         } else if self.searching_quicklinks() {
             tr!("‹ 链接", "‹ Links")
+        } else if in_emoji {
+            tr!("‹ 表情", "‹ Emoji")
         } else {
             tr!("‹ 片段", "‹ Snippets")
         }));
@@ -339,6 +344,7 @@ impl Delegate {
         if rows.first().is_some_and(|row| {
             row.button.ivars().density.get() != density
                 || (row.button.frame().size.height - (row_height - 2.0)).abs() > 0.5
+                || matches!(row.content, Some(RowContent::Emoji(_))) != in_emoji
         }) {
             for row in rows.drain(..) {
                 row.button.removeFromSuperview();
@@ -544,6 +550,14 @@ impl Delegate {
                         "Add or import links in Settings → Quicklinks, or press Esc to close."
                     ),
                 )
+            } else if in_emoji {
+                (
+                    tr!("没有匹配的表情", "No matching emoji"),
+                    tr!(
+                        "试试中文或英文关键词，例如“笑”、“猫”或 rocket。",
+                        "Try English or Chinese keywords, such as smile, cat, or rocket."
+                    ),
+                )
             } else if snippets {
                 if state.config.borrow().snippets.is_empty() {
                     (
@@ -625,7 +639,9 @@ impl Delegate {
             ui.empty_labels.replace(vec![heading, detail]);
         }
         for position in 0..count {
-            let content = if let Some(entry) = files.matches.get(position) {
+            let content = if let Some(emoji) = emoji_matches.get(position) {
+                RowContent::Emoji(*emoji)
+            } else if let Some(entry) = files.matches.get(position) {
                 RowContent::File(entry.clone())
             } else if let Some(choice) = keep_awake_matches.get(position) {
                 RowContent::KeepAwake(*choice)
@@ -673,6 +689,13 @@ impl Delegate {
             let row = &mut rows[position];
             if row.content.as_ref() != Some(&content) {
                 let tooltip = match &content {
+                    RowContent::Emoji(emoji) => {
+                        set_label(&row.app, emoji.text);
+                        set_label(&row.title, emoji.name());
+                        set_label(&row.alias, "");
+                        row.icon.setImage(None);
+                        format!("{} — {} / {}", emoji.text, emoji.name_en, emoji.name_zh)
+                    }
                     RowContent::File(entry) => {
                         set_label(&row.app, &entry.name);
                         set_label(&row.title, &entry.parent_label(&super::files::home()));
@@ -1028,6 +1051,20 @@ impl Delegate {
                 "{} links · ↑↓ select · ↵ open · Esc close",
                 quicklink_matches.len()
             )
+        } else if in_emoji {
+            if emoji_matches.len() == winlane::features::emoji::MAX_RESULTS {
+                tr!(
+                    "输入关键词查找更多表情 · ↵ 粘贴 · Esc 关闭",
+                    "Type to find more emoji · ↵ paste · Esc close"
+                )
+                .into()
+            } else {
+                trf!(
+                    "{} 个表情 · ↑↓ 选择 · ↵ 粘贴 · Esc 关闭",
+                    "{} emoji · ↑↓ select · ↵ paste · Esc close",
+                    emoji_matches.len()
+                )
+            }
         } else if snippets {
             trf!(
                 "{} 个片段 · ↑↓ 选择 · ↵ 粘贴 · Esc 关闭",
@@ -1180,6 +1217,30 @@ impl Delegate {
             title.setFrame(rect(52.0, path_y, LIST_WIDTH - 70.0, path_height));
             icon.setFrame(rect(14.0, (h - 26.0) / 2.0, 26.0, 26.0));
             alias.setHidden(true);
+        }
+        if self.searching_emoji() {
+            app.setAlignment(NSTextAlignment::Center);
+            app.setFont(Some(&NSFont::systemFontOfSize(if normal {
+                25.0
+            } else {
+                22.0
+            })));
+            let emoji_height = app.intrinsicContentSize().height;
+            app.setFrame(rect(
+                10.0,
+                (frame.size.height - emoji_height) / 2.0,
+                44.0,
+                emoji_height,
+            ));
+            let title_height = title.intrinsicContentSize().height;
+            title.setFrame(rect(
+                68.0,
+                (frame.size.height - title_height) / 2.0,
+                LIST_WIDTH - 90.0,
+                title_height,
+            ));
+            alias.setHidden(true);
+            icon.setHidden(true);
         }
         RowUi {
             button,

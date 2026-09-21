@@ -112,6 +112,16 @@ Here are the notes from {date format="yyyy-MM-dd"}:
 
 If a snippet needs input, fill in its fields and review the preview before pasting. Snippets use plain text. [Placeholder reference and examples](docs/snippets.md).
 
+### Insert an emoji
+
+Run **`emoji`**, search by an English or Chinese name such as `rocket` or `火箭`,
+then press **Enter** or click an emoji to paste it into your previous app. The
+chooser opens with common emoji and shows up to 100 matches; type more to narrow
+the list. **Esc** closes it. You can assign a shortcut in Settings.
+
+The emoji catalog is built into Winlane and works offline. Appearance depends on
+the emoji supported by your macOS version.
+
 ### Find something you copied
 
 Run **`clipboard`** to search copied text, links, and images. **Enter** pastes the selected entry into your previous app; **Command + C** copies it without pasting. **Command + Backspace** removes an entry from history.

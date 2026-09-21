@@ -9,6 +9,7 @@ pub(super) fn command_scope(command: CommandId) -> Option<SearchScope> {
         CommandId::Projects => Some(SearchScope::Projects),
         CommandId::Quicklinks => Some(SearchScope::Quicklinks),
         CommandId::Snippets => Some(SearchScope::Snippets),
+        CommandId::Emoji => Some(SearchScope::Emoji),
         CommandId::Clipboard => Some(SearchScope::Clipboard),
         _ => None,
     }

@@ -2,6 +2,7 @@ mod bluetooth;
 mod clipboard;
 mod commands;
 pub(crate) mod diagnostics;
+mod emoji;
 mod input_rules;
 mod input_start;
 mod keep_awake;
@@ -96,6 +97,7 @@ pub fn verify_hidden_panels() {
     crate::macos::platform::scrolling::tests::verify();
     scoped_loading::verify_scoped_loading(mtm);
     verify_snippet_search(mtm);
+    emoji::verify_emoji(mtm);
     verify_quicklink_search(mtm);
     verify_projects_search(mtm);
     open_url::verify_open_url(mtm);

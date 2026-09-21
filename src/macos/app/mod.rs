@@ -4,6 +4,7 @@ mod catalog;
 mod clipboard;
 mod commands;
 mod delegate;
+mod emoji;
 mod files;
 mod input;
 mod input_indicator;
@@ -94,6 +95,7 @@ enum SearchScope {
     OpenUrl,
     Quicklinks,
     Snippets,
+    Emoji,
     Clipboard,
 }
 
@@ -142,6 +144,7 @@ enum RowContent {
     OpenUrl(winlane::features::open_url::Page),
     Command(CommandId),
     Snippet(winlane::features::snippets::Snippet),
+    Emoji(winlane::features::emoji::Emoji),
     Quicklink(winlane::features::quicklinks::Quicklink),
     Clipboard(u64, String, String, String),
     Window(WindowInfo, Option<String>),
@@ -156,6 +159,7 @@ enum SelectedResult {
     OpenUrl(String),
     Command(CommandId),
     Snippet(String),
+    Emoji(&'static str),
     Quicklink(String),
     Clipboard(u64),
     Window(u64),
@@ -188,6 +192,7 @@ struct PendingFocus {
 
 #[derive(Default)]
 struct AppState {
+    emoji_matches: RefCell<Vec<winlane::features::emoji::Emoji>>,
     auto_cleanup: RefCell<auto_cleanup::State>,
     files: RefCell<files::State>,
     keep_awake: RefCell<crate::macos::platform::keep_awake::KeepAwake>,

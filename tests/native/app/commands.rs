@@ -140,6 +140,7 @@ fn verify_command_shortcut_scope(mtm: MainThreadMarker) {
         (CommandId::Projects, SearchScope::Projects),
         (CommandId::Quicklinks, SearchScope::Quicklinks),
         (CommandId::Snippets, SearchScope::Snippets),
+        (CommandId::Emoji, SearchScope::Emoji),
         (CommandId::Clipboard, SearchScope::Clipboard),
     ] {
         assert!(super::super::commands::command_scope(command) == Some(scope));
@@ -149,6 +150,8 @@ fn verify_command_shortcut_scope(mtm: MainThreadMarker) {
         (CommandId::Quicklinks, InputMethod::Chinese),
         (CommandId::Snippets, InputMethod::Current),
         (CommandId::Snippets, InputMethod::LastUsed),
+        (CommandId::Emoji, InputMethod::English),
+        (CommandId::Emoji, InputMethod::Chinese),
     ] {
         state.config.borrow_mut().input_rules =
             winlane::features::input_rules::Settings::for_winlane(policy);

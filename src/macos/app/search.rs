@@ -6,6 +6,11 @@ impl Delegate {
     }
 
     pub(super) fn filter_preserving(&self, selected_id: Option<SelectedResult>) {
+        if self.searching_emoji() {
+            self.filter_emoji(selected_id);
+            return;
+        }
+        self.ivars().emoji_matches.borrow_mut().clear();
         if self.searching_files() {
             self.filter_files(selected_id);
             return;
@@ -194,7 +199,8 @@ impl Delegate {
                 | SelectedResult::Bluetooth(_)
                 | SelectedResult::Clipboard(_)
                 | SelectedResult::Project(_)
-                | SelectedResult::OpenUrl(_),
+                | SelectedResult::OpenUrl(_)
+                | SelectedResult::Emoji(_),
             )
             | None => None,
         }
@@ -277,6 +283,11 @@ impl Delegate {
     }
 
     pub(super) fn selected_result(&self) -> Option<SelectedResult> {
+        if self.searching_emoji() {
+            return self
+                .selected_emoji()
+                .map(|emoji| SelectedResult::Emoji(emoji.text));
+        }
         if self.searching_files() {
             return self
                 .selected_file()
@@ -321,7 +332,8 @@ impl Delegate {
     }
 
     pub(super) fn match_count(&self) -> usize {
-        self.ivars().files.borrow().matches.len()
+        self.ivars().emoji_matches.borrow().len()
+            + self.ivars().files.borrow().matches.len()
             + self.ivars().keep_awake_matches.borrow().len()
             + self.ivars().bluetooth_matches.borrow().len()
             + self.ivars().command_matches.borrow().len()
