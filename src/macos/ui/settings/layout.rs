@@ -71,7 +71,7 @@ impl SettingsWindow {
         settings_tab(&tabs, tr!("输入法规则", "Input Rules"), mtm);
         settings_tab(&tabs, tr!("鼠标滚轮", "Mouse Scrolling"), mtm);
         settings_tab(&tabs, tr!("文件", "Files"), mtm);
-        settings_tab(&tabs, tr!("自动清理", "Auto Cleanup"), mtm);
+        settings_tab(&tabs, tr!("自动关闭窗口", "Auto AppClose"), mtm);
         let mut navigation = Vec::new();
         for (position, (index, symbol, color)) in [
             (4, "gearshape.fill", NSColor::systemGrayColor()),
@@ -140,7 +140,7 @@ impl SettingsWindow {
             input_rules: OnceCell::new(),
             scrolling: OnceCell::new(),
             files: OnceCell::new(),
-            auto_cleanup: OnceCell::new(),
+            auto_appclose: OnceCell::new(),
             scroll_status: RefCell::new((String::new(), false)),
             windows: OnceCell::new(),
             clipboard: OnceCell::new(),

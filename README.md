@@ -181,11 +181,11 @@ Enable **Settings → Mouse Scrolling** to set mouse and trackpad directions ind
 
 Custom scrolling starts disabled. Quit other scroll modifiers before enabling it to avoid applying the same change twice. [Scrolling settings](docs/scrolling.md).
 
-### Automatic window cleanup
+### Auto AppClose
 
-In **Settings → Auto Cleanup**, add an app and choose how many windows to keep. For example, set Visual Studio Code to **3** to close its least recently used windows when more than three are open. A single **Enable Auto Cleanup** switch controls all rules and starts off; turning it off keeps your rules.
+In **Settings → Auto AppClose**, add an app and choose how many windows to keep. For example, set Visual Studio Code to **3** to close its least recently used windows when more than three are open. A single **Enable Auto AppClose** switch controls all rules and starts off; turning it off keeps your rules.
 
-The check interval is configurable and defaults to **10 seconds**. Winlane preserves the active window and gives newly discovered windows a grace period of **twice the interval**. It uses each app's normal close button and pauses that app's cleanup if a window remains open or needs a save decision. [Cleanup behavior and logs](docs/auto-cleanup.md).
+The check interval is configurable and defaults to **10 seconds**. Winlane preserves the active window and gives newly discovered windows a grace period of **twice the interval**. It uses each app's normal close button and pauses automatic closing for that app if a window remains open or needs a save decision. [Auto AppClose behavior and logs](docs/auto-appclose.md).
 
 ## Privacy and permissions
 

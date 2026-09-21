@@ -59,7 +59,7 @@ define_class!(
         }
         #[unsafe(method(applicationWillTerminate:))]
         fn will_terminate(&self, _: &NSNotification) {
-            self.ivars().auto_cleanup.borrow().cancel();
+            self.ivars().auto_appclose.borrow().cancel();
             let _ = self.ivars().keep_awake.borrow_mut().apply(winlane::features::keep_awake::Choice::Stop);
             self.ivars().keep_awake_indicator.take();
             self.ivars().scroll_tap.take();
@@ -538,31 +538,31 @@ define_class!(
             self.autosave_settings();
             self.ensure_scrolling();
         }
-        #[unsafe(method(addCleanupRule:))]
-        fn add_cleanup_rule(&self, _: Option<&AnyObject>) {
-            if let Some(settings) = self.settings_window() { settings.add_cleanup_rule(); }
+        #[unsafe(method(addAppCloseRule:))]
+        fn add_appclose_rule(&self, _: Option<&AnyObject>) {
+            if let Some(settings) = self.settings_window() { settings.add_appclose_rule(); }
         }
-        #[unsafe(method(toggleAutoCleanup:))]
-        fn toggle_auto_cleanup(&self, _: Option<&AnyObject>) {
+        #[unsafe(method(toggleAutoAppClose:))]
+        fn toggle_auto_appclose(&self, _: Option<&AnyObject>) {
             let Some(settings) = self.settings_window() else { return; };
-            if settings.cleanup_enabled() { self.autosave_settings(); return; }
-            self.ivars().auto_cleanup.borrow().cancel();
+            if settings.appclose_enabled() { self.autosave_settings(); return; }
+            self.ivars().auto_appclose.borrow().cancel();
             // The off switch must work even while another field contains an invalid draft.
             let mut config = self.ivars().config.borrow().clone();
-            config.auto_cleanup.enabled = false;
+            config.auto_appclose.enabled = false;
             match self.apply_config(config) {
                 Ok(()) => settings.report(tr!("已关闭，保留现有规则。", "Off. Your rules are kept."), false),
                 Err(error) => settings.report(&error, true),
             }
         }
-        #[unsafe(method(removeCleanupRule:))]
-        fn remove_cleanup_rule(&self, sender: &NSButton) {
-            if let Some(settings) = self.settings_window() { settings.remove_cleanup_rule(sender.tag() as usize); }
+        #[unsafe(method(removeAppCloseRule:))]
+        fn remove_appclose_rule(&self, sender: &NSButton) {
+            if let Some(settings) = self.settings_window() { settings.remove_appclose_rule(sender.tag() as usize); }
             self.autosave_settings();
         }
-        #[unsafe(method(chooseCleanupApp:))]
-        fn choose_cleanup_app(&self, sender: &NSButton) {
-            if let Some(settings) = self.settings_window() { settings.choose_cleanup_app(sender.tag() as usize); }
+        #[unsafe(method(chooseAppCloseApp:))]
+        fn choose_appclose_app(&self, sender: &NSButton) {
+            if let Some(settings) = self.settings_window() { settings.choose_appclose_app(sender.tag() as usize); }
         }
         #[unsafe(method(clearClipboardHistory:))]
         fn clear_clipboard_action(&self, _: Option<&AnyObject>) { self.confirm_clear_clipboard(); }
@@ -583,7 +583,7 @@ define_class!(
             self.poll_window_liveness();
             self.drain_shortcut_actions();
             self.poll_focus();
-            self.poll_auto_cleanup();
+            self.poll_auto_appclose();
             self.poll_app_launch();
             self.poll_project_open();
             self.poll_app_catalog_changes();

@@ -336,7 +336,7 @@ pub struct Config {
     pub background_opacity: u8,
     pub show_usage_hints: bool,
     pub logging: crate::core::logging::Settings,
-    pub auto_cleanup: crate::features::auto_cleanup::Settings,
+    pub auto_appclose: crate::features::auto_appclose::Settings,
     pub switch_delay_ms: u16,
     pub language: Language,
     pub input_indicator: crate::features::input_indicator::Settings,
@@ -365,7 +365,7 @@ impl Default for Config {
             background_opacity: 100,
             show_usage_hints: true,
             logging: Default::default(),
-            auto_cleanup: Default::default(),
+            auto_appclose: Default::default(),
             switch_delay_ms: 100,
             language: Language::System,
             input_indicator: Default::default(),
@@ -381,7 +381,7 @@ impl Default for Config {
 impl Config {
     pub fn validate(&self) -> Result<(), String> {
         self.logging.validate()?;
-        self.auto_cleanup.validate()?;
+        self.auto_appclose.validate()?;
         crate::features::snippets::validate(&self.snippets)?;
         crate::features::quicklinks::validate(&self.quicklinks)?;
         self.clipboard.validate()?;
@@ -626,12 +626,18 @@ impl Config {
     }
 
     pub fn from_json(json: &str) -> Result<Self, String> {
-        let value: serde_json::Value = serde_json::from_str(json).map_err(|_| {
+        let mut value: serde_json::Value = serde_json::from_str(json).map_err(|_| {
             tr!(
                 "保存的设置无法读取，请在设置中重新保存。",
                 "Saved settings could not be read. Save them again in Settings."
             )
         })?;
+        // Migrate the old feature key once; subsequent saves use only auto_appclose.
+        if let Some(object) = value.as_object_mut()
+            && let Some(settings) = object.remove("auto_cleanup")
+        {
+            object.entry("auto_appclose").or_insert(settings);
+        }
         let legacy = value.get("switch_shortcut").is_none();
         let legacy_input = if value.get("input_rules").is_none() {
             value

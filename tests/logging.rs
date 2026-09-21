@@ -74,7 +74,7 @@ fn live_level_switch_and_flush_preserve_info_and_escape_newlines() {
     let directory = tempfile::tempdir().unwrap();
     let logger = Logger::start(directory.path().join("winlane.log"), Level::Info);
     logger.record(Level::Debug, "test", "off", || panic!("must be lazy"));
-    logger.record(Level::Info, "cleanup", "close-request", || {
+    logger.record(Level::Info, "auto-appclose", "close-request", || {
         "app=example\nforged entry".into()
     });
     logger

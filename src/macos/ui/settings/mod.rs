@@ -1,5 +1,5 @@
 mod appearance;
-mod auto_cleanup;
+mod auto_appclose;
 mod command_shortcuts;
 mod files;
 mod input;
@@ -52,7 +52,7 @@ pub struct SettingsWindow {
     input_rules: OnceCell<InputRulesPage>,
     scrolling: OnceCell<ScrollingPage>,
     files: OnceCell<FilesPage>,
-    auto_cleanup: OnceCell<auto_cleanup::AutoCleanupPage>,
+    auto_appclose: OnceCell<auto_appclose::AutoAppClosePage>,
     scroll_status: RefCell<(String, bool)>,
     windows: OnceCell<WindowsPage>,
     clipboard: OnceCell<crate::macos::ui::clipboard_settings::ClipboardControls>,
@@ -67,7 +67,7 @@ pub struct SettingsWindow {
 impl SettingsWindow {
     pub fn fill(&self, config: &Config) {
         self.config.replace(config.clone());
-        if let Some(page) = self.auto_cleanup.get() {
+        if let Some(page) = self.auto_appclose.get() {
             page.fill(config);
         }
         if let Some(page) = self.shortcuts.get() {
@@ -101,7 +101,7 @@ impl SettingsWindow {
 
     pub fn sync_saved_config(&self, config: &Config) {
         self.config.replace(config.clone());
-        if let Some(page) = self.auto_cleanup.get() {
+        if let Some(page) = self.auto_appclose.get() {
             page.update_grace(config);
         }
         if let Some(page) = self.input.get() {
@@ -180,30 +180,30 @@ impl SettingsWindow {
             page
         })
     }
-    fn auto_cleanup(&self) -> &auto_cleanup::AutoCleanupPage {
-        self.auto_cleanup.get_or_init(|| {
+    fn auto_appclose(&self) -> &auto_appclose::AutoAppClosePage {
+        self.auto_appclose.get_or_init(|| {
             let target = self.target.load().expect("settings target is alive");
             let page =
-                auto_cleanup::AutoCleanupPage::new(&self.host(12), &target, self.window.mtm());
+                auto_appclose::AutoAppClosePage::new(&self.host(12), &target, self.window.mtm());
             page.fill(&self.config.borrow());
             page
         })
     }
-    pub fn add_cleanup_rule(&self) {
-        self.auto_cleanup().add(&self.window, &self.message);
+    pub fn add_appclose_rule(&self) {
+        self.auto_appclose().add(&self.window, &self.message);
     }
-    pub fn cleanup_enabled(&self) -> bool {
-        self.auto_cleanup().enabled()
+    pub fn appclose_enabled(&self) -> bool {
+        self.auto_appclose().enabled()
     }
-    pub fn remove_cleanup_rule(&self, index: usize) {
-        self.auto_cleanup().remove(index);
+    pub fn remove_appclose_rule(&self, index: usize) {
+        self.auto_appclose().remove(index);
     }
-    pub fn choose_cleanup_app(&self, index: usize) {
-        self.auto_cleanup()
+    pub fn choose_appclose_app(&self, index: usize) {
+        self.auto_appclose()
             .choose(index, &self.window, &self.message);
     }
-    pub fn update_cleanup_status(&self, text: &str) {
-        if let Some(page) = self.auto_cleanup.get() {
+    pub fn update_appclose_status(&self, text: &str) {
+        if let Some(page) = self.auto_appclose.get() {
             page.status(text);
         }
     }
@@ -296,7 +296,7 @@ impl SettingsWindow {
                 self.files();
             }
             12 => {
-                self.auto_cleanup();
+                self.auto_appclose();
             }
             _ => {}
         }
@@ -305,7 +305,7 @@ impl SettingsWindow {
     pub fn candidate(&self) -> Result<Config, String> {
         // Unvisited pages contribute their saved values, never control defaults.
         let mut config = self.config.borrow().clone();
-        if let Some(page) = self.auto_cleanup.get() {
+        if let Some(page) = self.auto_appclose.get() {
             page.read(&mut config)?;
         }
         if let Some(page) = self.shortcuts.get() {

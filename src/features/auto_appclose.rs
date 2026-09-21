@@ -45,8 +45,8 @@ impl Settings {
         }
         if self.rules.len() > 64 {
             return Err(tr!(
-                "最多设置 64 条自动清理规则。",
-                "You can configure up to 64 cleanup rules."
+                "最多设置 64 条自动关闭窗口规则。",
+                "You can configure up to 64 Auto AppClose rules."
             )
             .into());
         }
@@ -62,15 +62,15 @@ impl Settings {
             }
             if rule.application.bundle_id == "app.windowlane.desktop" {
                 return Err(tr!(
-                    "不能自动清理 Winlane 自己的窗口。",
-                    "Winlane cannot clean up its own windows."
+                    "不能自动关闭 Winlane 自己的窗口。",
+                    "Winlane cannot automatically close its own windows."
                 )
                 .into());
             }
             if !apps.insert(&rule.application.bundle_id) {
                 return Err(tr!(
-                    "每个应用只能设置一条清理规则。",
-                    "Only one cleanup rule is allowed per app."
+                    "每个应用只能设置一条自动关闭窗口规则。",
+                    "Only one Auto AppClose rule is allowed per app."
                 )
                 .into());
             }

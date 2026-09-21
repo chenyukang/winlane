@@ -2,7 +2,7 @@ use super::*;
 use block2::RcBlock;
 use objc2_foundation::{NSArray, NSURL, ns_string};
 use std::rc::Rc;
-use winlane::{core::config::ApplicationTarget, features::auto_cleanup::Rule};
+use winlane::{core::config::ApplicationTarget, features::auto_appclose::Rule};
 
 struct Row {
     view: Retained<NSView>,
@@ -12,7 +12,7 @@ struct Row {
     remove: Retained<NSButton>,
 }
 
-pub(super) struct AutoCleanupPage {
+pub(super) struct AutoAppClosePage {
     enabled: Retained<NSButton>,
     interval: Retained<NSTextField>,
     grace: Retained<NSTextField>,
@@ -23,13 +23,13 @@ pub(super) struct AutoCleanupPage {
     status: Retained<NSTextField>,
 }
 
-impl AutoCleanupPage {
+impl AutoAppClosePage {
     pub(super) fn new(host: &NSView, target: &AnyObject, mtm: MainThreadMarker) -> Self {
-        let enabled = checkbox(tr!("启用自动清理", "Enable Auto Cleanup"), mtm);
+        let enabled = checkbox(tr!("启用自动关闭窗口", "Enable Auto AppClose"), mtm);
         enabled.setFrame(rect(4.0, 533.0, 730.0, 28.0));
-        set_action(&enabled, target, sel!(toggleAutoCleanup:));
+        set_action(&enabled, target, sel!(toggleAutoAppClose:));
         host.addSubview(&enabled);
-        host.addSubview(&hint(tr!("超过上限时，关闭最久未使用的窗口。保留当前窗口和刚打开的窗口，遇到保存提示时暂停该应用的清理。", "Close the least recently used windows above each limit. Keep the active and newly opened windows; pause an app when a close needs your attention."), rect(4.0, 480.0, 730.0, 44.0), mtm));
+        host.addSubview(&hint(tr!("超过上限时，关闭最久未使用的窗口。保留当前窗口和刚打开的窗口，遇到保存提示时暂停自动关闭该应用的窗口。", "Close the least recently used windows above each limit. Keep the active and newly opened windows; pause an app when a close needs your attention."), rect(4.0, 480.0, 730.0, 44.0), mtm));
         host.addSubview(&label(
             tr!("检查间隔", "Check interval"),
             13.0,
@@ -79,7 +79,7 @@ impl AutoCleanupPage {
         host.addSubview(&button(
             tr!("＋ 添加应用…", "＋ Add App…"),
             target,
-            sel!(addCleanupRule:),
+            sel!(addAppCloseRule:),
             rect(0.0, 16.0, 200.0, 30.0),
             mtm,
         ));
@@ -100,10 +100,10 @@ impl AutoCleanupPage {
 
     pub(super) fn fill(&self, config: &Config) {
         self.interval.setStringValue(&NSString::from_str(
-            &config.auto_cleanup.interval_secs.to_string(),
+            &config.auto_appclose.interval_secs.to_string(),
         ));
         self.update_grace(config);
-        self.enabled.setState(if config.auto_cleanup.enabled {
+        self.enabled.setState(if config.auto_appclose.enabled {
             NSControlStateValueOn
         } else {
             NSControlStateValueOff
@@ -111,7 +111,7 @@ impl AutoCleanupPage {
         for row in self.rows.take() {
             row.view.removeFromSuperview();
         }
-        for rule in &config.auto_cleanup.rules {
+        for rule in &config.auto_appclose.rules {
             let row = self.append();
             Self::set_application(&row, rule.application.clone());
             row.limit
@@ -121,7 +121,7 @@ impl AutoCleanupPage {
     }
 
     pub(super) fn read(&self, config: &mut Config) -> Result<(), String> {
-        config.auto_cleanup.interval_secs = self
+        config.auto_appclose.interval_secs = self
             .interval
             .stringValue()
             .to_string()
@@ -149,16 +149,16 @@ impl AutoCleanupPage {
                 });
             }
         }
-        config.auto_cleanup.enabled = self.enabled.state() == NSControlStateValueOn;
-        config.auto_cleanup.rules = rules;
-        config.auto_cleanup.validate()
+        config.auto_appclose.enabled = self.enabled.state() == NSControlStateValueOn;
+        config.auto_appclose.rules = rules;
+        config.auto_appclose.validate()
     }
 
     pub(super) fn update_grace(&self, config: &Config) {
         self.grace.setStringValue(&NSString::from_str(&trf!(
             "新窗口保护期：{} 秒（2×间隔）",
             "New window grace: {} seconds (2× interval)",
-            config.auto_cleanup.grace_period_ms() / 1_000
+            config.auto_appclose.grace_period_ms() / 1_000
         )));
     }
 
@@ -169,7 +169,7 @@ impl AutoCleanupPage {
         let choose = button(
             tr!("选择应用…", "Choose App…"),
             &target,
-            sel!(chooseCleanupApp:),
+            sel!(chooseAppCloseApp:),
             rect(4.0, 12.0, 416.0, 30.0),
             mtm,
         );
@@ -187,7 +187,7 @@ impl AutoCleanupPage {
         let remove = button(
             tr!("移除", "Remove"),
             &target,
-            sel!(removeCleanupRule:),
+            sel!(removeAppCloseRule:),
             rect(610.0, 12.0, 116.0, 30.0),
             mtm,
         );
@@ -289,5 +289,5 @@ impl AutoCleanupPage {
 }
 
 #[cfg(test)]
-#[path = "../../../../tests/native/settings_auto_cleanup.rs"]
+#[path = "../../../../tests/native/settings_auto_appclose.rs"]
 pub(crate) mod tests;

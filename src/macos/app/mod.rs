@@ -1,4 +1,4 @@
-mod auto_cleanup;
+mod auto_appclose;
 mod bluetooth;
 mod catalog;
 mod clipboard;
@@ -193,7 +193,7 @@ struct PendingFocus {
 #[derive(Default)]
 struct AppState {
     emoji_matches: RefCell<Vec<winlane::features::emoji::Emoji>>,
-    auto_cleanup: RefCell<auto_cleanup::State>,
+    auto_appclose: RefCell<auto_appclose::State>,
     files: RefCell<files::State>,
     keep_awake: RefCell<crate::macos::platform::keep_awake::KeepAwake>,
     keep_awake_matches: RefCell<Vec<winlane::features::keep_awake::Choice>>,

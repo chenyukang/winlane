@@ -322,9 +322,9 @@ impl Delegate {
             clipboard.configure(candidate.clipboard.clone());
         }
         self.ivars()
-            .auto_cleanup
+            .auto_appclose
             .borrow_mut()
-            .configure(&candidate.auto_cleanup);
+            .configure(&candidate.auto_appclose);
         input_source::set_rules(&candidate.input_rules, self.mtm());
         self.ivars().config.replace(candidate);
         self.update_scrolling_status();

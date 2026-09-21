@@ -1,4 +1,4 @@
-pub mod auto_cleanup;
+pub mod auto_appclose;
 pub mod bluetooth;
 pub mod clipboard;
 pub mod emoji;

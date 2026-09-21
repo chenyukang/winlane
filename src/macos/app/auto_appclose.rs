@@ -1,17 +1,22 @@
 use super::*;
 use crate::macos::platform::{
-    accessibility::cleanup,
+    accessibility::auto_appclose as appclose,
     logging::{Level, record},
 };
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
-use winlane::features::auto_cleanup::{Planner, Settings, Target};
+use winlane::features::auto_appclose::{Planner, Settings, Target};
 
 enum Job {
-    Scan(Receiver<cleanup::Scan>, u64),
-    Close(Receiver<cleanup::CloseResult>, Target, u64, Arc<AtomicBool>),
+    Scan(Receiver<appclose::Scan>, u64),
+    Close(
+        Receiver<appclose::CloseResult>,
+        Target,
+        u64,
+        Arc<AtomicBool>,
+    ),
 }
 
 #[derive(Default)]
@@ -48,7 +53,7 @@ impl State {
         } else {
             Some(Instant::now() + settings.interval())
         };
-        record(Level::Info, "auto-cleanup", "configuration", || {
+        record(Level::Info, "auto-appclose", "configuration", || {
             format!(
                 "enabled={} rules={} interval_secs={}",
                 settings.enabled,
@@ -65,10 +70,10 @@ impl Drop for State {
 }
 
 impl Delegate {
-    pub(super) fn poll_auto_cleanup(&self) {
+    pub(super) fn poll_auto_appclose(&self) {
         let app = self.ivars();
-        let mut state = app.auto_cleanup.borrow_mut();
-        state.configure(&app.config.borrow().auto_cleanup);
+        let mut state = app.auto_appclose.borrow_mut();
+        state.configure(&app.config.borrow().auto_appclose);
         let busy = app.demo.get()
             || app.mode.get().is_some()
             || app.focus_receiver.borrow().is_some()
@@ -88,8 +93,8 @@ impl Delegate {
                 Job::Scan(rx, generation) => match rx.try_recv() {
                     Ok(scan) if generation == state.generation => {
                         for target in state.planner.confirm_closed(&scan.closed) {
-                            record(Level::Info, "auto-cleanup", "closed", || {
-                                cleanup::details(&target)
+                            record(Level::Info, "auto-appclose", "closed", || {
+                                appclose::details(&target)
                             });
                             closed.push(target.window.id);
                         }
@@ -117,7 +122,7 @@ impl Delegate {
                             std::thread::spawn(move || {
                                 objc2::rc::autoreleasepool(|_| {
                                     let result =
-                                        cleanup::close(&worker_target, &rule, &worker_token);
+                                        appclose::close(&worker_target, &rule, &worker_token);
                                     let _ = tx.send(result);
                                     wake.signal();
                                 })
@@ -129,7 +134,7 @@ impl Delegate {
                     _ => {}
                 },
                 Job::Close(rx, target, generation, token) => match rx.try_recv() {
-                    Ok(cleanup::CloseResult::Requested | cleanup::CloseResult::Failed)
+                    Ok(appclose::CloseResult::Requested | appclose::CloseResult::Failed)
                     | Err(TryRecvError::Disconnected) => {
                         if generation == state.generation {
                             state.planner.attempted(target);
@@ -138,7 +143,7 @@ impl Delegate {
                     Err(TryRecvError::Empty) => {
                         state.job = Some(Job::Close(rx, target, generation, token))
                     }
-                    Ok(cleanup::CloseResult::Skipped) => {}
+                    Ok(appclose::CloseResult::Skipped) => {}
                 },
             }
         }
@@ -156,7 +161,7 @@ impl Delegate {
             let wake = app.wake.get().unwrap().handle();
             std::thread::spawn(move || {
                 objc2::rc::autoreleasepool(|_| {
-                    let _ = tx.send(cleanup::scan(&rules, &pending));
+                    let _ = tx.send(appclose::scan(&rules, &pending));
                     wake.signal();
                 })
             });
@@ -178,8 +183,8 @@ impl Delegate {
                 tr!("已关闭，保留现有规则。", "Off. Your rules are kept.").into()
             } else if !pending.is_empty() {
                 trf!(
-                    "已暂停 {} 的清理，等待窗口关闭。可重新开关自动清理以重试。",
-                    "Cleanup paused for {} until the window closes. Toggle Auto Cleanup to retry.",
+                    "已暂停 {} 的自动关闭，等待窗口关闭。可重新开关自动关闭窗口以重试。",
+                    "Auto AppClose paused for {} until the window closes. Toggle Auto AppClose to retry.",
                     pending.join(", ")
                 )
             } else if !accessibility::is_trusted() {
@@ -191,7 +196,7 @@ impl Delegate {
                 )
                 .into()
             };
-            settings.update_cleanup_status(&status);
+            settings.update_appclose_status(&status);
         }
         drop(state);
         self.remove_closed_windows(&closed);
@@ -199,5 +204,5 @@ impl Delegate {
 }
 
 #[cfg(test)]
-#[path = "../../../tests/native/app/auto_cleanup.rs"]
+#[path = "../../../tests/native/app/auto_appclose.rs"]
 pub(crate) mod tests;

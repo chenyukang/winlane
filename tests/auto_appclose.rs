@@ -1,5 +1,5 @@
 use winlane::core::config::{ApplicationTarget, Config};
-use winlane::features::auto_cleanup::{Planner, Rule, Settings, Snapshot, Window};
+use winlane::features::auto_appclose::{Planner, Rule, Settings, Snapshot, Window};
 
 fn rule(bundle: &str, max_windows: u16) -> Rule {
     Rule {
@@ -36,38 +36,86 @@ fn snapshot(ids: &[u64]) -> Vec<Snapshot> {
 #[test]
 fn defaults_are_off_and_rules_survive_disabling_and_restart() {
     assert_eq!(
-        Config::from_json("{}").unwrap().auto_cleanup,
+        Config::from_json("{}").unwrap().auto_appclose,
         Settings::default()
     );
     let mut config = Config {
-        auto_cleanup: settings(),
+        auto_appclose: settings(),
         ..Config::default()
     };
-    config.auto_cleanup.enabled = false;
+    config.auto_appclose.enabled = false;
     let loaded = Config::from_json(&config.to_json().unwrap()).unwrap();
     assert_eq!(loaded, config);
-    assert_eq!(loaded.auto_cleanup.rules[0].max_windows, 3);
-    assert_eq!(loaded.auto_cleanup.interval_secs, 10);
+    assert_eq!(loaded.auto_appclose.rules[0].max_windows, 3);
+    assert_eq!(loaded.auto_appclose.interval_secs, 10);
+}
+
+#[test]
+fn renamed_settings_migrate_without_losing_rules_or_intervals() {
+    for enabled in [false, true] {
+        let mut expected = Config {
+            auto_appclose: settings(),
+            ..Config::default()
+        };
+        expected.auto_appclose.enabled = enabled;
+        expected.auto_appclose.interval_secs = 30;
+        expected.auto_appclose.rules.push(rule("test.other", 2));
+        let mut old = serde_json::to_value(&expected).unwrap();
+        let settings = old
+            .as_object_mut()
+            .unwrap()
+            .remove("auto_appclose")
+            .unwrap();
+        old["auto_cleanup"] = settings;
+
+        let loaded = Config::from_json(&old.to_string()).unwrap();
+        assert_eq!(loaded, expected);
+        let saved: serde_json::Value = serde_json::from_str(&loaded.to_json().unwrap()).unwrap();
+        assert!(saved.get("auto_cleanup").is_none());
+        assert_eq!(saved["auto_appclose"], old["auto_cleanup"]);
+        assert_eq!(Config::from_json(&saved.to_string()).unwrap(), expected);
+    }
+}
+
+#[test]
+fn renamed_settings_take_precedence_over_old_key_including_disabled_state() {
+    let expected = Config::default();
+    let mut both = serde_json::to_value(&expected).unwrap();
+    both["auto_cleanup"] = serde_json::to_value(settings()).unwrap();
+    assert_eq!(Config::from_json(&both.to_string()).unwrap(), expected);
+}
+
+#[test]
+fn invalid_legacy_settings_are_rejected_instead_of_reset() {
+    let mut old = serde_json::json!({"auto_cleanup": settings()});
+    old["auto_cleanup"]["interval_secs"] = 0.into();
+    assert!(Config::from_json(&old.to_string()).is_err());
 }
 
 #[test]
 fn legacy_rules_get_ten_seconds_and_custom_intervals_persist() {
     let config = Config {
-        auto_cleanup: settings(),
+        auto_appclose: settings(),
         ..Config::default()
     };
     let mut old = serde_json::to_value(&config).unwrap();
-    old["auto_cleanup"]
+    let mut legacy_settings = old
+        .as_object_mut()
+        .unwrap()
+        .remove("auto_appclose")
+        .unwrap();
+    legacy_settings
         .as_object_mut()
         .unwrap()
         .remove("interval_secs");
+    old["auto_cleanup"] = legacy_settings;
     let loaded = Config::from_json(&old.to_string()).unwrap();
     assert_eq!(loaded, config);
-    assert_eq!(loaded.auto_cleanup.interval().as_secs(), 10);
-    assert_eq!(loaded.auto_cleanup.grace_period_ms(), 20_000);
+    assert_eq!(loaded.auto_appclose.interval().as_secs(), 10);
+    assert_eq!(loaded.auto_appclose.grace_period_ms(), 20_000);
     for interval_secs in [1, 10, 30, 3600] {
         let mut config = config.clone();
-        config.auto_cleanup.interval_secs = interval_secs;
+        config.auto_appclose.interval_secs = interval_secs;
         assert_eq!(
             Config::from_json(&config.to_json().unwrap()).unwrap(),
             config
@@ -75,7 +123,7 @@ fn legacy_rules_get_ten_seconds_and_custom_intervals_persist() {
     }
     for interval_secs in [0, 3601, u16::MAX] {
         let mut config = config.clone();
-        config.auto_cleanup.interval_secs = interval_secs;
+        config.auto_appclose.interval_secs = interval_secs;
         assert!(config.validate().is_err());
         assert!(Config::from_json(&serde_json::to_string(&config).unwrap()).is_err());
     }
@@ -103,7 +151,7 @@ fn new_window_protection_is_exactly_twice_the_configured_interval() {
 }
 
 #[test]
-fn validates_limits_duplicates_and_self_cleanup() {
+fn validates_limits_duplicates_and_self_appclose() {
     let mut s = settings();
     for limit in [0, 101, u16::MAX] {
         s.rules[0].max_windows = limit;

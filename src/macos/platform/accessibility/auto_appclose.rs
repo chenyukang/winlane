@@ -2,7 +2,7 @@ use super::*;
 use objc2_app_kit::{NSRunningApplication, NSWorkspace};
 use objc2_foundation::NSString;
 use std::sync::atomic::{AtomicBool, Ordering};
-use winlane::features::auto_cleanup::{Rule, Snapshot, Target, Window};
+use winlane::features::auto_appclose::{Rule, Snapshot, Target, Window};
 
 pub struct Scan {
     pub apps: Vec<Snapshot>,
@@ -38,7 +38,7 @@ pub fn scan(rules: &[Rule], pending: &[Target]) -> Scan {
         .filter_map(|rule| {
             snapshot(rule, &inventory)
                 .map_err(|error| {
-                    record(Level::Debug, "auto-cleanup", "scan-skipped", || {
+                    record(Level::Debug, "auto-appclose", "scan-skipped", || {
                         format!("bundle={} reason={error}", rule.application.bundle_id)
                     });
                 })
@@ -74,7 +74,7 @@ fn snapshot(rule: &Rule, inventory: &Inventory) -> Result<Snapshot, String> {
         }) {
             return Err("modal window active".into());
         }
-        // Unlike display-only discovery, an incomplete AX read must never trigger cleanup.
+        // Unlike display-only discovery, an incomplete AX read must never trigger automatic window closing.
         let published = application
             .windows()
             .map_err(|_| "window list unavailable")?;
@@ -163,7 +163,7 @@ pub fn close(target: &Target, rule: &Rule, cancelled: &AtomicBool) -> CloseResul
         if cancelled.load(Ordering::Acquire) {
             return Ok(false);
         }
-        record(Level::Info, "auto-cleanup", "close-request", || {
+        record(Level::Info, "auto-appclose", "close-request", || {
             details(target)
         });
         let action = CFString::new("AXPress");
@@ -180,7 +180,7 @@ pub fn close(target: &Target, rule: &Rule, cancelled: &AtomicBool) -> CloseResul
         Ok(true) => CloseResult::Requested,
         Ok(false) => CloseResult::Skipped,
         Err(error) => {
-            record(Level::Warn, "auto-cleanup", "close-unconfirmed", || {
+            record(Level::Warn, "auto-appclose", "close-unconfirmed", || {
                 format!("{} reason={error}", details(target))
             });
             CloseResult::Failed

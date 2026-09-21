@@ -168,7 +168,7 @@ impl Logger {
             data,
             dropped,
         });
-        // Never wait for disk I/O in a shortcut, focus callback, or cleanup operation.
+        // Never wait for disk I/O in a shortcut, focus callback, or automatic window close.
         if self.sender.try_send(message).is_err() {
             self.dropped.fetch_add(dropped + 1, Ordering::Relaxed);
         }

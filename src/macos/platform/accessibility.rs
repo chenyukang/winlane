@@ -20,7 +20,7 @@ use winlane::core::discovery::{
 use winlane::core::search::WindowInfo;
 use winlane::{tr, trf};
 
-pub mod cleanup;
+pub mod auto_appclose;
 
 type AxError = i32;
 type AxRef = CFTypeRef;
