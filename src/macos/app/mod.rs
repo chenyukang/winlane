@@ -1,3 +1,4 @@
+mod auto_cleanup;
 mod bluetooth;
 mod catalog;
 mod clipboard;
@@ -187,6 +188,7 @@ struct PendingFocus {
 
 #[derive(Default)]
 struct AppState {
+    auto_cleanup: RefCell<auto_cleanup::State>,
     files: RefCell<files::State>,
     keep_awake: RefCell<crate::macos::platform::keep_awake::KeepAwake>,
     keep_awake_matches: RefCell<Vec<winlane::features::keep_awake::Choice>>,

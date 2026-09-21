@@ -70,6 +70,7 @@ pub fn verify_hidden_panels() {
     let delegate = Delegate::new(mtm);
     crate::macos::ui::settings::tests::verify_localized_settings(&delegate, mtm);
     verify_autosave(mtm);
+    super::auto_cleanup::tests::verify(mtm);
     settings_focus::verify_settings_focus(mtm);
     for language in ["en", "zh"] {
         if let Some(source) = Source::for_language(language, mtm) {

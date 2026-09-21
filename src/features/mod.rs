@@ -1,3 +1,4 @@
+pub mod auto_cleanup;
 pub mod bluetooth;
 pub mod clipboard;
 pub mod files;

@@ -64,6 +64,7 @@ impl SettingsWindow {
         settings_tab(&tabs, tr!("输入法规则", "Input Rules"), mtm);
         settings_tab(&tabs, tr!("鼠标滚轮", "Mouse Scrolling"), mtm);
         settings_tab(&tabs, tr!("文件", "Files"), mtm);
+        settings_tab(&tabs, tr!("自动清理", "Auto Cleanup"), mtm);
         let mut navigation = Vec::new();
         for (position, (index, symbol, color)) in [
             (4, "gearshape.fill", NSColor::systemGrayColor()),
@@ -72,6 +73,7 @@ impl SettingsWindow {
             (9, "character.cursor.ibeam", NSColor::systemBlueColor()),
             (2, "circle.fill", NSColor::systemCyanColor()),
             (3, "macwindow.on.rectangle", NSColor::systemIndigoColor()),
+            (12, "sparkles", NSColor::systemOrangeColor()),
             (5, "textformat.abc", NSColor::systemTealColor()),
             (6, "text.quote", NSColor::systemGreenColor()),
             (7, "doc.on.clipboard", NSColor::systemOrangeColor()),
@@ -82,10 +84,10 @@ impl SettingsWindow {
         .into_iter()
         .enumerate()
         {
-            let y = if position < 7 {
-                568.0 - position as f64 * 44.0
+            let y = if position < 8 {
+                574.0 - position as f64 * 40.0
             } else {
-                224.0 - (position - 7) as f64 * 40.0
+                224.0 - (position - 8) as f64 * 40.0
             };
             let item = tabs.tabViewItemAtIndex(index);
             let control = SettingsNavigationButton::new(
@@ -131,6 +133,7 @@ impl SettingsWindow {
             input_rules: OnceCell::new(),
             scrolling: OnceCell::new(),
             files: OnceCell::new(),
+            auto_cleanup: OnceCell::new(),
             scroll_status: RefCell::new((String::new(), false)),
             windows: OnceCell::new(),
             clipboard: OnceCell::new(),

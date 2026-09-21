@@ -336,6 +336,7 @@ pub struct Config {
     pub background_opacity: u8,
     pub show_usage_hints: bool,
     pub debug_logging: bool,
+    pub auto_cleanup: crate::features::auto_cleanup::Settings,
     pub switch_delay_ms: u16,
     pub language: Language,
     pub input_indicator: crate::features::input_indicator::Settings,
@@ -364,6 +365,7 @@ impl Default for Config {
             background_opacity: 100,
             show_usage_hints: true,
             debug_logging: false,
+            auto_cleanup: Default::default(),
             switch_delay_ms: 100,
             language: Language::System,
             input_indicator: Default::default(),
@@ -378,6 +380,7 @@ impl Default for Config {
 
 impl Config {
     pub fn validate(&self) -> Result<(), String> {
+        self.auto_cleanup.validate()?;
         crate::features::snippets::validate(&self.snippets)?;
         crate::features::quicklinks::validate(&self.quicklinks)?;
         self.clipboard.validate()?;

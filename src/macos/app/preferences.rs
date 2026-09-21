@@ -319,6 +319,10 @@ impl Delegate {
             clipboard.configure(candidate.clipboard.clone());
         }
         crate::macos::platform::logging::set_debug(candidate.debug_logging);
+        self.ivars()
+            .auto_cleanup
+            .borrow_mut()
+            .configure(&candidate.auto_cleanup);
         input_source::set_rules(&candidate.input_rules, self.mtm());
         self.ivars().config.replace(candidate);
         self.update_scrolling_status();

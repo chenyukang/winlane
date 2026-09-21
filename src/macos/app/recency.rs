@@ -86,6 +86,7 @@ impl Delegate {
     }
 
     pub(super) fn request_focus(&self, pid: i32, provisional: Option<u64>) {
+        self.ivars().auto_cleanup.borrow().cancel();
         let state = self.ivars();
         crate::macos::platform::recency_trace::record("focus-request", || {
             format!(
@@ -224,6 +225,7 @@ impl Delegate {
 
     #[track_caller]
     pub(super) fn remember_window(&self, id: u64) {
+        self.ivars().auto_cleanup.borrow().cancel();
         let caller = std::panic::Location::caller();
         crate::macos::platform::recency_trace::record("visit", || {
             format!(

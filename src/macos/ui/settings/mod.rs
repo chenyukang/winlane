@@ -1,4 +1,5 @@
 mod appearance;
+mod auto_cleanup;
 mod command_shortcuts;
 mod files;
 mod input;
@@ -51,6 +52,7 @@ pub struct SettingsWindow {
     input_rules: OnceCell<InputRulesPage>,
     scrolling: OnceCell<ScrollingPage>,
     files: OnceCell<FilesPage>,
+    auto_cleanup: OnceCell<auto_cleanup::AutoCleanupPage>,
     scroll_status: RefCell<(String, bool)>,
     windows: OnceCell<WindowsPage>,
     clipboard: OnceCell<crate::macos::ui::clipboard_settings::ClipboardControls>,
@@ -65,6 +67,9 @@ pub struct SettingsWindow {
 impl SettingsWindow {
     pub fn fill(&self, config: &Config) {
         self.config.replace(config.clone());
+        if let Some(page) = self.auto_cleanup.get() {
+            page.fill(config);
+        }
         if let Some(page) = self.shortcuts.get() {
             page.fill(config);
         }
@@ -172,6 +177,33 @@ impl SettingsWindow {
             page
         })
     }
+    fn auto_cleanup(&self) -> &auto_cleanup::AutoCleanupPage {
+        self.auto_cleanup.get_or_init(|| {
+            let target = self.target.load().expect("settings target is alive");
+            let page =
+                auto_cleanup::AutoCleanupPage::new(&self.host(12), &target, self.window.mtm());
+            page.fill(&self.config.borrow());
+            page
+        })
+    }
+    pub fn add_cleanup_rule(&self) {
+        self.auto_cleanup().add(&self.window, &self.message);
+    }
+    pub fn cleanup_enabled(&self) -> bool {
+        self.auto_cleanup().enabled()
+    }
+    pub fn remove_cleanup_rule(&self, index: usize) {
+        self.auto_cleanup().remove(index);
+    }
+    pub fn choose_cleanup_app(&self, index: usize) {
+        self.auto_cleanup()
+            .choose(index, &self.window, &self.message);
+    }
+    pub fn update_cleanup_status(&self, text: &str) {
+        if let Some(page) = self.auto_cleanup.get() {
+            page.status(text);
+        }
+    }
     fn scrolling(&self) -> &ScrollingPage {
         self.scrolling.get_or_init(|| {
             let target = self.target.load().expect("settings target is alive");
@@ -260,6 +292,9 @@ impl SettingsWindow {
             11 => {
                 self.files();
             }
+            12 => {
+                self.auto_cleanup();
+            }
             _ => {}
         }
     }
@@ -267,6 +302,9 @@ impl SettingsWindow {
     pub fn candidate(&self) -> Result<Config, String> {
         // Unvisited pages contribute their saved values, never control defaults.
         let mut config = self.config.borrow().clone();
+        if let Some(page) = self.auto_cleanup.get() {
+            page.read(&mut config)?;
+        }
         if let Some(page) = self.shortcuts.get() {
             page.read(&mut config)?;
         }
@@ -378,6 +416,10 @@ impl SettingsWindow {
         self.tabs
             .setFrameOrigin(NSPoint::new(252.0, if selected == 0 { 84.0 } else { 48.0 }));
         let description = match selected {
+            12 => tr!(
+                "限制各应用的窗口数量，优先关闭最久未使用的窗口。",
+                "Limit windows per app and close the least recently used ones first."
+            ),
             0 => "",
             1 => tr!(
                 "调整搜索与切换面板的外观、密度和透明度。",

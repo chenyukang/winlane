@@ -52,6 +52,7 @@ impl Delegate {
         direction: i8,
         scope: Option<SearchScope>,
     ) {
+        self.ivars().auto_cleanup.borrow().cancel();
         self.cancel_settings_focus();
         self.ivars().project_open.take();
         self.remember_app_input();

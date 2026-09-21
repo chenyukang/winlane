@@ -40,6 +40,8 @@ src/
 | Global shortcut registration and dispatch | `macos/app/shortcuts.rs` |
 | Asynchronous window discovery and icon caches | `macos/app/catalog.rs` |
 | Recent-window tracking and exit persistence | `macos/app/recency.rs` |
+| Automatic LRU window cleanup | `features/auto_cleanup.rs`, `macos/app/auto_cleanup.rs`, `macos/platform/accessibility/cleanup.rs`, `macos/ui/settings/auto_cleanup.rs` |
+| Unified diagnostics and rotating local logs | `macos/platform/logging.rs` |
 | Combining and selecting search results | `macos/app/search.rs` |
 | Panel construction and display placement | `macos/app/panel.rs` |
 | Result rendering and native row drawing | `macos/app/render.rs`, `macos/app/views.rs` |

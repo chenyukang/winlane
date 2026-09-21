@@ -10,6 +10,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
     input_rules::tests::verify(target, mtm);
     scrolling::tests::verify(target, mtm);
     files::tests::verify(target, mtm);
+    auto_cleanup::tests::verify(target, mtm);
     use winlane::core::i18n::Locale;
     for (locale, title, tabs) in [
         (
@@ -28,6 +29,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
                 "Input Rules",
                 "Mouse Scrolling",
                 "Files",
+                "Auto Cleanup",
             ],
         ),
         (
@@ -46,6 +48,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
                 "输入法规则",
                 "鼠标滚轮",
                 "文件",
+                "自动清理",
             ],
         ),
     ] {
@@ -160,7 +163,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
                 .iter()
                 .map(|button| button.tag())
                 .collect::<Vec<_>>(),
-            [4, 1, 0, 9, 2, 3, 5, 6, 7, 8, 10, 11]
+            [4, 1, 0, 9, 2, 3, 12, 5, 6, 7, 8, 10, 11]
         );
         for button in &settings.navigation {
             assert_eq!(button.action(), Some(sel!(selectSettingsSection:)));
@@ -568,6 +571,7 @@ pub fn verify_autosave_controls(settings: &SettingsWindow, saved: impl Fn() -> C
     input_rules::tests::verify_autosave(settings, &saved);
     scrolling::tests::verify_autosave(settings, &saved);
     files::tests::verify_autosave(settings, &saved);
+    auto_cleanup::tests::verify_autosave(settings, &saved);
     settings
         .windows()
         .minimized
