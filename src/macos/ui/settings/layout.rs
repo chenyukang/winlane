@@ -3,6 +3,10 @@ use super::*;
 impl SettingsWindow {
     pub fn new(target: &AnyObject, mtm: MainThreadMarker) -> Self {
         let window = preferences_window(rect(0.0, 0.0, 1020.0, 740.0), mtm);
+        window.setStyleMask(window.styleMask() | NSWindowStyleMask::FullSizeContentView);
+        window.setContentSize(NSSize::new(1020.0, 740.0));
+        window.setOpaque(false);
+        window.setBackgroundColor(Some(&NSColor::clearColor()));
         window.setCollectionBehavior(
             NSWindowCollectionBehavior::MoveToActiveSpace
                 | NSWindowCollectionBehavior::FullScreenAuxiliary
@@ -14,12 +18,15 @@ impl SettingsWindow {
         window.setTitlebarAppearsTransparent(true);
         let view = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 1020.0, 740.0));
         window.setContentView(Some(&view));
+        let backdrop = crate::macos::ui::material::PanelBackdrop::new(view.bounds(), mtm);
+        view.addSubview(backdrop.view());
+        let view = &backdrop.content;
         let sidebar = NSVisualEffectView::initWithFrame(
             NSVisualEffectView::alloc(mtm),
             rect(0.0, 0.0, 220.0, 740.0),
         );
         sidebar.setMaterial(NSVisualEffectMaterial::Sidebar);
-        sidebar.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
+        sidebar.setBlendingMode(NSVisualEffectBlendingMode::WithinWindow);
         view.addSubview(&sidebar);
         let brand = label("Winlane", 21.0, rect(24.0, 677.0, 178.0, 32.0), mtm);
         brand.setFont(Some(&NSFont::boldSystemFontOfSize(21.0)));
