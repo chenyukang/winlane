@@ -55,7 +55,12 @@ impl Service {
                 match work {
                     Work::Save(entries) => {
                         if files::history::save(&path, &entries).is_err() {
-                            eprintln!("Could not save recent files");
+                            super::logging::record(
+                                super::logging::Level::Warn,
+                                "files",
+                                "history-save-failed",
+                                String::new,
+                            );
                         }
                     }
                     Work::Search(request) => {

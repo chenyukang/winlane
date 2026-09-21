@@ -277,6 +277,7 @@ impl SettingsWindow {
             page.read(&mut config)?;
         }
         if let Some(page) = self.general.get() {
+            config.debug_logging = page.debug_logging.state() == NSControlStateValueOn;
             config.language = match page.language.indexOfSelectedItem() {
                 1 => Language::Chinese,
                 2 => Language::English,

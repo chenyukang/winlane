@@ -22,7 +22,12 @@ impl CatalogWatcher {
             let relevant = match event {
                 Ok(event) => affects_catalog(&event, &observed),
                 Err(error) => {
-                    eprintln!("Application directory notification failed: {error}");
+                    super::logging::record(
+                        super::logging::Level::Warn,
+                        "catalog",
+                        "notification-failed",
+                        || error.to_string(),
+                    );
                     true
                 }
             };
@@ -86,9 +91,11 @@ impl CatalogWatcher {
         for (path, mode) in wanted {
             match self.watcher.watch(&path, mode) {
                 Ok(()) => self.watched.push((path, mode)),
-                Err(error) => eprintln!(
-                    "Could not monitor application directory {}: {error}",
-                    path.display()
+                Err(error) => super::logging::record(
+                    super::logging::Level::Warn,
+                    "catalog",
+                    "watch-failed",
+                    || error.to_string(),
                 ),
             }
         }

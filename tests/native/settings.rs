@@ -136,6 +136,20 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
                     })
                 })
         );
+        assert!(!settings.candidate().unwrap().debug_logging);
+        settings
+            .general()
+            .debug_logging
+            .setState(NSControlStateValueOn);
+        assert!(settings.candidate().unwrap().debug_logging);
+        settings
+            .general()
+            .debug_logging
+            .setState(NSControlStateValueOff);
+        assert_eq!(
+            settings.general().debug_logging.action(),
+            Some(sel!(settingsChanged:))
+        );
         assert_eq!(settings.window.title().to_string(), title);
         assert_eq!(settings.tabs.tabViewType(), NSTabViewType::NoTabsNoBorder);
         assert_eq!(settings.selected_tab(), 4, "open settings on General");

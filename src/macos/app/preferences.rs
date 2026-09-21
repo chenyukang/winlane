@@ -318,6 +318,7 @@ impl Delegate {
         if let Some(clipboard) = self.ivars().clipboard.borrow_mut().as_mut() {
             clipboard.configure(candidate.clipboard.clone());
         }
+        crate::macos::platform::logging::set_debug(candidate.debug_logging);
         input_source::set_rules(&candidate.input_rules, self.mtm());
         self.ivars().config.replace(candidate);
         self.update_scrolling_status();

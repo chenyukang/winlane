@@ -126,7 +126,12 @@ impl Delegate {
             Ok(watcher) => {
                 self.ivars().catalog_watcher.replace(Some(watcher));
             }
-            Err(error) => eprintln!("Application directory monitoring failed: {error}"),
+            Err(error) => crate::macos::platform::logging::record(
+                crate::macos::platform::logging::Level::Warn,
+                "catalog",
+                "watch-failed",
+                || error.to_string(),
+            ),
         }
     }
 

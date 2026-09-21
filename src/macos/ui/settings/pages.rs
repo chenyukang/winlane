@@ -1,6 +1,7 @@
 use super::*;
 
 pub(super) struct GeneralPage {
+    pub(super) debug_logging: Retained<NSButton>,
     pub(super) language: Retained<NSPopUpButton>,
     pub(super) login: Retained<NSButton>,
     pub(super) login_status: Retained<NSTextField>,
@@ -59,17 +60,38 @@ impl GeneralPage {
         let update_status = hint("", rect(22.0, 14.0, 696.0, 48.0), mtm);
         update_status.setMaximumNumberOfLines(3);
         updates.addSubview(&update_status);
+        let diagnostics = settings_group(general, tr!("诊断", "Diagnostics"), 114.0, 76.0, mtm);
+        let debug_logging = checkbox(tr!("启用 Debug 日志", "Debug logging"), mtm);
+        debug_logging.setFrame(rect(20.0, 40.0, 430.0, 26.0));
+        set_action(&debug_logging, target, sel!(settingsChanged:));
+        diagnostics.addSubview(&debug_logging);
+        diagnostics.addSubview(&button(
+            tr!("打开日志文件夹", "Open Logs Folder"),
+            target,
+            sel!(openLogs:),
+            rect(500.0, 37.0, 220.0, 28.0),
+            mtm,
+        ));
+        diagnostics.addSubview(&hint(
+            tr!(
+                "记录运行细节，不包含窗口标题或输入内容。",
+                "Record diagnostic details without window titles or typed text."
+            ),
+            rect(20.0, 8.0, 700.0, 24.0),
+            mtm,
+        ));
         general.addSubview(&hint(
             tr!(
                 "设置保存在本机；窗口标题与搜索历史不会保存。",
                 "Settings stay on this Mac. Window titles and search history are not saved."
             ),
-            rect(16.0, 43.0, 708.0, 42.0),
+            rect(16.0, 0.0, 708.0, 36.0),
             mtm,
         ));
 
         set_action(&language, target, sel!(settingsChanged:));
         Self {
+            debug_logging,
             language,
             login,
             login_status,
@@ -79,6 +101,11 @@ impl GeneralPage {
         }
     }
     pub(super) fn fill(&self, config: &Config) {
+        self.debug_logging.setState(if config.debug_logging {
+            NSControlStateValueOn
+        } else {
+            NSControlStateValueOff
+        });
         self.language.selectItemAtIndex(match config.language {
             Language::System => 0,
             Language::Chinese => 1,

@@ -43,6 +43,19 @@ fn saved_preferences_round_trip_without_window_data() {
 }
 
 #[test]
+fn debug_logging_is_opt_in_and_persists() {
+    assert!(!Config::from_json("{}").unwrap().debug_logging);
+    let config = Config {
+        debug_logging: true,
+        ..Config::default()
+    };
+    assert_eq!(
+        Config::from_json(&config.to_json().unwrap()).unwrap(),
+        config
+    );
+}
+
+#[test]
 fn usage_hints_preserve_legacy_defaults_and_saved_choice() {
     assert!(Config::from_json("{}").unwrap().show_usage_hints);
     for show_usage_hints in [false, true] {

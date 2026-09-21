@@ -18,16 +18,12 @@ define_class!(
         }
         #[unsafe(method(applicationDidFinishLaunching:))]
         fn did_launch(&self, _: &NSNotification) {
-            if NSUserDefaults::standardUserDefaults().boolForKey(ns_string!("WinlaneTraceRecency"))
-                && let Some(home) = std::env::var_os("HOME")
-            {
-                crate::macos::platform::recency_trace::init(std::path::PathBuf::from(home).join("Library/Logs/Winlane"));
-            }
             preference_store::apply_language(winlane::core::i18n::Language::System);
             match preference_store::load() {
                 Ok(config) => { self.ivars().config.replace(config); }
                 Err(error) => { self.ivars().hotkey_error.replace(Some(error)); }
             }
+            crate::macos::platform::logging::init(self.ivars().config.borrow().debug_logging);
             preference_store::apply_language(self.ivars().config.borrow().language);
             input_source::set_rules(&self.ivars().config.borrow().input_rules, self.mtm());
             self.restore_recency(NSUserDefaults::standardUserDefaults());
@@ -44,7 +40,7 @@ define_class!(
                 Ok(Some(updater)) => { let _ = self.ivars().updater.set(updater); }
                 Ok(None) => {}
                 Err(error) => {
-                    eprintln!("Update initialization failed: {error}");
+                    crate::macos::platform::logging::record(crate::macos::platform::logging::Level::Warn, "updater", "init-failed", || error.clone());
                     self.ivars().updater_error.replace(Some(error));
                 }
             }
@@ -70,6 +66,8 @@ define_class!(
             self.save_recency();
             self.save_app_input_history();
             self.ivars().clipboard.take();
+            crate::macos::platform::logging::record(crate::macos::platform::logging::Level::Info, "app", "stop", String::new);
+            crate::macos::platform::logging::flush();
         }
         #[unsafe(method(applicationShouldHandleReopen:hasVisibleWindows:))]
         fn reopen(&self, _: &NSApplication, _: bool) -> bool { self.show(); true }
@@ -404,6 +402,13 @@ define_class!(
         #[unsafe(method(toggleLogin:))]
         fn toggle_login(&self, _: Option<&AnyObject>) {
             if let Some(settings) = self.settings_window() { settings.toggle_login(); }
+        }
+        #[unsafe(method(openLogs:))]
+        fn open_logs(&self, _: Option<&AnyObject>) {
+            if let Some(path) = crate::macos::platform::logging::directory() {
+                let _ = std::fs::create_dir_all(&path);
+                NSWorkspace::sharedWorkspace().openURL(&NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy())));
+            }
         }
         #[unsafe(method(manageLogin:))]
         fn manage_login(&self, _: Option<&AnyObject>) { preference_store::manage_login(); }

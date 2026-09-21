@@ -1,3 +1,4 @@
+use crate::macos::platform::logging::{Level, record};
 use crate::macos::platform::window_server::Inventory;
 use core_foundation::array::CFArray;
 use core_foundation::base::{CFGetTypeID, CFHash, CFType, CFTypeID, CFTypeRef, TCFType};
@@ -179,10 +180,10 @@ impl Element {
             self.attribute_once(name)
         });
         self.set_timeout(READ_TIMEOUT);
-        if std::env::var_os("WINDOWLANE_DEBUG_WINDOWS").is_some()
-            && let Err(code) = &result
-        {
-            eprintln!("AX attribute {name}: error {code}");
+        if let Err(code) = &result {
+            record(Level::Debug, "accessibility", "attribute-error", || {
+                format!("attribute={name} code={code}")
+            });
         }
         result
     }
@@ -262,9 +263,9 @@ impl Element {
     fn is_window(&self) -> bool {
         let role = self.string("AXRole");
         let subrole = self.string("AXSubrole");
-        if std::env::var_os("WINDOWLANE_DEBUG_WINDOWS").is_some() {
-            eprintln!("AX candidate role={role:?} subrole={subrole:?}");
-        }
+        record(Level::Debug, "accessibility", "candidate", || {
+            format!("role={role:?} subrole={subrole:?}")
+        });
         switchable_window(role.as_deref(), subrole.as_deref())
     }
 
@@ -394,14 +395,14 @@ fn complete_windows(published: Vec<Element>, pid: i32, inventory: &Inventory) ->
             windows.push(window);
         }
     }
-    if std::env::var_os("WINDOWLANE_DEBUG_WINDOWS").is_some() {
-        eprintln!(
-            "AX other-spaces pid={pid} found={} unresolved={} next={}",
+    record(Level::Debug, "accessibility", "other-spaces", || {
+        format!(
+            "app_pid={pid} found={} unresolved={} next={}",
             scan.elements.len(),
             missing.len(),
             scan.next
-        );
-    }
+        )
+    });
     remote_scans().lock().unwrap().insert(pid, scan);
     windows
 }
@@ -413,9 +414,9 @@ fn scan_application(
 ) -> Result<Vec<(WindowInfo, Option<u32>)>, AxError> {
     let application = Element::application(pid).ok_or(AX_NO_VALUE)?;
     let windows = all_windows(&application, pid, inventory);
-    if std::env::var_os("WINDOWLANE_DEBUG_WINDOWS").is_some() {
-        eprintln!("AX scan pid={pid} app={app:?} accepted={}", windows.len());
-    }
+    record(Level::Debug, "accessibility", "scan", || {
+        format!("app_pid={pid} accepted={}", windows.len())
+    });
     Ok(windows
         .into_iter()
         .map(|window| {
