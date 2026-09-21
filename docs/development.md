@@ -42,7 +42,19 @@ Both commands produce `dist/Winlane.app`. The script builds with locked dependen
 
 These development bundles do not load Sparkle or check for updates. Add `--with-updater` to build the same updater-enabled bundle used for releases. This downloads a SHA-256-pinned Sparkle distribution to `target/sparkle/`, embeds the framework, and signs its helpers before signing the app. The manual update menu and update settings are disabled when Sparkle is not bundled.
 
-Quit the installed app before replacing it at `~/Applications/Winlane.app`, then open that copy. Avoid running the installed and build-directory copies together. Directly running `cargo run` skips app-bundle signing and may result in a different permission identity.
+Install and restart the local app with the Python helper:
+
+```sh
+./scripts/build-app.sh --with-updater --output-dir dist/local
+python3 scripts/install-app.py dist/local/Winlane.app --dry-run
+python3 scripts/install-app.py dist/local/Winlane.app
+```
+
+The installer defaults to `/Applications/Winlane.app`. If your installed copy is in your home directory, pass `--destination ~/Applications/Winlane.app`; its parent directory must already exist. With no bundle argument, it reads `dist/Winlane.app` relative to this repository. `--dry-run` verifies the bundle, signing identity, and running copies without changing files or quitting the app.
+
+Installation checks the new bundle against the installed app's signing requirement, stages and verifies a copy, quits Winlane normally, and saves the previous app under a hidden `.winlane-update-*` directory beside the installation. It then installs, launches, checks the process and executable hash, and verifies that saved settings are unchanged. Replacement or startup failures trigger a rollback attempt; recovery failures retain the backup and report its location. Successful backups are also retained at the path printed by the script; remove them manually when no longer needed. The installer never force-quits the app or restores over changed preferences. The settings comparison begins after normal quit so any pending editor autosave can finish. A changed-settings check fails visibly and leaves the installed app and current preferences available for inspection.
+
+Avoid running the installed and build-directory copies together; the installer stops if another copy is running. Directly running `cargo run` skips app-bundle signing and may result in a different permission identity.
 
 The product is named Winlane, but its bundle identifier remains `app.windowlane.desktop` and the default certificate remains `Windowlane Development` to preserve existing authorization and preferences. By default, the build targets the Rust toolchain's host architecture. Use `--target aarch64-apple-darwin` or `--target x86_64-apple-darwin` to build another architecture after installing that Rust target. `--output-dir DIR` selects a separate bundle directory; it does not change the installation path.
 
@@ -56,9 +68,10 @@ See [Releasing Winlane](releasing.md) for DMG/ZIP packaging, CI artifacts, and D
 RUSTC_WRAPPER= cargo test --locked
 RUSTC_WRAPPER= cargo clippy --locked --all-targets -- -D warnings
 cargo fmt --all -- --check
+python3 -m unittest discover -s scripts -p 'test_*.py'
 ```
 
-The tests cover search ranking, alias stability and uniqueness, shortcut routing, preference migration, language selection, application discovery, and display placement. The native test executable creates hidden AppKit windows to check controls, bilingual layouts, and shared state across displays. It does not register global shortcuts or write preferences.
+The tests cover search ranking, alias stability and uniqueness, shortcut routing, preference migration, language selection, application discovery, and display placement. The native test executable creates hidden AppKit windows to check controls, bilingual layouts, and shared state across displays. It does not register global shortcuts or write the user's preferences; settings tests use isolated temporary domains.
 
 Real foreground activation, input methods, full-screen Spaces, and physical monitor changes still need interactive testing. The macOS 14 deployment target does not imply that every supported OS version or Intel hardware has been tested; current hands-on validation is on Apple Silicon.
 
