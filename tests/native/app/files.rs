@@ -2,6 +2,67 @@ use super::*;
 use objc2::ClassType;
 use objc2_foundation::NSDictionary;
 
+define_class!(
+    // SAFETY: This main-thread target records menu actions without opening files.
+    #[unsafe(super = NSObject)]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = Cell<Option<isize>>]
+    struct FileMenuProbe;
+    unsafe impl NSObjectProtocol for FileMenuProbe {}
+    impl FileMenuProbe {
+        #[unsafe(method(performFileAction:))]
+        fn perform(&self, item: &NSMenuItem) { self.ivars().set(Some(item.tag())); }
+    }
+);
+
+fn verify_menu_return(menu: &NSMenu, copy_index: isize, mtm: MainThreadMarker) {
+    let target = menu.itemAtIndex(0).unwrap().target();
+    let probe: Retained<FileMenuProbe> = unsafe {
+        msg_send![
+            super(FileMenuProbe::alloc(mtm).set_ivars(Cell::new(None))),
+            init
+        ]
+    };
+    for item in menu.itemArray() {
+        unsafe { item.setTarget(Some(&probe)) };
+    }
+    menu.performActionForItemAtIndex(copy_index);
+    assert_eq!(probe.ivars().replace(None), Some(5));
+    let enter = NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
+        NSEventType::KeyDown, NSPoint::ZERO, NSEventModifierFlags::empty(), 0.0,
+        0, None, ns_string!("\r"), ns_string!("\r"), false, 36,
+    ).unwrap();
+    assert!(
+        !menu.performKeyEquivalent(&enter),
+        "Return must confirm the highlighted menu item, not invoke Open/Browse as a shortcut"
+    );
+    assert_eq!(probe.ivars().get(), None);
+    for (characters, key_code, modifiers, expected) in [
+        ("c", 8, NSEventModifierFlags::Command, 4),
+        (
+            "C",
+            8,
+            NSEventModifierFlags::Command | NSEventModifierFlags::Shift,
+            5,
+        ),
+        ("\r", 36, NSEventModifierFlags::Command, 2),
+    ] {
+        let text = NSString::from_str(characters);
+        let event = NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
+            NSEventType::KeyDown, NSPoint::ZERO, modifiers, 0.0, 0, None,
+            &text, &text, false, key_code,
+        ).unwrap();
+        assert!(
+            menu.performKeyEquivalent(&event),
+            "shortcut {modifiers:?} {characters:?}"
+        );
+        assert_eq!(probe.ivars().replace(None), Some(expected));
+    }
+    for item in menu.itemArray() {
+        unsafe { item.setTarget(target.as_deref()) };
+    }
+}
+
 pub(crate) fn verify_files(mtm: MainThreadMarker) {
     let delegate = Delegate::new(mtm);
     let app = delegate.ivars();
@@ -423,11 +484,12 @@ fn verify_patterns_and_actions(delegate: &Delegate, ui: &PanelUi) {
     let menu = delegate.file_actions_menu();
     assert_eq!(menu.numberOfItems(), 5);
     let copy_path = menu.itemAtIndex(4).unwrap();
-    assert_eq!(copy_path.keyEquivalent().to_string(), "c");
+    assert_eq!(copy_path.keyEquivalent().to_string(), "C");
     assert_eq!(
         copy_path.keyEquivalentModifierMask(),
         NSEventModifierFlags::Command | NSEventModifierFlags::Shift
     );
+    verify_menu_return(&menu, 4, delegate.mtm());
 
     app.files.borrow_mut().entries = entries.clone();
     app.query.replace("Doc".into());
@@ -449,6 +511,7 @@ fn verify_patterns_and_actions(delegate: &Delegate, ui: &PanelUi) {
         "menu keeps its target during async updates"
     );
     assert!(delegate.searching_files());
+    verify_menu_return(&menu, 5, delegate.mtm());
 
     app.query.replace(r"^unmatched\.pdf$".into());
     app.files.borrow_mut().entries = entries;

@@ -21,11 +21,12 @@ impl Delegate {
             NSString::from_str(&serde_json::to_string(&entry).expect("file entry serializes"));
         let command = NSEventModifierFlags::Command;
         let mut items = Vec::new();
+        // Reserve plain Return for confirming the highlighted menu item.
         if entry.directory {
             items.push((
                 Action::Browse,
                 tr!("进入目录", "Browse Folder"),
-                "\r",
+                "",
                 NSEventModifierFlags::empty(),
             ));
         }
@@ -36,7 +37,7 @@ impl Delegate {
             } else {
                 tr!("打开文件", "Open File")
             },
-            "\r",
+            if entry.directory { "\r" } else { "" },
             if entry.directory {
                 NSEventModifierFlags::Control
             } else {
@@ -60,7 +61,7 @@ impl Delegate {
             (
                 Action::CopyPath,
                 tr!("复制完整路径", "Copy Full Path"),
-                "c",
+                "C",
                 command | NSEventModifierFlags::Shift,
             ),
         ]);

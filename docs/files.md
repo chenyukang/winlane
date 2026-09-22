@@ -61,7 +61,7 @@ This reads the directory directly and works without Spotlight. An explicit path 
 
 Space remains available in filenames and search terms. Backspace only deletes text, including when the input is empty. The back button returns to the main search. Input follows the same Winlane input-source rule as other command lists.
 
-The **Actions ⌃T** button opens the same menu. It shows the available actions and their shortcuts, including opening, browsing a folder, revealing in Finder, previewing, copying the file, and copying its full path. Escape dismisses the menu while keeping the file search open. Actions apply to the item selected when the menu opened, even if the results refresh in the background.
+The **Actions ⌃T** button opens the same menu. It shows the available actions and their shortcuts, including opening, browsing a folder, revealing in Finder, previewing, copying the file, and copying its full path. Use the arrow keys to select an action and Enter to execute it. Escape dismisses the menu while keeping the file search open. Actions apply to the item selected when the menu opened, even if the results refresh in the background.
 
 ## Search folders and privacy
 
