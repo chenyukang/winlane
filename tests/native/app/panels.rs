@@ -46,9 +46,9 @@ pub(super) fn verify_usage_hint_visibility(mtm: MainThreadMarker) {
                 assert_eq!(
                     root.bounds().size.height,
                     if mode == PanelMode::Switch {
-                        388.0 + if show_hints { MODE_LABEL_SPACING } else { 0.0 }
+                        380.0 + if show_hints { MODE_LABEL_SPACING } else { 0.0 }
                     } else {
-                        416.0
+                        408.0
                     }
                 );
                 assert!(!ui.panel.isVisible());

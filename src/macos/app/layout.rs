@@ -20,12 +20,12 @@ pub(super) fn alias_badge_size(density: DisplayDensity) -> (f64, f64) {
 pub(super) fn panel_height(
     count: usize,
     switching: bool,
-    extra_controls: bool,
+    footer_base: f64,
     show_mode_label: bool,
     density: DisplayDensity,
 ) -> f64 {
     let header = if switching { 36.0 } else { HEIGHT - LIST_TOP };
-    let footer = if extra_controls { 64.0 } else { LIST_BOTTOM }
+    let footer = footer_base
         + if show_mode_label {
             MODE_LABEL_SPACING
         } else {
@@ -34,7 +34,7 @@ pub(super) fn panel_height(
     let content = if count == 0 {
         184.0
     } else {
-        count as f64 * row_height(density) + 8.0
+        count as f64 * row_height(density)
     };
     (header + footer + content).clamp(280.0, HEIGHT)
 }

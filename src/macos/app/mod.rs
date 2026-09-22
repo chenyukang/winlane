@@ -83,6 +83,8 @@ const HEIGHT: f64 = 590.0;
 const MODE_LABEL_SPACING: f64 = 28.0;
 const LIST_TOP: f64 = 526.0;
 const LIST_BOTTOM: f64 = 36.0;
+// Slimmer bottom inset used when no footer row (hints, error, or permission prompt) shows.
+const LIST_BOTTOM_BARE: f64 = 26.0;
 const LIST_WIDTH: f64 = WIDTH - 20.0;
 const APP_CATALOG_TTL: Duration = Duration::from_secs(10 * 60);
 

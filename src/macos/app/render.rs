@@ -100,6 +100,28 @@ impl Delegate {
         let in_clipboard = self.searching_clipboard();
         let show_hints = state.config.borrow().show_usage_hints;
         let density = state.config.borrow().display_density;
+        let needs_history_access = in_open_url && url_history.access_denied;
+        let has_error = !demo
+            && (state.hotkey_error.borrow().is_some()
+                || state.alias_error.borrow().is_some()
+                || !trusted
+                || (in_clipboard
+                    && clipboard
+                        .as_ref()
+                        .is_some_and(|entry| entry.error.is_some()))
+                || (in_projects && project_cache.error.is_some())
+                || (in_files && (files.error.is_some() || files.limited))
+                || (in_bluetooth && bluetooth_error.is_some())
+                || (in_open_url && url_history.error.is_some()));
+        // The bottom row (hints, settings, an error, or a permission prompt) reserves space only when shown.
+        let show_footer = show_hints || has_error || in_keep_awake || needs_history_access;
+        let footer_base = if !trusted || demo {
+            64.0
+        } else if show_footer {
+            LIST_BOTTOM
+        } else {
+            LIST_BOTTOM_BARE
+        };
         let row_height = if self.searching_files() {
             if density == DisplayDensity::Normal {
                 52.0
@@ -119,8 +141,8 @@ impl Delegate {
         let argument_height = quicklink_input
             .as_ref()
             .map_or(0.0, |input| input.extra_height(density));
-        let mut height = panel_height(count, switching, !trusted || demo, show_mode_label, density)
-            + argument_height;
+        let mut height =
+            panel_height(count, switching, footer_base, show_mode_label, density) + argument_height;
         if in_files {
             height = (100.0
                 + count.max(3) as f64 * row_height
@@ -240,7 +262,6 @@ impl Delegate {
             ));
         }
         ui.mode_label.setHidden(!show_mode_label);
-        let needs_history_access = in_open_url && url_history.access_denied;
         ui.settings_button
             .setHidden(!show_hints || needs_history_access);
         ui.history_permissions_button
@@ -305,7 +326,7 @@ impl Delegate {
         } else {
             tr!("查看演示", "View Demo")
         }));
-        let list_bottom = if !trusted || demo { 64.0 } else { LIST_BOTTOM };
+        let list_bottom = footer_base;
         let mode_frame = rect(16.0, list_bottom, WIDTH - 32.0, 20.0);
         if ui.mode_label.frame() != mode_frame {
             ui.mode_label.setFrame(mode_frame);
@@ -1100,15 +1121,6 @@ impl Delegate {
             )
         };
         set_label(&ui.footer, &status);
-        let has_error = !demo
-            && (state.hotkey_error.borrow().is_some()
-                || state.alias_error.borrow().is_some()
-                || !trusted
-                || (in_clipboard && clipboard_error.is_some())
-                || (in_projects && project_cache.error.is_some())
-                || (in_files && (files.error.is_some() || files.limited))
-                || (in_bluetooth && bluetooth_error.is_some())
-                || (in_open_url && url_history.error.is_some()));
         ui.footer
             .setHidden(!show_hints && !has_error && !in_keep_awake);
     }
