@@ -1,5 +1,5 @@
 use super::rule_list::RuleListButton;
-use crate::macos::ui::controls::{button, hint, label, rect};
+use crate::macos::ui::controls::{button, hint, label, popup, rect, set_action};
 use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
@@ -8,20 +8,63 @@ use objc2_app_kit::*;
 use objc2_foundation::{MainThreadMarker, NSArray, NSSize, NSString, NSURL, ns_string};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use winlane::core::commands::{COMMANDS, CommandId};
 use winlane::core::config::{AliasRule, ApplicationTarget, Config};
 use winlane::tr;
 
 struct Row {
     navigation: Retained<RuleListButton>,
     view: Retained<NSView>,
+    kind: Retained<NSPopUpButton>,
     choose: Retained<NSButton>,
     remove: Retained<NSButton>,
     alias: Retained<NSTextField>,
     title: Retained<NSTextField>,
+    title_label: Retained<NSTextField>,
+    title_hint: Retained<NSTextField>,
+    command: Retained<NSPopUpButton>,
+    command_label: Retained<NSTextField>,
     application: RefCell<Option<ApplicationTarget>>,
 }
 
 impl Row {
+    fn is_command(&self) -> bool {
+        self.kind.indexOfSelectedItem() == 1
+    }
+    fn selected_command(&self) -> CommandId {
+        let index = self.command.indexOfSelectedItem().max(0) as usize;
+        COMMANDS
+            .get(index)
+            .map_or(COMMANDS[0].id, |command| command.id)
+    }
+    fn set_kind_command(&self, command: bool) {
+        self.kind.selectItemAtIndex(if command { 1 } else { 0 });
+        self.apply_kind_visibility();
+    }
+    fn select_command(&self, id: CommandId) {
+        if let Some(index) = COMMANDS.iter().position(|command| command.id == id) {
+            self.command.selectItemAtIndex(index as isize);
+            self.apply_kind_visibility();
+        }
+    }
+    // Show the app chooser and title filter for app rules, the command picker for command rules.
+    fn apply_kind_visibility(&self) {
+        let command = self.is_command();
+        self.choose.setHidden(command);
+        self.title.setHidden(command);
+        self.title_label.setHidden(command);
+        self.title_hint.setHidden(command);
+        self.command.setHidden(!command);
+        self.command_label.setHidden(!command);
+        if command {
+            self.navigation
+                .set_symbol(self.selected_command().definition().symbol);
+        } else if let Some(app) = self.application.borrow().as_ref() {
+            self.navigation.set_application_icon(&app.path);
+        } else {
+            self.navigation.set_symbol("app.dashed");
+        }
+    }
     fn set_application(&self, app: ApplicationTarget) {
         self.choose.setTitle(&NSString::from_str(&app.name));
         self.choose.setToolTip(Some(&NSString::from_str(&app.path)));
@@ -30,19 +73,25 @@ impl Row {
         self.refresh_label();
     }
     fn refresh_label(&self) {
-        let application = self.application.borrow();
-        let name = application
-            .as_ref()
-            .map_or(tr!("新规则", "New rule"), |app| app.name.as_str());
         let alias = self.alias.stringValue().to_string();
-        let title = self.title.stringValue().to_string();
+        let name = if self.is_command() {
+            self.selected_command().definition().title().to_owned()
+        } else {
+            self.application
+                .borrow()
+                .as_ref()
+                .map_or(tr!("新规则", "New rule").to_owned(), |app| {
+                    app.name.clone()
+                })
+        };
         let label = if alias.trim().is_empty() {
-            name.to_owned()
+            name.clone()
         } else {
             format!("{} · {name}", alias.trim())
         };
         self.navigation.set_label(&label);
-        if !title.trim().is_empty() {
+        let title = self.title.stringValue().to_string();
+        if !self.is_command() && !title.trim().is_empty() {
             self.navigation
                 .setToolTip(Some(&NSString::from_str(&format!(
                     "{label} — {}",
@@ -68,6 +117,7 @@ pub struct AliasRulesDraft {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RowDraft {
     application: Option<ApplicationTarget>,
+    command: Option<CommandId>,
     alias: String,
     title: String,
 }
@@ -109,8 +159,8 @@ impl AliasRulesEditor {
         root.addSubview(&detail);
         let empty = hint(
             tr!(
-                "添加规则，为应用或项目窗口设置专用字母。",
-                "Add a rule to assign an alias to an app or project window."
+                "添加规则，为应用、项目窗口或命令设置专用字母。",
+                "Add a rule to assign an alias to an app, project window, or command."
             ),
             rect(20.0, 406.0, 426.0, 60.0),
             mtm,
@@ -148,11 +198,22 @@ impl AliasRulesEditor {
         let view = NSView::initWithFrame(NSView::alloc(mtm), self.detail.bounds());
         let navigation = RuleListButton::new(target, sel!(selectAliasRule:), mtm);
         navigation.set_symbol("app.dashed");
+        let kind = popup(&[], rect(20.0, 476.0, 200.0, 28.0), mtm);
+        kind.addItemWithTitle(&NSString::from_str(tr!("应用", "Application")));
+        kind.addItemWithTitle(&NSString::from_str(tr!("命令", "Command")));
+        set_action(&kind, target, sel!(aliasRuleTargetChanged:));
+        kind.setAccessibilityLabel(Some(&NSString::from_str(tr!("绑定类型", "Target type"))));
+        view.addSubview(&kind);
+        view.addSubview(&hint(
+            tr!("绑定应用或命令", "Bind an app or command"),
+            rect(230.0, 478.0, 216.0, 24.0),
+            mtm,
+        ));
         let choose = button(
             tr!("选择应用…", "Choose App…"),
             target,
             sel!(chooseAliasApp:),
-            rect(20.0, 460.0, 426.0, 30.0),
+            rect(20.0, 356.0, 426.0, 30.0),
             mtm,
         );
         let remove = button(
@@ -165,14 +226,14 @@ impl AliasRulesEditor {
         view.addSubview(&choose);
         view.addSubview(&remove);
         let alias =
-            NSTextField::initWithFrame(NSTextField::alloc(mtm), rect(20.0, 376.0, 90.0, 28.0));
+            NSTextField::initWithFrame(NSTextField::alloc(mtm), rect(20.0, 402.0, 90.0, 28.0));
         alias.setPlaceholderString(Some(ns_string!("ck")));
         alias.setAccessibilityLabel(Some(&NSString::from_str(tr!(
             "Alias 字母",
             "Alias letters"
         ))));
         let title =
-            NSTextField::initWithFrame(NSTextField::alloc(mtm), rect(20.0, 294.0, 426.0, 28.0));
+            NSTextField::initWithFrame(NSTextField::alloc(mtm), rect(20.0, 276.0, 426.0, 28.0));
         title.setPlaceholderString(Some(&NSString::from_str(tr!(
             "标题包含（可选），例如 ckb",
             "Title contains (optional), e.g. ckb"
@@ -192,37 +253,59 @@ impl AliasRulesEditor {
         view.addSubview(&label(
             tr!("Alias 字母", "Alias letters"),
             14.0,
-            rect(20.0, 412.0, 426.0, 24.0),
+            rect(20.0, 438.0, 426.0, 24.0),
             mtm,
         ));
         view.addSubview(&hint(
             tr!("1–2 个小写字母", "1–2 lowercase letters"),
-            rect(122.0, 376.0, 324.0, 24.0),
+            rect(122.0, 402.0, 324.0, 24.0),
             mtm,
         ));
-        view.addSubview(&label(
+        let title_label = label(
             tr!("窗口标题包含", "Window title contains"),
             14.0,
-            rect(20.0, 330.0, 426.0, 24.0),
+            rect(20.0, 312.0, 426.0, 24.0),
             mtm,
-        ));
-        view.addSubview(&hint(
+        );
+        view.addSubview(&title_label);
+        let title_hint = hint(
             tr!(
                 "可选。留空则匹配此应用的所有窗口。",
                 "Optional. Leave empty to match all windows in this app."
             ),
-            rect(20.0, 242.0, 426.0, 40.0),
+            rect(20.0, 228.0, 426.0, 40.0),
             mtm,
-        ));
+        );
+        view.addSubview(&title_hint);
+        let command_label = label(
+            tr!("命令", "Command"),
+            14.0,
+            rect(20.0, 356.0, 426.0, 24.0),
+            mtm,
+        );
+        view.addSubview(&command_label);
+        let command = popup(&[], rect(20.0, 320.0, 426.0, 28.0), mtm);
+        for definition in COMMANDS {
+            command.addItemWithTitle(&NSString::from_str(definition.title()));
+        }
+        set_action(&command, target, sel!(aliasRuleTargetChanged:));
+        command.setAccessibilityLabel(Some(&NSString::from_str(tr!("命令", "Command"))));
+        view.addSubview(&command);
         let row = Rc::new(Row {
             navigation,
             view,
+            kind,
             choose,
             remove,
             alias,
             title,
+            title_label,
+            title_hint,
+            command,
+            command_label,
             application: RefCell::default(),
         });
+        row.apply_kind_visibility();
         row.refresh_label();
         row.view.setHidden(true);
         self.detail.addSubview(&row.view);
@@ -238,7 +321,13 @@ impl AliasRulesEditor {
         }
         for rule in rules {
             let row = self.add_row(target, mtm);
-            row.set_application(rule.application.clone());
+            if let Some(application) = &rule.application {
+                row.set_application(application.clone());
+            }
+            if let Some(command) = rule.command {
+                row.set_kind_command(true);
+                row.select_command(command);
+            }
             row.alias.setStringValue(&NSString::from_str(&rule.alias));
             row.title
                 .setStringValue(&NSString::from_str(&rule.title_contains));
@@ -255,6 +344,7 @@ impl AliasRulesEditor {
                 .iter()
                 .map(|row| RowDraft {
                     application: row.application.borrow().clone(),
+                    command: row.is_command().then(|| row.selected_command()),
                     alias: row.alias.stringValue().to_string(),
                     title: row.title.stringValue().to_string(),
                 })
@@ -269,6 +359,10 @@ impl AliasRulesEditor {
             let row = self.add_row(target, mtm);
             if let Some(app) = old.application {
                 row.set_application(app);
+            }
+            if let Some(command) = old.command {
+                row.set_kind_command(true);
+                row.select_command(command);
             }
             row.alias.setStringValue(&NSString::from_str(&old.alias));
             row.title.setStringValue(&NSString::from_str(&old.title));
@@ -324,6 +418,14 @@ impl AliasRulesEditor {
         row.navigation.scrollRectToVisible(row.navigation.bounds());
     }
 
+    // Refresh a row's controls after its target type or command changed.
+    pub fn update_target(&self, index: usize) {
+        if let Some(row) = self.rows.borrow().get(index).cloned() {
+            row.apply_kind_visibility();
+            row.refresh_label();
+        }
+    }
+
     fn layout(&self) {
         let rows = self.rows.borrow();
         let height = (rows.len() as f64 * 42.0).max(self.scroll.contentSize().height);
@@ -337,6 +439,8 @@ impl AliasRulesEditor {
                 .set_selected(self.selected.get() == Some(index));
             row.refresh_label();
             row.view.setHidden(self.selected.get() != Some(index));
+            row.kind.setTag(index as isize);
+            row.command.setTag(index as isize);
             row.choose.setTag(index as isize);
             row.remove.setTag(index as isize);
         }
@@ -388,14 +492,23 @@ impl AliasRulesEditor {
             .borrow()
             .iter()
             .filter_map(|row| {
-                let application = row.application.borrow().clone()?;
                 let alias = row.alias.stringValue().to_string().trim().to_string();
                 if alias.is_empty() {
                     return None;
                 }
+                if row.is_command() {
+                    return Some(AliasRule {
+                        alias,
+                        application: None,
+                        command: Some(row.selected_command()),
+                        title_contains: String::new(),
+                    });
+                }
+                let application = row.application.borrow().clone()?;
                 Some(AliasRule {
                     alias,
-                    application,
+                    application: Some(application),
+                    command: None,
                     title_contains: row.title.stringValue().to_string().trim().into(),
                 })
             })

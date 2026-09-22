@@ -311,7 +311,10 @@ pub struct CommandShortcut {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AliasRule {
     pub alias: String,
-    pub application: ApplicationTarget,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub application: Option<ApplicationTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<crate::core::commands::CommandId>,
     #[serde(default)]
     pub title_contains: String,
 }
@@ -379,6 +382,18 @@ impl Default for Config {
 }
 
 impl Config {
+    /// The command bound to `query` by an alias rule, if any.
+    pub fn alias_command(&self, query: &str) -> Option<crate::core::commands::CommandId> {
+        let query = query.trim();
+        if query.is_empty() {
+            return None;
+        }
+        self.alias_rules.iter().find_map(|rule| {
+            rule.command
+                .filter(|_| rule.alias.eq_ignore_ascii_case(query))
+        })
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         self.logging.validate()?;
         self.auto_appclose.validate()?;
@@ -398,8 +413,8 @@ impl Config {
         }
         let mut aliases = std::collections::HashSet::new();
         let mut targets = std::collections::HashSet::new();
+        let mut commands = std::collections::HashSet::new();
         for rule in &self.alias_rules {
-            rule.application.validate()?;
             if !(1..=2).contains(&rule.alias.len())
                 || !rule.alias.bytes().all(|ch| ch.is_ascii_lowercase())
             {
@@ -416,24 +431,50 @@ impl Config {
                     rule.alias
                 ));
             }
-            if rule.title_contains.chars().count() > 200
-                || rule.title_contains.trim() != rule.title_contains
-            {
-                return Err(tr!(
-                    "标题关键词不能超过 200 个字符，且不能以空格开头或结尾。",
-                    "Title keywords must be at most 200 characters, without surrounding spaces."
-                )
-                .into());
-            }
-            if !targets.insert((
-                &rule.application.bundle_id,
-                rule.title_contains.to_lowercase(),
-            )) {
-                return Err(tr!(
-                    "同一应用和标题关键词只能设置一条规则。",
-                    "Only one rule is allowed for the same app and title keywords."
-                )
-                .into());
+            match (&rule.application, &rule.command) {
+                (Some(application), None) => {
+                    application.validate()?;
+                    if rule.title_contains.chars().count() > 200
+                        || rule.title_contains.trim() != rule.title_contains
+                    {
+                        return Err(tr!(
+                            "标题关键词不能超过 200 个字符，且不能以空格开头或结尾。",
+                            "Title keywords must be at most 200 characters, without surrounding spaces."
+                        )
+                        .into());
+                    }
+                    if !targets.insert((&application.bundle_id, rule.title_contains.to_lowercase()))
+                    {
+                        return Err(tr!(
+                            "同一应用和标题关键词只能设置一条规则。",
+                            "Only one rule is allowed for the same app and title keywords."
+                        )
+                        .into());
+                    }
+                }
+                (None, Some(command)) => {
+                    if !rule.title_contains.is_empty() {
+                        return Err(tr!(
+                            "绑定命令的 alias 不能设置标题关键词。",
+                            "A command alias cannot use title keywords."
+                        )
+                        .into());
+                    }
+                    if !commands.insert(*command) {
+                        return Err(tr!(
+                            "同一命令只能设置一条 alias 规则。",
+                            "Only one alias rule is allowed for the same command."
+                        )
+                        .into());
+                    }
+                }
+                _ => {
+                    return Err(tr!(
+                        "Alias 规则必须绑定一个应用或一个命令。",
+                        "An alias rule must target either an app or a command."
+                    )
+                    .into());
+                }
             }
         }
         if self.background_opacity > 100 {

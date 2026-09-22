@@ -441,8 +441,8 @@ impl SettingsWindow {
                 "Manage language, startup behavior, and updates."
             ),
             5 => tr!(
-                "为常用应用和项目保留容易记住的 alias。",
-                "Use memorable aliases for your apps and projects."
+                "为常用应用、项目和命令保留容易记住的 alias。",
+                "Use memorable aliases for your apps, projects, and commands."
             ),
             6 => tr!(
                 "创建可复用的文本，加入日期、剪贴板和自定义占位符。",

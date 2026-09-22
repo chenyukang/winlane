@@ -282,15 +282,20 @@ impl Aliases {
             .windows
             .retain(|_, window| !reserved.contains(&window.alias));
         for rule in rules.iter().filter(|rule| rule.title_contains.is_empty()) {
-            result
-                .apps
-                .insert(rule.application.bundle_id.clone(), rule.alias.clone());
+            if let Some(application) = &rule.application {
+                result
+                    .apps
+                    .insert(application.bundle_id.clone(), rule.alias.clone());
+            }
         }
         // More specific project rules claim their windows before app-wide rules.
         let mut rules: Vec<_> = rules.iter().collect();
         rules.sort_by_key(|rule| (std::cmp::Reverse(rule.title_contains.len()), &rule.alias));
         let mut claimed = BTreeSet::new();
         for rule in rules {
+            let Some(application) = &rule.application else {
+                continue;
+            };
             let needle = rule.title_contains.to_lowercase();
             let selected = windows
                 .iter()
@@ -298,7 +303,7 @@ impl Aliases {
                     !claimed.contains(&window.id)
                         && identities
                             .get(&window.pid)
-                            .is_some_and(|app| app.id == rule.application.bundle_id)
+                            .is_some_and(|app| app.id == application.bundle_id)
                         && window.title.to_lowercase().contains(&needle)
                 })
                 .min_by_key(|window| window.id);
@@ -307,7 +312,7 @@ impl Aliases {
                 result.windows.insert(
                     window.id,
                     WindowAlias {
-                        app: rule.application.bundle_id.clone(),
+                        app: application.bundle_id.clone(),
                         alias: rule.alias.clone(),
                     },
                 );

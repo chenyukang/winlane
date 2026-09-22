@@ -377,6 +377,11 @@ define_class!(
         fn choose_alias_app(&self, sender: &NSButton) {
             self.ensure_alias_rules_editor().choose(sender.tag() as usize, self.mtm());
         }
+        #[unsafe(method(aliasRuleTargetChanged:))]
+        fn alias_rule_target_changed(&self, sender: &NSPopUpButton) {
+            self.ensure_alias_rules_editor().update_target(sender.tag() as usize);
+            self.autosave_alias_rules();
+        }
         #[unsafe(method(aliasRulesChanged:))]
         fn alias_rules_changed(&self, _: Option<&AnyObject>) { self.autosave_alias_rules(); }
         #[unsafe(method(showAppShortcuts:))]

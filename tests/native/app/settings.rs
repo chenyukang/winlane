@@ -214,11 +214,12 @@ fn verify_alias_editor_lifecycle(mtm: MainThreadMarker) {
     let initial = Config {
         alias_rules: vec![winlane::core::config::AliasRule {
             alias: "ed".into(),
-            application: ApplicationTarget {
+            application: Some(ApplicationTarget {
                 bundle_id: "com.example.editor".into(),
                 path: "/Applications/Example Editor.app".into(),
                 name: "Editor".into(),
-            },
+            }),
+            command: None,
             title_contains: "project".into(),
         }],
         ..Config::default()

@@ -121,7 +121,12 @@ impl Delegate {
             && !self.ivars().demo.get()
             && scope_pid.is_none()
         {
-            matching_commands(&query)
+            let mut ids = matching_commands(&query);
+            if let Some(id) = self.ivars().config.borrow().alias_command(&query) {
+                ids.retain(|command| *command != id);
+                ids.insert(0, id);
+            }
+            ids
         } else {
             Vec::new()
         };

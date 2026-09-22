@@ -1,17 +1,27 @@
 use std::collections::{HashMap, HashSet};
 use winlane::core::aliases::{AliasMatch, Aliases, AppIdentity};
+use winlane::core::commands::CommandId;
 use winlane::core::config::{AliasRule, ApplicationTarget, Config};
 use winlane::core::search::WindowInfo;
 
 fn rule(alias: &str, app: &str, title: &str) -> AliasRule {
     AliasRule {
         alias: alias.into(),
-        application: ApplicationTarget {
+        application: Some(ApplicationTarget {
             bundle_id: app.into(),
             name: app.into(),
             path: format!("/Applications/{app}.app"),
-        },
+        }),
+        command: None,
         title_contains: title.into(),
+    }
+}
+fn command_rule(alias: &str, command: CommandId) -> AliasRule {
+    AliasRule {
+        alias: alias.into(),
+        application: None,
+        command: Some(command),
+        title_contains: String::new(),
     }
 }
 fn fixture() -> (Vec<WindowInfo>, HashMap<i32, AppIdentity>, Aliases) {
@@ -204,4 +214,93 @@ fn unavailable_custom_aliases_do_not_fall_through_to_automatic_prefixes() {
         effective.filter_order("c", &[0, 1, 2, 3, 4], &windows),
         Some(vec![])
     );
+}
+
+#[test]
+fn command_aliases_resolve_reserve_letters_and_survive_round_trip() {
+    let (windows, ids, auto) = fixture();
+    let config = Config {
+        alias_rules: vec![
+            command_rule("cl", CommandId::Clipboard),
+            rule("co", "code", ""),
+        ],
+        ..Config::default()
+    };
+    config.validate().unwrap();
+    assert_eq!(config.alias_command("cl"), Some(CommandId::Clipboard));
+    assert_eq!(config.alias_command(" CL "), Some(CommandId::Clipboard));
+    assert_eq!(config.alias_command(""), None);
+    assert_eq!(
+        config.alias_command("co"),
+        None,
+        "an app alias is not a command"
+    );
+    assert_eq!(config.alias_command("zz"), None);
+
+    let restored = Config::from_json(&config.to_json().unwrap()).unwrap();
+    assert_eq!(restored.alias_rules, config.alias_rules);
+    assert_eq!(restored.alias_command("cl"), Some(CommandId::Clipboard));
+
+    // Command aliases reserve their letters so automatic window aliases avoid them.
+    let effective = auto.with_rules(&windows, &ids, &config.alias_rules);
+    assert!(
+        windows
+            .iter()
+            .all(|window| effective.for_window(window.id) != Some("cl"))
+    );
+    assert!(effective.is_alias("cl"));
+    assert_eq!(effective.resolve("co"), Some("code"));
+}
+
+#[test]
+fn command_alias_rules_reject_invalid_targets() {
+    // A command alias cannot carry title keywords.
+    assert!(
+        Config {
+            alias_rules: vec![AliasRule {
+                alias: "cl".into(),
+                application: None,
+                command: Some(CommandId::Clipboard),
+                title_contains: "x".into(),
+            }],
+            ..Config::default()
+        }
+        .validate()
+        .is_err()
+    );
+    // A rule must target either an app or a command.
+    assert!(
+        Config {
+            alias_rules: vec![AliasRule {
+                alias: "cl".into(),
+                application: None,
+                command: None,
+                title_contains: String::new(),
+            }],
+            ..Config::default()
+        }
+        .validate()
+        .is_err()
+    );
+    for rules in [
+        // The same command cannot be bound twice.
+        vec![
+            command_rule("cl", CommandId::Clipboard),
+            command_rule("cb", CommandId::Clipboard),
+        ],
+        // An app alias and a command alias cannot share the same letters.
+        vec![
+            command_rule("co", CommandId::Clipboard),
+            rule("co", "code", ""),
+        ],
+    ] {
+        assert!(
+            Config {
+                alias_rules: rules,
+                ..Config::default()
+            }
+            .validate()
+            .is_err()
+        );
+    }
 }

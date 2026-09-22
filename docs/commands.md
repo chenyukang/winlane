@@ -6,6 +6,8 @@ In **Settings → Shortcuts → Command shortcuts**, find the command, select it
 
 For example, binding **Command + Option + U** to `open-url` opens its URL/search input directly. `projects`, `clipboard`, `snippet`, and `quicklink` also open their own lists. System commands such as `lock-screen` and `sleep` execute immediately when their configured shortcut is pressed. Holding the shortcut does not repeat the command.
 
+You can also bind a memorable **alias** to a command in **Settings → Aliases**: add a rule, choose **Command** as its type, pick the command, and enter one or two lowercase letters. Typing that alias in search lists the command first, the same way an app alias surfaces an app. An alias cannot be shared between an app and a command, and command aliases ignore the title filter.
+
 | Command | Search examples | Action |
 | --- | --- | --- |
 | `files` | `files`, `finder`, `documents`, `文件` | Search filenames, browse a path, open, preview, or reveal in Finder. [Guide](files.md). |

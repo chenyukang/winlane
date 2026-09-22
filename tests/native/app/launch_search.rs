@@ -15,11 +15,12 @@ pub(super) fn verify_project_rule_search(mtm: MainThreadMarker) {
     state.config.borrow_mut().alias_rules = vec![winlane::core::config::AliasRule {
         alias: "ck".into(),
         title_contains: "ckb".into(),
-        application: ApplicationTarget {
+        command: None,
+        application: Some(ApplicationTarget {
             bundle_id: "com.example.code".into(),
             name: "Code".into(),
             path: "/Applications/Code.app".into(),
-        },
+        }),
     }];
     state.installed_apps.replace(vec![InstalledApp {
         names: vec!["Ck Other".into()],

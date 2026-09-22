@@ -102,6 +102,51 @@ pub fn verify_rules_editor(
     assert_eq!(saved().alias_rules.len(), 1);
     assert_eq!(saved().alias_rules[0].alias, "ru");
     assert_eq!(window.rows.borrow()[0].remove.tag(), 0);
+    // A row can bind a Winlane command instead of an app.
+    window.add(target, mtm);
+    let command_row = window.rows.borrow().last().unwrap().clone();
+    command_row.alias.setStringValue(ns_string!("cl"));
+    command_row.set_kind_command(true);
+    command_row.select_command(CommandId::Clipboard);
+    command_row.notify_changed();
+    assert!(command_row.is_command());
+    assert!(command_row.choose.isHidden() && command_row.title.isHidden());
+    assert!(!command_row.command.isHidden());
+    let saved_command = saved()
+        .alias_rules
+        .into_iter()
+        .find(|rule| rule.alias == "cl")
+        .expect("command alias saves");
+    assert_eq!(saved_command.command, Some(CommandId::Clipboard));
+    assert_eq!(saved_command.application, None);
+    // The command target survives a draft round-trip.
+    let round_trip = AliasRulesEditor::new(target, mtm);
+    round_trip.restore_draft(window.draft(), target, mtm);
+    assert_eq!(round_trip.draft(), window.draft());
+    for view in command_row.view.subviews().iter() {
+        let frame = view.frame();
+        assert!(frame.origin.x >= 0.0 && frame.origin.y >= 0.0);
+        assert!(
+            frame.origin.x + frame.size.width <= command_row.view.frame().size.width
+                && frame.origin.y + frame.size.height <= command_row.view.frame().size.height
+        );
+    }
+    // Switching back to an app clears the command binding.
+    command_row.set_kind_command(false);
+    command_row.notify_changed();
+    assert!(
+        saved()
+            .alias_rules
+            .iter()
+            .all(|rule| rule.command.is_none())
+    );
+    unsafe {
+        command_row.remove.sendAction_to(
+            command_row.remove.action(),
+            command_row.remove.target().as_deref(),
+        );
+    }
+    assert_eq!(saved().alias_rules.len(), 1);
     for row in window.rows.borrow().iter() {
         assert!(row.alias.cell().unwrap().sendsActionOnEndEditing());
         assert!(row.title.cell().unwrap().sendsActionOnEndEditing());
