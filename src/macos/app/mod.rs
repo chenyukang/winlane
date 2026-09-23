@@ -12,6 +12,7 @@ mod input_rules;
 mod keep_awake;
 mod launch;
 mod layout;
+mod meeting;
 mod menus;
 mod open_url;
 mod panel;
@@ -95,6 +96,7 @@ enum SearchScope {
     Bluetooth,
     Projects,
     OpenUrl,
+    Meeting,
     Quicklinks,
     Snippets,
     Emoji,
@@ -144,6 +146,7 @@ enum RowContent {
     Bluetooth(winlane::features::bluetooth::Device, Option<bool>),
     Project(winlane::features::projects::Project),
     OpenUrl(winlane::features::open_url::Page),
+    Meeting(winlane::features::meeting::Meeting),
     Command(CommandId),
     Snippet(winlane::features::snippets::Snippet),
     Emoji(winlane::features::emoji::Emoji),
@@ -159,6 +162,7 @@ enum SelectedResult {
     Bluetooth(String),
     Project(std::path::PathBuf),
     OpenUrl(String),
+    Meeting(String),
     Command(CommandId),
     Snippet(String),
     Emoji(&'static str),
@@ -287,6 +291,10 @@ struct AppState {
     open_url_matches: RefCell<Vec<winlane::features::open_url::Page>>,
     open_url_history: RefCell<winlane::features::open_url::History>,
     open_url_receiver: RefCell<Option<Receiver<winlane::features::open_url::History>>>,
+    meeting_matches: RefCell<Vec<winlane::features::meeting::Meeting>>,
+    meeting_results: RefCell<winlane::features::meeting::Meetings>,
+    meeting_receiver: RefCell<Option<Receiver<winlane::features::meeting::Meetings>>>,
+    meeting_day_offset: Cell<i32>,
     project_matches: RefCell<Vec<winlane::features::projects::Project>>,
     project_cache: RefCell<winlane::features::projects::Cache>,
     project_receiver: RefCell<Option<Receiver<projects::ProjectUpdate>>>,

@@ -29,6 +29,10 @@ impl Delegate {
             self.submit_open_url(false);
             return;
         }
+        if self.searching_meeting() {
+            self.submit_meeting();
+            return;
+        }
         if self.searching_projects() {
             self.open_selected_project();
             return;

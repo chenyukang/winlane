@@ -119,15 +119,7 @@ impl Delegate {
         } else {
             None
         };
-        state.matches.borrow_mut().clear();
-        state.launch_matches.borrow_mut().clear();
-        state.command_matches.borrow_mut().clear();
-        state.snippet_matches.borrow_mut().clear();
-        state.clipboard_matches.borrow_mut().clear();
-        state.quicklink_matches.borrow_mut().clear();
-        state.project_matches.borrow_mut().clear();
-        self.clear_open_url_matches();
-        state.application_icons.borrow_mut().clear();
+        self.clear_result_matches();
         state.bluetooth_matches.replace(devices);
         state.selected.set(selected.unwrap_or(0));
         self.render();

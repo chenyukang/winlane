@@ -46,6 +46,8 @@ define_class!(
                 }
                 let delegate: Option<Retained<Delegate>> = unsafe { msg_send![self, delegate] };
                 if let Some(delegate) = delegate && delegate.handle_files_key(event, composing) { return; }
+                let delegate: Option<Retained<Delegate>> = unsafe { msg_send![self, delegate] };
+                if let Some(delegate) = delegate && delegate.handle_meeting_key(event, composing) { return; }
                 if i64::from(event.keyCode()) == SPACE {
                     let delegate: Option<Retained<Delegate>> = unsafe { msg_send![self, delegate] };
                     if let Some(delegate) = delegate {

@@ -477,6 +477,7 @@ define_class!(
             if self.searching_files() { self.refresh_files(); self.render(); return; }
             if self.searching_bluetooth() { self.refresh_bluetooth(); self.render(); return; }
             if self.searching_open_url() { self.refresh_open_url(); self.render(); return; }
+            if self.searching_meeting() { self.refresh_meeting(); self.render(); return; }
             if self.searching_projects() { self.refresh_projects(true); self.render(); return; }
             if self.ivars().demo.get() { self.filter(); } else {
                 self.invalidate_app_catalog();
@@ -595,6 +596,7 @@ define_class!(
             self.poll_app_catalog();
             self.poll_projects();
             self.poll_open_url();
+            self.poll_meeting();
             self.poll_files();
             self.poll_bluetooth();
             let awake_expired = self.ivars().keep_awake.borrow_mut().expire(std::time::SystemTime::now());

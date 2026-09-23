@@ -518,6 +518,7 @@ pub(super) fn verify_typo_search(mtm: MainThreadMarker) {
             | SelectedResult::Bluetooth(_)
             | SelectedResult::Project(_)
             | SelectedResult::OpenUrl(_)
+            | SelectedResult::Meeting(_)
             | SelectedResult::Quicklink(_)
             | SelectedResult::Snippet(_)
             | SelectedResult::Emoji(_)

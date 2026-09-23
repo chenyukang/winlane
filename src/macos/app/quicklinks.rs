@@ -94,12 +94,7 @@ impl Delegate {
             0
         };
         drop(config);
-        state.matches.borrow_mut().clear();
-        state.launch_matches.borrow_mut().clear();
-        state.command_matches.borrow_mut().clear();
-        state.snippet_matches.borrow_mut().clear();
-        state.clipboard_matches.borrow_mut().clear();
-        state.application_icons.borrow_mut().clear();
+        self.clear_result_matches();
         state.quicklink_matches.replace(links);
         state.selected.set(selected);
         self.render();
@@ -176,12 +171,7 @@ impl Delegate {
             .unwrap()
             .link
             .clone();
-        state.matches.borrow_mut().clear();
-        state.launch_matches.borrow_mut().clear();
-        state.command_matches.borrow_mut().clear();
-        state.snippet_matches.borrow_mut().clear();
-        state.clipboard_matches.borrow_mut().clear();
-        state.application_icons.borrow_mut().clear();
+        self.clear_result_matches();
         state.quicklink_matches.replace(vec![link]);
         state.selected.set(0);
         self.render();

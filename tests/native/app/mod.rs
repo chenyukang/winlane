@@ -8,6 +8,7 @@ mod input_start;
 mod keep_awake;
 mod launch_search;
 mod main_wake;
+mod meeting;
 mod open_url;
 mod panels;
 mod projects;
@@ -101,6 +102,7 @@ pub fn verify_hidden_panels() {
     verify_quicklink_search(mtm);
     verify_projects_search(mtm);
     open_url::verify_open_url(mtm);
+    meeting::verify_meeting(mtm);
     super::files::tests::verify_files(mtm);
     bluetooth::verify_bluetooth(mtm);
     verify_clipboard_search(mtm);

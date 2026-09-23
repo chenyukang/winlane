@@ -128,16 +128,7 @@ impl Delegate {
         let empty = state.matches.is_empty();
         drop(state);
         self.ivars().selected.set(position.unwrap_or(0));
-        self.ivars().matches.borrow_mut().clear();
-        self.ivars().launch_matches.borrow_mut().clear();
-        self.ivars().command_matches.borrow_mut().clear();
-        self.ivars().snippet_matches.borrow_mut().clear();
-        self.ivars().clipboard_matches.borrow_mut().clear();
-        self.ivars().quicklink_matches.borrow_mut().clear();
-        self.ivars().project_matches.borrow_mut().clear();
-        self.ivars().open_url_matches.borrow_mut().clear();
-        self.ivars().bluetooth_matches.borrow_mut().clear();
-        self.ivars().keep_awake_matches.borrow_mut().clear();
+        self.clear_result_matches();
         if changed || empty {
             self.close_file_preview();
         }

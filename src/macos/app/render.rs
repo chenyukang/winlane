@@ -47,6 +47,9 @@ impl Delegate {
         let open_url = state.open_url_matches.borrow();
         let url_history = state.open_url_history.borrow();
         let in_open_url = self.searching_open_url();
+        let meeting = state.meeting_matches.borrow();
+        let meeting_results = state.meeting_results.borrow();
+        let in_meeting = self.searching_meeting();
         let url_input_target = if in_open_url && open_url.is_empty() {
             winlane::features::open_url::input_target(&state.query.borrow())
         } else {
@@ -88,6 +91,7 @@ impl Delegate {
             + launch_matches.len()
             + project_matches.len()
             + open_url.len()
+            + meeting.len()
             + bluetooth_matches.len()
             + keep_awake_matches.len()
             + files.matches.len();
@@ -114,7 +118,9 @@ impl Delegate {
                 || (in_bluetooth && bluetooth_error.is_some())
                 || (in_open_url && url_history.error.is_some()));
         // The bottom row (hints, settings, an error, or a permission prompt) reserves space only when shown.
-        let show_footer = show_hints || has_error || in_keep_awake || needs_history_access;
+        // The meeting footer carries the viewed day and day navigation, so it ignores the usage-hints toggle.
+        let show_footer =
+            show_hints || has_error || in_keep_awake || needs_history_access || in_meeting;
         let footer_base = if !trusted || demo {
             64.0
         } else if show_footer {
@@ -238,6 +244,8 @@ impl Delegate {
             tr!("‹ 剪贴板", "‹ Clipboard")
         } else if in_open_url {
             tr!("‹ 网址", "‹ URLs")
+        } else if in_meeting {
+            tr!("‹ 会议", "‹ Meetings")
         } else if in_projects {
             tr!("‹ 项目", "‹ Projects")
         } else if self.searching_quicklinks() {
@@ -499,6 +507,47 @@ impl Delegate {
                         ),
                     )
                 }
+            } else if in_meeting {
+                if state.meeting_receiver.borrow().is_some()
+                    || state.scoped_refresh_timer.borrow().is_some()
+                {
+                    (
+                        tr!("正在读取会议…", "Loading meetings…"),
+                        tr!("可以继续输入搜索。", "You can keep typing."),
+                    )
+                } else if meeting_results.access_denied {
+                    (
+                        tr!("需要日历访问权限", "Allow access to your calendar"),
+                        tr!(
+                            "在系统设置 → 隐私与安全性 → 日历中允许 Winlane，然后按 ⌘R 刷新。",
+                            "In System Settings → Privacy & Security → Calendars, allow Winlane, then press ⌘R to refresh."
+                        ),
+                    )
+                } else if meeting_results.error.is_some() {
+                    (
+                        tr!("无法读取会议", "Could not load meetings"),
+                        tr!(
+                            "按 ⌘R 重试，或按 Esc 关闭。",
+                            "Press ⌘R to retry, or Esc to close."
+                        ),
+                    )
+                } else if meeting_results.items.is_empty() {
+                    (
+                        tr!("没有会议", "No meetings"),
+                        tr!(
+                            "按 > 看后一天，< 看前一天，或按 Esc 关闭。",
+                            "Press > for the next day, < for the previous, or Esc to close."
+                        ),
+                    )
+                } else {
+                    (
+                        tr!("没有匹配的会议", "No matching meetings"),
+                        tr!(
+                            "按标题或日历搜索，> / < 切换日期，Esc 关闭。",
+                            "Search by title or calendar, use > / < to change day, Esc to close."
+                        ),
+                    )
+                }
             } else if in_bluetooth {
                 if bluetooth_loading {
                     (
@@ -674,6 +723,8 @@ impl Delegate {
                 RowContent::Bluetooth(device.clone(), pending)
             } else if let Some(page) = open_url.get(position) {
                 RowContent::OpenUrl(page.clone())
+            } else if let Some(item) = meeting.get(position) {
+                RowContent::Meeting(item.clone())
             } else if let Some(project) = project_matches.get(position) {
                 RowContent::Project(project.clone())
             } else if let Some(&command) = command_matches.get(position) {
@@ -792,6 +843,38 @@ impl Delegate {
                             .as_deref(),
                         );
                         detail
+                    }
+                    RowContent::Meeting(meeting) => {
+                        set_label(&row.app, &meeting.start_label);
+                        let base = match &meeting.link {
+                            Some(link) => format!("{} — {}", meeting.title, link),
+                            None if !meeting.location.is_empty() => {
+                                format!("{} — {}", meeting.title, meeting.location)
+                            }
+                            None => meeting.title.clone(),
+                        };
+                        let mut detail = if meeting.relative.is_empty() {
+                            base
+                        } else {
+                            format!("{} · {}", meeting.relative, base)
+                        };
+                        if !meeting.day.is_empty() {
+                            detail = format!("{} · {}", meeting.day, detail);
+                        }
+                        set_label(&row.title, &detail);
+                        set_label(&row.alias, if meeting.link.is_some() { "↗" } else { "·" });
+                        row.icon.setImage(
+                            NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                                &NSString::from_str(if meeting.link.is_some() {
+                                    "video"
+                                } else {
+                                    "calendar"
+                                }),
+                                Some(&NSString::from_str(tr!("会议", "Meeting"))),
+                            )
+                            .as_deref(),
+                        );
+                        format!("{} · {}", meeting.start_label, detail)
                     }
                     RowContent::Project(project) => {
                         let path = project.path.to_string_lossy();
@@ -1025,6 +1108,23 @@ impl Delegate {
                     )
                 }
             })
+        } else if in_meeting {
+            meeting_results.error.clone().unwrap_or_else(|| {
+                let meeting_day =
+                    crate::macos::platform::meeting::day_heading(state.meeting_day_offset.get());
+                if state.meeting_receiver.borrow().is_some()
+                    || state.scoped_refresh_timer.borrow().is_some()
+                {
+                    trf!("正在读取{}的会议…", "Loading {} meetings…", meeting_day)
+                } else {
+                    trf!(
+                        "{} · {} 个会议 · ↵ 打开链接 · > 后一天 · < 前一天 · Esc 关闭",
+                        "{} · {} meetings · ↵ open link · > next day · < prev day · Esc close",
+                        meeting_day,
+                        meeting.len()
+                    )
+                }
+            })
         } else if in_projects {
             project_cache.error.clone().unwrap_or_else(|| {
                 if state.project_receiver.borrow().is_some()
@@ -1122,7 +1222,7 @@ impl Delegate {
         };
         set_label(&ui.footer, &status);
         ui.footer
-            .setHidden(!show_hints && !has_error && !in_keep_awake);
+            .setHidden(!show_hints && !has_error && !in_keep_awake && !in_meeting);
     }
 
     pub(super) fn create_row(&self, position: usize, density: DisplayDensity) -> RowUi {

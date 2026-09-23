@@ -14,17 +14,7 @@ impl Delegate {
         } else {
             0
         };
-        state.matches.borrow_mut().clear();
-        state.launch_matches.borrow_mut().clear();
-        state.command_matches.borrow_mut().clear();
-        state.snippet_matches.borrow_mut().clear();
-        state.clipboard_matches.borrow_mut().clear();
-        state.quicklink_matches.borrow_mut().clear();
-        state.project_matches.borrow_mut().clear();
-        state.bluetooth_matches.borrow_mut().clear();
-        state.keep_awake_matches.borrow_mut().clear();
-        self.clear_open_url_matches();
-        state.application_icons.borrow_mut().clear();
+        self.clear_result_matches();
         state.emoji_matches.replace(matches);
         state.selected.set(index);
         self.render();

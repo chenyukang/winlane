@@ -46,16 +46,7 @@ impl Delegate {
                 .current_choice(std::time::SystemTime::now());
             choices.iter().position(|choice| *choice == current)
         });
-        state.matches.borrow_mut().clear();
-        state.launch_matches.borrow_mut().clear();
-        state.command_matches.borrow_mut().clear();
-        state.snippet_matches.borrow_mut().clear();
-        state.clipboard_matches.borrow_mut().clear();
-        state.quicklink_matches.borrow_mut().clear();
-        state.project_matches.borrow_mut().clear();
-        state.bluetooth_matches.borrow_mut().clear();
-        self.clear_open_url_matches();
-        state.application_icons.borrow_mut().clear();
+        self.clear_result_matches();
         state.keep_awake_matches.replace(choices);
         state.selected.set(index.unwrap_or(0));
         self.render();

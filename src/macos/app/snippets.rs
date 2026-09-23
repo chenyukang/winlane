@@ -23,13 +23,8 @@ impl Delegate {
         };
         drop(config);
         drop(query);
-        state.matches.borrow_mut().clear();
-        state.launch_matches.borrow_mut().clear();
-        state.command_matches.borrow_mut().clear();
-        state.application_icons.borrow_mut().clear();
+        self.clear_result_matches();
         state.snippet_matches.replace(snippets);
-        state.quicklink_matches.borrow_mut().clear();
-        state.clipboard_matches.borrow_mut().clear();
         state.selected.set(selected);
         self.render();
     }

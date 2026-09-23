@@ -113,6 +113,8 @@ cat > "$bundle/Contents/Info.plist" <<PLIST
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSBluetoothAlwaysUsageDescription</key><string>Winlane lets you connect and disconnect your paired Bluetooth devices.</string>
+    <key>NSCalendarsUsageDescription</key><string>Winlane shows today’s upcoming meetings and their join links from your calendars.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key><string>Winlane shows today’s upcoming meetings and their join links from your calendars.</string>
     <key>NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac</key><true/>
 </dict>
 </plist>

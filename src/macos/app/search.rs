@@ -31,6 +31,11 @@ impl Delegate {
             return;
         }
         self.clear_open_url_matches();
+        if self.searching_meeting() {
+            self.filter_meeting(selected_id);
+            return;
+        }
+        self.clear_meeting_matches();
         if self.searching_projects() {
             self.filter_projects(selected_id);
             return;
@@ -205,6 +210,7 @@ impl Delegate {
                 | SelectedResult::Clipboard(_)
                 | SelectedResult::Project(_)
                 | SelectedResult::OpenUrl(_)
+                | SelectedResult::Meeting(_)
                 | SelectedResult::Emoji(_),
             )
             | None => None,
@@ -313,6 +319,9 @@ impl Delegate {
         if let Some(page) = self.selected_url() {
             return Some(SelectedResult::OpenUrl(page.url));
         }
+        if let Some(meeting) = self.selected_meeting() {
+            return Some(SelectedResult::Meeting(meeting.id));
+        }
         if let Some(project) = self.selected_project() {
             return Some(SelectedResult::Project(project.path));
         }
@@ -336,6 +345,24 @@ impl Delegate {
             })
     }
 
+    // Clear every result collection so one scope's list can replace them all.
+    pub(super) fn clear_result_matches(&self) {
+        let state = self.ivars();
+        state.matches.borrow_mut().clear();
+        state.launch_matches.borrow_mut().clear();
+        state.command_matches.borrow_mut().clear();
+        state.snippet_matches.borrow_mut().clear();
+        state.clipboard_matches.borrow_mut().clear();
+        state.quicklink_matches.borrow_mut().clear();
+        state.project_matches.borrow_mut().clear();
+        state.open_url_matches.borrow_mut().clear();
+        state.meeting_matches.borrow_mut().clear();
+        state.bluetooth_matches.borrow_mut().clear();
+        state.keep_awake_matches.borrow_mut().clear();
+        state.emoji_matches.borrow_mut().clear();
+        state.application_icons.borrow_mut().clear();
+    }
+
     pub(super) fn match_count(&self) -> usize {
         self.ivars().emoji_matches.borrow().len()
             + self.ivars().files.borrow().matches.len()
@@ -349,5 +376,6 @@ impl Delegate {
             + self.ivars().quicklink_matches.borrow().len()
             + self.ivars().project_matches.borrow().len()
             + self.ivars().open_url_matches.borrow().len()
+            + self.ivars().meeting_matches.borrow().len()
     }
 }

@@ -63,6 +63,7 @@ impl PreparedCommand {
             | CommandId::Snippets
             | CommandId::Emoji
             | CommandId::Clipboard
+            | CommandId::Meeting
             | CommandId::Quicklinks => {
                 return Err(tr!(
                     "请在搜索面板中打开此命令。",

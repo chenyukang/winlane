@@ -22,6 +22,7 @@ pub enum CommandId {
     Sleep,
     MissionControl,
     Date,
+    Meeting,
 }
 
 pub struct Command {
@@ -210,6 +211,16 @@ pub const COMMANDS: &[Command] = &[
         symbol: "calendar",
         keywords: &[
             "time", "clock", "now", "datetime", "日期", "时间", "时钟", "现在", "几点",
+        ],
+    },
+    Command {
+        id: CommandId::Meeting,
+        name: "meeting",
+        title_en: "Show today’s upcoming meetings",
+        title_zh: "查看今天的会议安排",
+        symbol: "video",
+        keywords: &[
+            "meetings", "calendar", "event", "schedule", "zoom", "会议", "日程", "日历",
         ],
     },
 ];

@@ -24,6 +24,7 @@ You can also bind a memorable **alias** to a command in **Settings → Aliases**
 | `sleep` | `sleep`, `睡眠`, `休眠` | Request system sleep, not just display sleep. |
 | `mission-control` | `mission control`, `mission`, `调度中心`, `窗口总览` | Open Mission Control to choose a window or desktop. |
 | `date` | `date`, `time`, `clock`, `日期`, `时间` | Show the current date and time and copy it to the clipboard. |
+| `meeting` | `meeting`, `calendar`, `zoom`, `会议`, `日程` | List today’s upcoming calendar meetings and open a meeting link. [Guide](meeting.md). |
 
 `show-menu` reveals the macOS menu bar on the display where you selected the command. It sends a mouse-move event to that display's top edge after dismissing the picker. It leaves the pointer there so the bar remains visible until you move away. It does not open a menu, change system preferences, or restart system processes. Accessibility access is required, and macOS controls the reveal animation.
 

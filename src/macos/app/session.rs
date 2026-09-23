@@ -174,6 +174,10 @@ impl Delegate {
         self.scoped_search() && self.ivars().search_scope.get() == Some(SearchScope::OpenUrl)
     }
 
+    pub(super) fn searching_meeting(&self) -> bool {
+        self.scoped_search() && self.ivars().search_scope.get() == Some(SearchScope::Meeting)
+    }
+
     pub(super) fn searching_projects(&self) -> bool {
         self.scoped_search() && self.ivars().search_scope.get() == Some(SearchScope::Projects)
     }
@@ -197,6 +201,9 @@ impl Delegate {
     pub(super) fn enter_scoped_search(&self, scope: SearchScope) {
         self.prepare_search_field();
         self.ivars().search_scope.set(Some(scope));
+        if scope == SearchScope::Meeting {
+            self.ivars().meeting_day_offset.set(0);
+        }
         self.ivars().query.borrow_mut().clear();
         self.schedule_scoped_refresh();
         self.filter();
@@ -213,7 +220,8 @@ impl Delegate {
         self.cancel_scoped_refresh();
         let needs_refresh = (self.searching_bluetooth() && !self.bluetooth_busy())
             || (self.searching_projects() && self.ivars().project_receiver.borrow().is_none())
-            || (self.searching_open_url() && self.ivars().open_url_receiver.borrow().is_none());
+            || (self.searching_open_url() && self.ivars().open_url_receiver.borrow().is_none())
+            || (self.searching_meeting() && self.ivars().meeting_receiver.borrow().is_none());
         if !needs_refresh {
             return;
         }
@@ -249,6 +257,8 @@ impl Delegate {
             self.refresh_projects(false);
         } else if self.searching_open_url() {
             self.refresh_open_url();
+        } else if self.searching_meeting() {
+            self.refresh_meeting();
         }
         self.render();
     }
@@ -275,6 +285,8 @@ impl Delegate {
             CommandId::Bluetooth
         } else if self.searching_open_url() {
             CommandId::OpenUrl
+        } else if self.searching_meeting() {
+            CommandId::Meeting
         } else if self.searching_projects() {
             CommandId::Projects
         } else if self.searching_quicklinks() {
@@ -329,12 +341,15 @@ impl Delegate {
         let projects = self.searching_projects();
         let open_url = self.searching_open_url();
         let bluetooth = self.searching_bluetooth();
+        let meeting = self.searching_meeting();
         self.ivars().bluetooth_matches.borrow_mut().clear();
         self.ivars().emoji_matches.borrow_mut().clear();
         self.clear_open_url_matches();
+        self.clear_meeting_matches();
+        self.ivars().meeting_day_offset.set(0);
         self.ivars().search_scope.set(None);
         self.ivars().keep_awake_matches.borrow_mut().clear();
-        if clipboard || projects || open_url || bluetooth || files {
+        if clipboard || projects || open_url || bluetooth || files || meeting {
             self.ivars().clipboard_matches.borrow_mut().clear();
             self.ivars().project_matches.borrow_mut().clear();
             for ui in self.panels() {
