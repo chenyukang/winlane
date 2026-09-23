@@ -3,7 +3,8 @@ use core_foundation::bundle::CFBundle;
 use core_foundation::string::{CFString, CFStringRef};
 use core_foundation::url::CFURL;
 use objc2::runtime::Bool;
-use objc2_foundation::MainThreadMarker;
+use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
+use objc2_foundation::{MainThreadMarker, NSDate, NSDateFormatter, NSString};
 use std::ffi::c_void;
 use std::process::{Command, Stdio};
 use winlane::core::commands::CommandId;
@@ -38,6 +39,7 @@ enum Operation {
         _bundle: CFBundle,
         send: DockNotification,
     },
+    Copy(String),
 }
 
 pub struct PreparedCommand {
@@ -150,6 +152,7 @@ impl PreparedCommand {
                     },
                 }
             }
+            CommandId::Date => Operation::Copy(current_datetime()),
         };
         Ok(Self {
             operation,
@@ -199,6 +202,13 @@ impl PreparedCommand {
                     send(message.as_concrete_TypeRef(), 0)
                 })?;
             }
+            Operation::Copy(text) => {
+                let pasteboard = NSPasteboard::generalPasteboard();
+                pasteboard.clearContents();
+                let _ = pasteboard.setString_forType(&NSString::from_str(&text), unsafe {
+                    NSPasteboardTypeString
+                });
+            }
         }
         Ok(())
     }
@@ -225,6 +235,13 @@ fn unavailable(command: CommandId) -> String {
         "“{}” is unavailable on this version of macOS.",
         command.definition().title()
     )
+}
+
+// Local date and time such as 2026-9-23 18:06:55; month and day are not zero-padded.
+pub fn current_datetime() -> String {
+    let formatter = NSDateFormatter::new();
+    formatter.setDateFormat(Some(&NSString::from_str("yyyy-M-d HH:mm:ss")));
+    formatter.stringFromDate(&NSDate::now()).to_string()
 }
 
 fn check_status(command: CommandId, status: i32) -> Result<(), String> {

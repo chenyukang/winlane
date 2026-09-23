@@ -21,6 +21,7 @@ pub enum CommandId {
     ToggleAppearance,
     Sleep,
     MissionControl,
+    Date,
 }
 
 pub struct Command {
@@ -200,6 +201,16 @@ pub const COMMANDS: &[Command] = &[
         title_zh: "打开调度中心",
         symbol: "rectangle.3.group",
         keywords: &["mission control", "调度中心", "窗口总览"],
+    },
+    Command {
+        id: CommandId::Date,
+        name: "date",
+        title_en: "Show current date and time",
+        title_zh: "显示当前日期和时间",
+        symbol: "calendar",
+        keywords: &[
+            "time", "clock", "now", "datetime", "日期", "时间", "时钟", "现在", "几点",
+        ],
     },
 ];
 

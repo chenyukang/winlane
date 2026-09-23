@@ -129,7 +129,31 @@ pub fn verify_prepared_commands(mtm: MainThreadMarker) {
         assert!(error.contains(command.definition().title()));
         assert!(error.contains("ffffffff"));
     }
+    let date = PreparedCommand::prepare(CommandId::Date, None, mtm).unwrap();
+    let Operation::Copy(text) = &date.operation else {
+        panic!("date must prepare a clipboard copy");
+    };
+    assert!(is_datetime(text), "unexpected date format: {text}");
+    // Do not execute; the copy would write to the real clipboard.
     println!(
         "System command checks passed: native interfaces resolved, light/dark toggles dispatched to isolated state, error handling verified; no system appearance, screen lock, sleep or desktop changed."
     );
+}
+
+// Matches a timestamp such as 2026-9-23 18:06:55.
+fn is_datetime(text: &str) -> bool {
+    let Some((date, time)) = text.split_once(' ') else {
+        return false;
+    };
+    let date: Vec<&str> = date.split('-').collect();
+    let time: Vec<&str> = time.split(':').collect();
+    date.len() == 3
+        && time.len() == 3
+        && date[0].len() == 4
+        && date
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+        && time
+            .iter()
+            .all(|part| part.len() == 2 && part.bytes().all(|byte| byte.is_ascii_digit()))
 }

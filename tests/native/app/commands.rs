@@ -125,6 +125,21 @@ pub(super) fn verify_command_search(mtm: MainThreadMarker) {
     assert_eq!(delegate.selected_command(), Some(CommandId::ShowMenu));
     delegate.filter_preserving(delegate.selected_result());
     assert_eq!(delegate.selected_command(), Some(CommandId::ShowMenu));
+    // The date command renders the live date and time instead of a static title.
+    state.query.replace("date".into());
+    delegate.filter();
+    assert_eq!(delegate.selected_command(), Some(CommandId::Date));
+    for ui in delegate.panels() {
+        let rows = ui.rows.borrow();
+        assert_eq!(rows[0].app.stringValue().to_string(), "date");
+        let shown = rows[0].title.stringValue().to_string();
+        assert!(
+            shown.contains('-')
+                && shown.contains(':')
+                && shown != CommandId::Date.definition().title(),
+            "date row should show a timestamp: {shown}"
+        );
+    }
     assert!(delegate.panels().iter().all(|ui| !ui.panel.isVisible()));
 }
 

@@ -15,6 +15,23 @@ fn emoji_command_has_an_explicit_search_entry() {
 }
 
 #[test]
+fn date_command_has_an_explicit_search_entry() {
+    for query in [
+        "date", "DATE", " date ", "time", "clock", "datetime", "now", "日期", "时间", "现在",
+        "几点",
+    ] {
+        assert_eq!(matching_commands(query), [CommandId::Date], "{query}");
+    }
+    for query in ["d", "co", "rust"] {
+        assert!(
+            !matching_commands(query).contains(&CommandId::Date),
+            "{query}"
+        );
+    }
+    assert_eq!(serde_json::to_string(&CommandId::Date).unwrap(), "\"date\"");
+}
+
+#[test]
 fn appearance_toggle_matches_both_modes_and_languages() {
     for query in [
         "toggle-appearance",

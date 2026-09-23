@@ -23,10 +23,13 @@ You can also bind a memorable **alias** to a command in **Settings → Aliases**
 | `toggle-appearance` | `dark mode`, `light mode`, `theme`, `切换外观`, `暗黑模式` | Toggle macOS between light and dark appearance. |
 | `sleep` | `sleep`, `睡眠`, `休眠` | Request system sleep, not just display sleep. |
 | `mission-control` | `mission control`, `mission`, `调度中心`, `窗口总览` | Open Mission Control to choose a window or desktop. |
+| `date` | `date`, `time`, `clock`, `日期`, `时间` | Show the current date and time and copy it to the clipboard. |
 
 `show-menu` reveals the macOS menu bar on the display where you selected the command. It sends a mouse-move event to that display's top edge after dismissing the picker. It leaves the pointer there so the bar remains visible until you move away. It does not open a menu, change system preferences, or restart system processes. Accessibility access is required, and macOS controls the reveal animation.
 
 `mission-control` leaves the macOS overview open for you to select a window or desktop. It does not select a Space or perform any follow-up actions.
+
+`date` shows the current local date and time as a search result, formatted like `2026-9-23 18:06:55` with an unpadded month and day. The row reflects the moment it was last drawn as you type. Selecting it copies the shown timestamp to the clipboard and closes the picker; it does not paste into another app.
 
 `emoji` opens a dedicated chooser with common emoji first. Search English or
 Chinese names and keywords, or paste an emoji to find that exact sequence. Names

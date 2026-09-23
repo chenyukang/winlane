@@ -759,7 +759,12 @@ impl Delegate {
                     }
                     RowContent::Command(id) => {
                         let command = id.definition();
-                        set_label(&row.title, command.title());
+                        let title = if *id == CommandId::Date {
+                            crate::macos::platform::system_commands::current_datetime()
+                        } else {
+                            command.title().to_owned()
+                        };
+                        set_label(&row.title, &title);
                         set_label(&row.app, command.name);
                         set_label(&row.alias, ">_");
                         row.icon.setImage(
@@ -769,12 +774,7 @@ impl Delegate {
                             )
                             .as_deref(),
                         );
-                        format!(
-                            "{} — {} · {}",
-                            command.name,
-                            command.title(),
-                            command.category()
-                        )
+                        format!("{} — {} · {}", command.name, title, command.category())
                     }
                     RowContent::OpenUrl(page) => {
                         let host = page.url.split_once("://").map_or("Chrome", |(_, rest)| {
