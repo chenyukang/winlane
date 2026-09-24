@@ -1,6 +1,6 @@
 # Meetings
 
-Run `meeting` (or search `calendar`, `会议`, `日程`) to list today's upcoming events from the macOS Calendar and open a meeting link. The list opens in its own scoped view, shows cached rows or a loading state immediately, and reads events in the background.
+Run `meeting` (or search `calendar`, `会议`, `日程`) to list today's events from the macOS Calendar and open a meeting link. The list opens in its own scoped view, shows cached rows or a loading state immediately, and reads events in the background.
 
 Each row shows the start time, how soon the meeting starts (for example, **Starting in 20 minutes**), the event title, and the detected join link or location. Press **Enter** to open the selected meeting's link in your default browser. Type to filter by title, calendar, or link. **Command + R** refreshes, and **Esc** or the back button returns to the main search.
 
@@ -8,7 +8,7 @@ Press **`>`** to move to the next day and **`<`** to move to the previous day; t
 
 ## What is shown
 
-- On **Today**, only events that have not yet ended, from now until midnight, sorted by start time. All-day events are skipped.
+- On **Today**, the whole day is shown, sorted by start time, including meetings that already finished. Finished meetings are marked **Completed**, an ongoing one is marked **In progress**, and upcoming ones show a countdown. All-day events are skipped.
 - On **other days**, the whole day is shown, including meetings that already finished. Each finished meeting is marked **Completed**; an ongoing one is marked **In progress**, and upcoming ones show a countdown.
 - Meeting links are taken from the event's URL first, then a recognized provider link in its location or notes. Recognized providers include Zoom, Google Meet, Microsoft Teams, Webex, Whereby, Jitsi, BlueJeans, Chime, GoToMeeting, RingCentral, Tencent Meeting, and Feishu/Lark.
 - Events without a link still appear so you can see the schedule; selecting one reports that it has no link to open.

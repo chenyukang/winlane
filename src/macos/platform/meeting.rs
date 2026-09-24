@@ -34,14 +34,9 @@ pub fn load(day_offset: i32) -> Meetings {
     let calendar = NSCalendar::currentCalendar();
     let day_start = start_of_day(&calendar, &now, day_offset);
     let day_end = start_of_day(&calendar, &now, day_offset + 1);
-    // Today shows only what is still ahead; other days show the whole day.
-    let window_start = if day_offset == 0 {
-        now.clone()
-    } else {
-        day_start
-    };
+    // Show the whole viewed day, including meetings that already finished.
     let predicate = unsafe {
-        store.predicateForEventsWithStartDate_endDate_calendars(&window_start, &day_end, None)
+        store.predicateForEventsWithStartDate_endDate_calendars(&day_start, &day_end, None)
     };
     let events = unsafe { store.eventsMatchingPredicate(&predicate) };
 
@@ -65,10 +60,6 @@ pub fn load(day_offset: i32) -> Meetings {
         }
         let start = unsafe { event.startDate() };
         let end_ts = unsafe { event.endDate() }.timeIntervalSince1970();
-        // Today hides meetings that already ended; other days keep them, marked done.
-        if day_offset == 0 && end_ts <= now_ts {
-            continue;
-        }
         let start_ts = start.timeIntervalSince1970();
         let mut relative = status_label(
             (start_ts - now_ts).round() as i64,
