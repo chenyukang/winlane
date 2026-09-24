@@ -6,6 +6,7 @@ mod commands;
 mod delegate;
 mod emoji;
 mod files;
+mod git_branch;
 mod input;
 mod input_indicator;
 mod input_rules;
@@ -27,6 +28,7 @@ mod session;
 mod settings_focus;
 mod shortcuts;
 mod snippets;
+mod time_indicator;
 mod views;
 mod window_liveness;
 mod windows;
@@ -97,6 +99,7 @@ enum SearchScope {
     Projects,
     OpenUrl,
     Meeting,
+    GitBranch,
     Quicklinks,
     Snippets,
     Emoji,
@@ -147,6 +150,7 @@ enum RowContent {
     Project(winlane::features::projects::Project),
     OpenUrl(winlane::features::open_url::Page),
     Meeting(winlane::features::meeting::Meeting),
+    GitBranch(winlane::features::git_branch::Branch),
     Command(CommandId),
     Snippet(winlane::features::snippets::Snippet),
     Emoji(winlane::features::emoji::Emoji),
@@ -163,6 +167,7 @@ enum SelectedResult {
     Project(std::path::PathBuf),
     OpenUrl(String),
     Meeting(String),
+    GitBranch(String),
     Command(CommandId),
     Snippet(String),
     Emoji(&'static str),
@@ -217,6 +222,7 @@ struct AppState {
     saving_settings: Cell<bool>,
     input_session: RefCell<InputSession>,
     input_indicator: RefCell<Option<crate::macos::ui::input_indicator::Indicator>>,
+    time_indicator: RefCell<Option<crate::macos::ui::time_indicator::Indicator>>,
     input_target: RefCell<Option<Source>>,
     input_layout_source: RefCell<Option<String>>,
     input_start_locales: RefCell<Option<Retained<NSArray<NSString>>>>,
@@ -295,6 +301,9 @@ struct AppState {
     meeting_results: RefCell<winlane::features::meeting::Meetings>,
     meeting_receiver: RefCell<Option<Receiver<winlane::features::meeting::Meetings>>>,
     meeting_day_offset: Cell<i32>,
+    git_branch_matches: RefCell<Vec<winlane::features::git_branch::Branch>>,
+    git_branch_results: RefCell<winlane::features::git_branch::Branches>,
+    git_branch_receiver: RefCell<Option<Receiver<winlane::features::git_branch::Branches>>>,
     project_matches: RefCell<Vec<winlane::features::projects::Project>>,
     project_cache: RefCell<winlane::features::projects::Cache>,
     project_receiver: RefCell<Option<Receiver<projects::ProjectUpdate>>>,

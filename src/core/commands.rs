@@ -23,6 +23,8 @@ pub enum CommandId {
     MissionControl,
     Date,
     Meeting,
+    #[serde(rename = "branch")]
+    GitBranch,
 }
 
 pub struct Command {
@@ -221,6 +223,21 @@ pub const COMMANDS: &[Command] = &[
         symbol: "video",
         keywords: &[
             "meetings", "calendar", "event", "schedule", "zoom", "会议", "日程", "日历",
+        ],
+    },
+    Command {
+        id: CommandId::GitBranch,
+        name: "branch",
+        title_en: "Switch the current VS Code project branch",
+        title_zh: "切换当前 VS Code 项目的分支",
+        symbol: "arrow.triangle.branch",
+        keywords: &[
+            "git",
+            "branch",
+            "git branch",
+            "checkout",
+            "分支",
+            "切换分支",
         ],
     },
 ];

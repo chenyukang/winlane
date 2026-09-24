@@ -3,6 +3,7 @@ pub mod bluetooth;
 pub mod clipboard;
 pub mod emoji;
 pub mod files;
+pub mod git_branch;
 pub mod input_indicator;
 pub mod input_rules;
 pub mod keep_awake;

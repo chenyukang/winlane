@@ -10,6 +10,14 @@ pub(crate) fn verify(target: &AnyObject, mtm: MainThreadMarker) {
         .input_indicator
         .colors
         .insert("example.unavailable".into(), Color(30, 40, 50));
+    config.time_indicator.enabled = true;
+    config.time_indicator.position = Position::BottomLeft;
+    config.time_indicator.size = Size::Large;
+    config.time_indicator.display_target =
+        winlane::features::input_indicator::DisplayTarget::MainDisplay;
+    config.time_indicator.color = Color(15, 25, 35);
+    config.time_indicator.offset_x = -12;
+    config.time_indicator.offset_y = 9;
     settings.fill(&config);
     let page = settings.input();
     for control in [
@@ -25,13 +33,26 @@ pub(crate) fn verify(target: &AnyObject, mtm: MainThreadMarker) {
         &*page.shape_height,
         &*page.offset_x,
         &*page.offset_y,
+        &*page.time_enabled as &NSControl,
+        &*page.time_position,
+        &*page.time_size,
+        &*page.time_displays,
+        &*page.time_color,
+        &*page.time_offset_x,
+        &*page.time_offset_y,
     ] {
         assert_eq!(control.action(), Some(sel!(settingsChanged:)));
     }
     assert_eq!(page.source.action(), Some(sel!(indicatorSourceSelected:)));
     assert_eq!(page.reset.action(), Some(sel!(resetIndicatorColor:)));
+    assert_eq!(
+        page.time_reset.action(),
+        Some(sel!(resetTimeIndicatorColor:))
+    );
     assert_eq!(page.color.colorWellStyle(), NSColorWellStyle::Minimal);
     assert!(!page.color.supportsAlpha());
+    assert_eq!(page.time_color.colorWellStyle(), NSColorWellStyle::Minimal);
+    assert!(!page.time_color.supportsAlpha());
     let sources = vec![
         InputSource {
             id: "example.english".into(),
@@ -67,9 +88,22 @@ pub(crate) fn verify(target: &AnyObject, mtm: MainThreadMarker) {
     assert_eq!(indicator.position, Position::TopRight);
     assert_eq!(indicator.size, Size::Large);
     assert_eq!(indicator.bar_length_percent, 50);
-    assert!(!indicator.all_displays);
+    assert_eq!(
+        indicator.display_target,
+        winlane::features::input_indicator::DisplayTarget::MainDisplay
+    );
     assert_eq!(indicator.colors["example.english"], Color(123, 50, 200));
     assert_eq!(indicator.colors["example.unavailable"], Color(30, 40, 50));
+    assert!(config.time_indicator.enabled);
+    assert_eq!(config.time_indicator.position, Position::BottomLeft);
+    assert_eq!(config.time_indicator.size, Size::Large);
+    assert_eq!(
+        config.time_indicator.display_target,
+        winlane::features::input_indicator::DisplayTarget::MainDisplay
+    );
+    assert_eq!(config.time_indicator.color, Color(15, 25, 35));
+    assert_eq!(config.time_indicator.offset_x, -12);
+    assert_eq!(config.time_indicator.offset_y, 9);
     settings.sync_saved_config(&config);
     assert!(
         !page.length.isEnabled(),
@@ -147,6 +181,33 @@ pub(crate) fn verify(target: &AnyObject, mtm: MainThreadMarker) {
     page.style.selectItemAtIndex(0);
     settings.sync_saved_config(&settings.candidate().unwrap());
     assert!(page.length.isEnabled());
+
+    page.time_enabled.setState(NSControlStateValueOff);
+    let disabled_time = settings.candidate().unwrap();
+    assert!(!disabled_time.time_indicator.enabled);
+    settings.sync_saved_config(&disabled_time);
+    assert!(!page.time_position.isEnabled());
+    assert!(!page.time_color.isEnabled());
+    page.time_enabled.setState(NSControlStateValueOn);
+    page.time_position.selectItemAtIndex(4);
+    page.time_size.selectItemAtIndex(0);
+    page.time_displays.selectItemAtIndex(0);
+    page.time_color.setColor(&native_color(Color(55, 160, 210)));
+    page.time_offset_x.setStringValue(&NSString::from_str("14"));
+    page.time_offset_y.setStringValue(&NSString::from_str("-8"));
+    let time_config = settings.candidate().unwrap();
+    assert!(time_config.time_indicator.enabled);
+    assert_eq!(time_config.time_indicator.position, Position::TopLeft);
+    assert_eq!(time_config.time_indicator.size, Size::Small);
+    assert_eq!(
+        time_config.time_indicator.display_target,
+        winlane::features::input_indicator::DisplayTarget::AllDisplays
+    );
+    assert_eq!(time_config.time_indicator.color, Color(55, 160, 210));
+    assert_eq!(time_config.time_indicator.offset_x, 14);
+    assert_eq!(time_config.time_indicator.offset_y, -8);
+    settings.sync_saved_config(&time_config);
+    let config = time_config;
 
     let restored = SettingsWindow::new(target, mtm);
     restored.fill(&Config::from_json(&config.to_json().unwrap()).unwrap());

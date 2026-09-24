@@ -333,6 +333,7 @@ impl Delegate {
         }
         self.configure_clipboard_timer();
         self.update_input_indicator();
+        self.update_time_indicator();
         self.update_aliases(&self.ivars().windows.borrow());
         if language_changed {
             self.rebuild_localized_ui();

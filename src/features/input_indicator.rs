@@ -85,6 +85,37 @@ impl Size {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DisplayTarget {
+    #[default]
+    AllDisplays,
+    MainDisplay,
+    NonMainDisplay,
+}
+
+impl DisplayTarget {
+    pub const ALL: [Self; 3] = [Self::AllDisplays, Self::MainDisplay, Self::NonMainDisplay];
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum DisplayTargetRepr {
+    Bool(bool),
+    Target(DisplayTarget),
+}
+
+fn deserialize_display_target<'de, D>(deserializer: D) -> Result<DisplayTarget, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(match DisplayTargetRepr::deserialize(deserializer)? {
+        DisplayTargetRepr::Bool(true) => DisplayTarget::AllDisplays,
+        DisplayTargetRepr::Bool(false) => DisplayTarget::MainDisplay,
+        DisplayTargetRepr::Target(target) => target,
+    })
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Color(pub u8, pub u8, pub u8);
 
@@ -104,6 +135,10 @@ impl Color {
             "ko" => Self(20, 150, 95),
             _ => Self(15, 145, 160),
         }
+    }
+
+    pub fn time() -> Self {
+        Self(45, 130, 235)
     }
 
     pub fn dark_text(self) -> bool {
@@ -127,7 +162,12 @@ pub struct Settings {
     pub position: Position,
     pub size: Size,
     pub bar_length_percent: u8,
-    pub all_displays: bool,
+    #[serde(
+        alias = "all_displays",
+        default,
+        deserialize_with = "deserialize_display_target"
+    )]
+    pub display_target: DisplayTarget,
     pub colors: BTreeMap<String, Color>,
     pub hidden_sources: BTreeSet<String>,
     pub shape_width: u16,
@@ -144,7 +184,7 @@ impl Default for Settings {
             position: Position::Top,
             size: Size::Medium,
             bar_length_percent: 100,
-            all_displays: true,
+            display_target: DisplayTarget::AllDisplays,
             colors: BTreeMap::new(),
             hidden_sources: BTreeSet::new(),
             shape_width: 20,
@@ -255,6 +295,78 @@ impl Settings {
                 .clamp(screen.y, screen.y + (screen.height - h).max(0.0)),
             width: w,
             height: h,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TimeSettings {
+    pub enabled: bool,
+    pub position: Position,
+    pub size: Size,
+    #[serde(
+        alias = "all_displays",
+        default,
+        deserialize_with = "deserialize_display_target"
+    )]
+    pub display_target: DisplayTarget,
+    pub color: Color,
+    pub offset_x: i32,
+    pub offset_y: i32,
+}
+
+impl Default for TimeSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            position: Position::TopRight,
+            size: Size::Medium,
+            display_target: DisplayTarget::AllDisplays,
+            color: Color::time(),
+            offset_x: 0,
+            offset_y: 0,
+        }
+    }
+}
+
+impl TimeSettings {
+    pub fn validate(&self) -> Result<(), String> {
+        if !(-10000..=10000).contains(&self.offset_x) || !(-10000..=10000).contains(&self.offset_y)
+        {
+            return Err(tr!(
+                "X、Y 偏移请输入 -10000–10000 pt 的整数。",
+                "Enter whole-number X and Y offsets from -10000 to 10000 pt."
+            )
+            .into());
+        }
+        Ok(())
+    }
+
+    pub fn frame(&self, screen: Rect, safe_area: Rect, text_width: f64) -> Rect {
+        let area = safe_area;
+        let margin = 10.0_f64.min(area.width / 4.0).min(area.height / 4.0);
+        let outer_width = (area.width - 2.0 * margin).max(1.0);
+        let outer_height = (area.height - 2.0 * margin).max(1.0);
+        let width = (text_width + 24.0).clamp(64.0, 280.0).min(outer_width);
+        let height = self.size.badge_height().min(outer_height);
+        let x = match self.position {
+            Position::Left | Position::TopLeft | Position::BottomLeft => 0.0,
+            Position::Right | Position::TopRight | Position::BottomRight => outer_width - width,
+            _ => (outer_width - width) / 2.0,
+        };
+        let y = match self.position {
+            Position::Top | Position::TopLeft | Position::TopRight => outer_height - height,
+            Position::Bottom | Position::BottomLeft | Position::BottomRight => 0.0,
+            _ => (outer_height - height) / 2.0,
+        };
+        Rect {
+            x: (area.x + margin + x + f64::from(self.offset_x))
+                .clamp(screen.x, screen.x + (screen.width - width).max(0.0)),
+            y: (area.y + margin + y - f64::from(self.offset_y))
+                .clamp(screen.y, screen.y + (screen.height - height).max(0.0)),
+            width,
+            height,
         }
     }
 }

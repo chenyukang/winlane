@@ -23,7 +23,16 @@ impl Delegate {
             .input_indicator
             .borrow()
             .as_ref()
-            .map_or_else(Vec::new, |input| input.frames());
+            .map_or_else(Vec::new, |input| input.frames())
+            .into_iter()
+            .chain(
+                self.ivars()
+                    .time_indicator
+                    .borrow()
+                    .as_ref()
+                    .map_or_else(Vec::new, |time| time.frames()),
+            )
+            .collect::<Vec<_>>();
         let screens = crate::macos::ui::input_indicator::screens(self.mtm());
         let indicator = indicator.get_or_insert_with(Default::default);
         indicator.configure(status, &screens, &occupied, self.mtm());

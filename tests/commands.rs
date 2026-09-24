@@ -32,6 +32,32 @@ fn date_command_has_an_explicit_search_entry() {
 }
 
 #[test]
+fn branch_command_has_an_explicit_search_entry() {
+    for query in [
+        "branch",
+        "BRANCH",
+        " branch ",
+        "git",
+        "git branch",
+        "checkout",
+        "分支",
+        "切换分支",
+    ] {
+        assert_eq!(matching_commands(query), [CommandId::GitBranch], "{query}");
+    }
+    for query in ["b", "g", "switch branch extra", "commit", "vscode"] {
+        assert!(
+            !matching_commands(query).contains(&CommandId::GitBranch),
+            "{query}"
+        );
+    }
+    assert_eq!(
+        serde_json::to_string(&CommandId::GitBranch).unwrap(),
+        "\"branch\""
+    );
+}
+
+#[test]
 fn appearance_toggle_matches_both_modes_and_languages() {
     for query in [
         "toggle-appearance",

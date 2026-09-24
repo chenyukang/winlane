@@ -7,6 +7,7 @@ pub(super) fn command_scope(command: CommandId) -> Option<SearchScope> {
         CommandId::Bluetooth => Some(SearchScope::Bluetooth),
         CommandId::OpenUrl => Some(SearchScope::OpenUrl),
         CommandId::Meeting => Some(SearchScope::Meeting),
+        CommandId::GitBranch => Some(SearchScope::GitBranch),
         CommandId::Projects => Some(SearchScope::Projects),
         CommandId::Quicklinks => Some(SearchScope::Quicklinks),
         CommandId::Snippets => Some(SearchScope::Snippets),

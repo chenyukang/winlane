@@ -19,7 +19,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
             [
                 "Shortcuts",
                 "Appearance",
-                "Input Indicator",
+                "Indicator",
                 "Windows",
                 "General",
                 "Aliases",
@@ -38,7 +38,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
             [
                 "快捷键",
                 "外观",
-                "输入法指示器",
+                "指示器",
                 "窗口列表",
                 "常规",
                 "Alias 规则",

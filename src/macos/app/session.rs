@@ -178,6 +178,10 @@ impl Delegate {
         self.scoped_search() && self.ivars().search_scope.get() == Some(SearchScope::Meeting)
     }
 
+    pub(super) fn searching_git_branch(&self) -> bool {
+        self.scoped_search() && self.ivars().search_scope.get() == Some(SearchScope::GitBranch)
+    }
+
     pub(super) fn searching_projects(&self) -> bool {
         self.scoped_search() && self.ivars().search_scope.get() == Some(SearchScope::Projects)
     }
@@ -221,7 +225,8 @@ impl Delegate {
         let needs_refresh = (self.searching_bluetooth() && !self.bluetooth_busy())
             || (self.searching_projects() && self.ivars().project_receiver.borrow().is_none())
             || (self.searching_open_url() && self.ivars().open_url_receiver.borrow().is_none())
-            || (self.searching_meeting() && self.ivars().meeting_receiver.borrow().is_none());
+            || (self.searching_meeting() && self.ivars().meeting_receiver.borrow().is_none())
+            || (self.searching_git_branch() && self.ivars().git_branch_receiver.borrow().is_none());
         if !needs_refresh {
             return;
         }
@@ -259,6 +264,8 @@ impl Delegate {
             self.refresh_open_url();
         } else if self.searching_meeting() {
             self.refresh_meeting();
+        } else if self.searching_git_branch() {
+            self.refresh_git_branch();
         }
         self.render();
     }
@@ -287,6 +294,8 @@ impl Delegate {
             CommandId::OpenUrl
         } else if self.searching_meeting() {
             CommandId::Meeting
+        } else if self.searching_git_branch() {
+            CommandId::GitBranch
         } else if self.searching_projects() {
             CommandId::Projects
         } else if self.searching_quicklinks() {
@@ -342,14 +351,16 @@ impl Delegate {
         let open_url = self.searching_open_url();
         let bluetooth = self.searching_bluetooth();
         let meeting = self.searching_meeting();
+        let git_branch = self.searching_git_branch();
         self.ivars().bluetooth_matches.borrow_mut().clear();
         self.ivars().emoji_matches.borrow_mut().clear();
         self.clear_open_url_matches();
         self.clear_meeting_matches();
         self.ivars().meeting_day_offset.set(0);
+        self.clear_git_branch_matches();
         self.ivars().search_scope.set(None);
         self.ivars().keep_awake_matches.borrow_mut().clear();
-        if clipboard || projects || open_url || bluetooth || files || meeting {
+        if clipboard || projects || open_url || bluetooth || files || meeting || git_branch {
             self.ivars().clipboard_matches.borrow_mut().clear();
             self.ivars().project_matches.borrow_mut().clear();
             for ui in self.panels() {

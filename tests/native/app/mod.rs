@@ -3,6 +3,7 @@ mod clipboard;
 mod commands;
 pub(crate) mod diagnostics;
 mod emoji;
+mod git_branch;
 mod input_rules;
 mod input_start;
 mod keep_awake;
@@ -64,6 +65,7 @@ pub fn verify_hidden_panels() {
     crate::macos::ui::material::tests::verify_panel_materials(mtm);
     crate::macos::ui::input::tests::verify_shared_input(mtm);
     crate::macos::ui::input_indicator::tests::verify(mtm);
+    crate::macos::ui::time_indicator::tests::verify(mtm);
     crate::macos::ui::keep_awake_indicator::tests::verify(mtm);
     verify_main_wake(mtm);
     verify_switch_alias_prefix(mtm);
@@ -92,6 +94,7 @@ pub fn verify_hidden_panels() {
     verify_catalog_refresh(mtm);
     verify_launch_search(mtm);
     verify_command_search(mtm);
+    git_branch::verify_git_branch_search(mtm);
     keep_awake::verify(mtm);
     keep_awake::verify_reopened_selection(mtm);
     crate::macos::platform::keep_awake::tests::verify();

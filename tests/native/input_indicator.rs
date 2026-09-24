@@ -1,5 +1,5 @@
 use super::*;
-use winlane::features::input_indicator::{Position, Size};
+use winlane::features::input_indicator::{DisplayTarget, Position, Size};
 
 pub(crate) fn verify(mtm: MainThreadMarker) {
     let source_before =
@@ -150,11 +150,11 @@ pub(crate) fn verify(mtm: MainThreadMarker) {
         );
         assert_eq!(surface.background.cornerRadius(), 15.5);
     }
-    settings.all_displays = false;
+    settings.display_target = DisplayTarget::MainDisplay;
     indicator.configure(&settings, Some(&english), &displays, mtm);
     assert_eq!(indicator.surfaces.len(), 1);
     assert_eq!(indicator.surfaces[0].id, 1);
-    settings.all_displays = true;
+    settings.display_target = DisplayTarget::AllDisplays;
     indicator.configure(&settings, Some(&english), &displays[1..], mtm);
     assert_eq!(indicator.surfaces.len(), 1);
     assert_eq!(indicator.surfaces[0].id, 2);

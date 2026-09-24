@@ -33,6 +33,10 @@ impl Delegate {
             self.submit_meeting();
             return;
         }
+        if self.searching_git_branch() {
+            self.submit_git_branch();
+            return;
+        }
         if self.searching_projects() {
             self.open_selected_project();
             return;

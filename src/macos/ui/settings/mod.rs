@@ -134,6 +134,12 @@ impl SettingsWindow {
         }
     }
 
+    pub fn reset_time_indicator_color(&self) {
+        if let Some(page) = self.input.get() {
+            page.reset_time_color();
+        }
+    }
+
     fn host(&self, index: isize) -> Retained<NSView> {
         self.tabs
             .tabViewItemAtIndex(index)
@@ -429,8 +435,8 @@ impl SettingsWindow {
                 "Make search and switch panels feel right for you."
             ),
             2 => tr!(
-                "配置屏幕常驻输入法指示器的外观和位置。",
-                "Choose the appearance and position of the input source indicator."
+                "配置输入法和时间指示器的外观与位置。",
+                "Choose the appearance and position of the input source and time indicators."
             ),
             3 => tr!(
                 "控制候选窗口、排列顺序和面板响应速度。",

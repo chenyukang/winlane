@@ -154,6 +154,13 @@ impl PreparedCommand {
                 }
             }
             CommandId::Date => Operation::Copy(current_datetime()),
+            CommandId::GitBranch => {
+                return Err(tr!(
+                    "分支切换由当前项目窗口处理。",
+                    "Branch switching is handled by the current project window."
+                )
+                .into());
+            }
         };
         Ok(Self {
             operation,

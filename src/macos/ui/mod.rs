@@ -11,3 +11,4 @@ mod rule_list;
 pub(crate) mod settings;
 pub(crate) mod shortcut;
 pub(crate) mod snippets;
+pub(crate) mod time_indicator;

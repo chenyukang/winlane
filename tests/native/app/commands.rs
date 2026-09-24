@@ -125,6 +125,10 @@ pub(super) fn verify_command_search(mtm: MainThreadMarker) {
     assert_eq!(delegate.selected_command(), Some(CommandId::ShowMenu));
     delegate.filter_preserving(delegate.selected_result());
     assert_eq!(delegate.selected_command(), Some(CommandId::ShowMenu));
+    state.query.replace("branch".into());
+    delegate.filter();
+    assert_eq!(delegate.match_count(), 1);
+    assert_eq!(delegate.selected_command(), Some(CommandId::GitBranch));
     // The date command renders the live date and time instead of a static title.
     state.query.replace("date".into());
     delegate.filter();
@@ -153,6 +157,7 @@ fn verify_command_shortcut_scope(mtm: MainThreadMarker) {
         (CommandId::OpenUrl, SearchScope::OpenUrl),
         (CommandId::Bluetooth, SearchScope::Bluetooth),
         (CommandId::Projects, SearchScope::Projects),
+        (CommandId::GitBranch, SearchScope::GitBranch),
         (CommandId::Quicklinks, SearchScope::Quicklinks),
         (CommandId::Snippets, SearchScope::Snippets),
         (CommandId::Emoji, SearchScope::Emoji),

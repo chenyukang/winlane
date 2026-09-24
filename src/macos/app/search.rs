@@ -36,6 +36,11 @@ impl Delegate {
             return;
         }
         self.clear_meeting_matches();
+        if self.searching_git_branch() {
+            self.filter_git_branch(selected_id);
+            return;
+        }
+        self.clear_git_branch_matches();
         if self.searching_projects() {
             self.filter_projects(selected_id);
             return;
@@ -211,6 +216,7 @@ impl Delegate {
                 | SelectedResult::Project(_)
                 | SelectedResult::OpenUrl(_)
                 | SelectedResult::Meeting(_)
+                | SelectedResult::GitBranch(_)
                 | SelectedResult::Emoji(_),
             )
             | None => None,
@@ -322,6 +328,9 @@ impl Delegate {
         if let Some(meeting) = self.selected_meeting() {
             return Some(SelectedResult::Meeting(meeting.id));
         }
+        if let Some(branch) = self.selected_git_branch() {
+            return Some(SelectedResult::GitBranch(branch.name));
+        }
         if let Some(project) = self.selected_project() {
             return Some(SelectedResult::Project(project.path));
         }
@@ -357,6 +366,7 @@ impl Delegate {
         state.project_matches.borrow_mut().clear();
         state.open_url_matches.borrow_mut().clear();
         state.meeting_matches.borrow_mut().clear();
+        state.git_branch_matches.borrow_mut().clear();
         state.bluetooth_matches.borrow_mut().clear();
         state.keep_awake_matches.borrow_mut().clear();
         state.emoji_matches.borrow_mut().clear();
@@ -377,5 +387,6 @@ impl Delegate {
             + self.ivars().project_matches.borrow().len()
             + self.ivars().open_url_matches.borrow().len()
             + self.ivars().meeting_matches.borrow().len()
+            + self.ivars().git_branch_matches.borrow().len()
     }
 }

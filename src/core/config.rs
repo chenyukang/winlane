@@ -343,6 +343,7 @@ pub struct Config {
     pub switch_delay_ms: u16,
     pub language: Language,
     pub input_indicator: crate::features::input_indicator::Settings,
+    pub time_indicator: crate::features::input_indicator::TimeSettings,
     pub input_rules: crate::features::input_rules::Settings,
     pub scrolling: crate::features::scrolling::Settings,
     pub files: crate::features::files::Settings,
@@ -372,6 +373,7 @@ impl Default for Config {
             switch_delay_ms: 100,
             language: Language::System,
             input_indicator: Default::default(),
+            time_indicator: Default::default(),
             input_rules: Default::default(),
             scrolling: Default::default(),
             files: Default::default(),
@@ -402,6 +404,7 @@ impl Config {
         self.clipboard.validate()?;
         self.files.validate()?;
         self.input_indicator.validate()?;
+        self.time_indicator.validate()?;
         self.input_rules.validate()?;
         self.scrolling.validate()?;
         if self.alias_rules.len() > 64 {

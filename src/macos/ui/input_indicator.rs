@@ -4,7 +4,7 @@ use objc2::{MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::*;
 use objc2_foundation::{MainThreadMarker, NSNumber, NSObjectProtocol, NSRect, NSString, ns_string};
 use winlane::core::displays::Rect;
-use winlane::features::input_indicator::{Color, InputSource, Settings, Style};
+use winlane::features::input_indicator::{Color, DisplayTarget, InputSource, Settings, Style};
 
 define_class!(
     // SAFETY: Display-only panels are owned and updated exclusively on the main thread.
@@ -101,6 +101,40 @@ pub(crate) fn native_color(color: Color) -> Retained<NSColor> {
     )
 }
 
+fn screen_id(screen: &NSScreen) -> Option<u32> {
+    screen
+        .deviceDescription()
+        .objectForKey(ns_string!("NSScreenNumber"))
+        .and_then(|value| value.downcast::<NSNumber>().ok())
+        .map(|value| value.unsignedIntValue())
+}
+
+fn main_screen_id(mtm: MainThreadMarker) -> Option<u32> {
+    NSScreen::mainScreen(mtm).and_then(|screen| screen_id(&screen))
+}
+
+pub(crate) fn display_screens(
+    target: DisplayTarget,
+    screens: &[Screen],
+    mtm: MainThreadMarker,
+) -> Vec<&Screen> {
+    let main_screen = main_screen_id(mtm)
+        .filter(|id| screens.iter().any(|screen| screen.id == *id))
+        .or_else(|| screens.first().map(|screen| screen.id));
+    match target {
+        DisplayTarget::AllDisplays => screens.iter().collect(),
+        DisplayTarget::MainDisplay => screens
+            .iter()
+            .find(|screen| Some(screen.id) == main_screen)
+            .into_iter()
+            .collect(),
+        DisplayTarget::NonMainDisplay => screens
+            .iter()
+            .filter(|screen| Some(screen.id) != main_screen)
+            .collect(),
+    }
+}
+
 struct Surface {
     id: u32,
     panel: Retained<IndicatorPanel>,
@@ -195,12 +229,10 @@ impl Indicator {
             self.surfaces.clear();
             return;
         };
+        let screens = display_screens(settings.display_target, screens, mtm);
         let mut ids = Vec::new();
         let mut frames = Vec::new();
-        for screen in screens
-            .iter()
-            .take(if settings.all_displays { usize::MAX } else { 1 })
-        {
+        for screen in screens {
             if frames.contains(&screen.frame)
                 || screen.frame.width <= 0.0
                 || screen.frame.height <= 0.0

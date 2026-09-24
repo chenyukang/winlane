@@ -13,6 +13,7 @@ You can also bind a memorable **alias** to a command in **Settings → Aliases**
 | `files` | `files`, `finder`, `documents`, `文件` | Search filenames, browse a path, open, preview, or reveal in Finder. [Guide](files.md). |
 | `open-url` | `open-url`, `history`, `浏览记录`, `最近网址` | Browse Chrome history, open a typed URL, or search Google in Chrome. |
 | `projects` | `projects`, `vscode`, `vs code`, `最近项目`, `项目` | Browse recent local VS Code folders and workspaces, then open a project. |
+| `branch` | `branch`, `git branch`, `checkout`, `分支`, `切换分支` | Switch the current VS Code project branch. [Guide](git-branch.md). |
 | `clipboard` | `clipboard`, `clip`, `剪贴板` | Open a dedicated list to search and paste clipboard history. |
 | `quicklink` | `quicklinks`, `links`, `快捷链接` | Browse and open saved links. |
 | `snippet` | `snippet`, `snippets`, `片段` | Open a dedicated list to browse and search saved snippets. |
@@ -61,5 +62,7 @@ The picker closes before a system command executes. These commands do not change
 Result rendering, keyboard selection, mouse selection, and selection preservation are shared across commands. Adding a new command does not require a new result layout.
 
 This is a compiled-in extension point. Winlane does not load third-party code or interpret search text as shell commands.
+
+`branch` looks up the current VS Code project and lists its local git branches. Enter switches to the selected branch with `git switch`; if another worktree already has that branch checked out, Git reports the conflict. Winlane does not auto-commit dirty changes.
 
 `keep-awake` opens a duration picker for preventing idle sleep, with an optional always-on display. See [Keep Awake](keep-awake.md).

@@ -61,7 +61,7 @@ impl SettingsWindow {
         view.addSubview(&tabs);
         settings_tab(&tabs, tr!("快捷键", "Shortcuts"), mtm);
         settings_tab(&tabs, tr!("外观", "Appearance"), mtm);
-        settings_tab(&tabs, tr!("输入法指示器", "Input Indicator"), mtm);
+        settings_tab(&tabs, tr!("指示器", "Indicator"), mtm);
         settings_tab(&tabs, tr!("窗口列表", "Windows"), mtm);
         settings_tab(&tabs, tr!("常规", "General"), mtm);
         settings_tab(&tabs, tr!("Alias 规则", "Aliases"), mtm);

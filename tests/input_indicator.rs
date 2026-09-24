@@ -1,5 +1,7 @@
 use winlane::core::{config::Config, displays::Rect};
-use winlane::features::input_indicator::{Color, InputSource, Position, Settings, Size, Style};
+use winlane::features::input_indicator::{
+    Color, DisplayTarget, InputSource, Position, Settings, Size, Style,
+};
 
 #[test]
 fn old_preferences_keep_indicator_disabled_and_rules_round_trip() {
@@ -242,4 +244,43 @@ fn offsets_move_right_and_down_and_clamp_to_each_display() {
             }
         }
     }
+}
+
+#[test]
+fn time_indicator_round_trips_and_places_badges() {
+    let mut config = Config::default();
+    assert!(!config.time_indicator.enabled);
+    config.time_indicator.enabled = true;
+    config.time_indicator.position = Position::TopRight;
+    config.time_indicator.size = Size::Large;
+    config.time_indicator.display_target = DisplayTarget::MainDisplay;
+    config.time_indicator.color = Color(12, 34, 56);
+    config.time_indicator.offset_x = -33;
+    config.time_indicator.offset_y = 21;
+    assert_eq!(
+        Config::from_json(&config.to_json().unwrap()).unwrap(),
+        config
+    );
+    config.time_indicator.offset_x = -10001;
+    assert!(config.validate().is_err());
+    config.time_indicator.offset_x = -33;
+    config.time_indicator.offset_y = 10001;
+    assert!(config.validate().is_err());
+    let screen = Rect {
+        x: -1920.0,
+        y: -300.0,
+        width: 1920.0,
+        height: 1080.0,
+    };
+    let safe = Rect {
+        x: -1920.0,
+        y: -250.0,
+        width: 1920.0,
+        height: 990.0,
+    };
+    let frame = config.time_indicator.frame(screen, safe, 88.0);
+    assert!(frame.x >= screen.x && frame.y >= screen.y);
+    assert!(frame.x + frame.width <= screen.x + screen.width);
+    assert!(frame.y + frame.height <= screen.y + screen.height);
+    assert_eq!(frame.height, config.time_indicator.size.badge_height());
 }

@@ -50,6 +50,9 @@ impl Delegate {
         let meeting = state.meeting_matches.borrow();
         let meeting_results = state.meeting_results.borrow();
         let in_meeting = self.searching_meeting();
+        let git_branch = state.git_branch_matches.borrow();
+        let git_branch_results = state.git_branch_results.borrow();
+        let in_git_branch = self.searching_git_branch();
         let url_input_target = if in_open_url && open_url.is_empty() {
             winlane::features::open_url::input_target(&state.query.borrow())
         } else {
@@ -92,6 +95,7 @@ impl Delegate {
             + project_matches.len()
             + open_url.len()
             + meeting.len()
+            + git_branch.len()
             + bluetooth_matches.len()
             + keep_awake_matches.len()
             + files.matches.len();
@@ -246,6 +250,8 @@ impl Delegate {
             tr!("‹ 网址", "‹ URLs")
         } else if in_meeting {
             tr!("‹ 会议", "‹ Meetings")
+        } else if in_git_branch {
+            tr!("‹ 分支", "‹ Branches")
         } else if in_projects {
             tr!("‹ 项目", "‹ Projects")
         } else if self.searching_quicklinks() {
@@ -548,6 +554,33 @@ impl Delegate {
                         ),
                     )
                 }
+            } else if in_git_branch {
+                if state.git_branch_receiver.borrow().is_some()
+                    || state.scoped_refresh_timer.borrow().is_some()
+                {
+                    (
+                        tr!("正在读取分支…", "Loading branches…"),
+                        tr!("可以继续输入搜索。", "You can keep typing."),
+                    )
+                } else if let Some(error) = git_branch_results.error.as_deref() {
+                    (tr!("无法切换分支", "Cannot switch branches"), error)
+                } else if git_branch_results.items.is_empty() {
+                    (
+                        tr!("没有本地分支", "No local branches"),
+                        tr!(
+                            "当前仓库没有其他分支，或按 Esc 关闭。",
+                            "This repository has no other branches. Press Esc to close."
+                        ),
+                    )
+                } else {
+                    (
+                        tr!("没有匹配的分支", "No matching branches"),
+                        tr!(
+                            "按分支名称搜索，或按 Esc 关闭。",
+                            "Search by branch name, or press Esc to close."
+                        ),
+                    )
+                }
             } else if in_bluetooth {
                 if bluetooth_loading {
                     (
@@ -725,6 +758,8 @@ impl Delegate {
                 RowContent::OpenUrl(page.clone())
             } else if let Some(item) = meeting.get(position) {
                 RowContent::Meeting(item.clone())
+            } else if let Some(branch) = git_branch.get(position) {
+                RowContent::GitBranch(branch.clone())
             } else if let Some(project) = project_matches.get(position) {
                 RowContent::Project(project.clone())
             } else if let Some(&command) = command_matches.get(position) {
@@ -875,6 +910,29 @@ impl Delegate {
                             .as_deref(),
                         );
                         format!("{} · {}", meeting.start_label, detail)
+                    }
+                    RowContent::GitBranch(branch) => {
+                        set_label(&row.app, &branch.detail);
+                        let title = if branch.elsewhere {
+                            trf!("{} · 其他工作树", "{} · other worktree", branch.name)
+                        } else {
+                            branch.name.clone()
+                        };
+                        set_label(&row.title, &title);
+                        let alias = if branch.current {
+                            format!("{}*", branch.alias)
+                        } else {
+                            branch.alias.clone()
+                        };
+                        set_label(&row.alias, &alias);
+                        row.icon.setImage(
+                            NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                                &NSString::from_str("arrow.triangle.branch"),
+                                Some(&NSString::from_str(tr!("分支", "Branch"))),
+                            )
+                            .as_deref(),
+                        );
+                        format!("{} · {}", branch.name, branch.detail)
                     }
                     RowContent::Project(project) => {
                         let path = project.path.to_string_lossy();
@@ -1122,6 +1180,23 @@ impl Delegate {
                         "{} · {} meetings · ↵ open link · > next day · < prev day · Esc close",
                         meeting_day,
                         meeting.len()
+                    )
+                }
+            })
+        } else if in_git_branch {
+            git_branch_results.error.clone().unwrap_or_else(|| {
+                if (state.git_branch_receiver.borrow().is_some()
+                    || state.scoped_refresh_timer.borrow().is_some())
+                    && git_branch.is_empty()
+                {
+                    tr!("正在读取分支…", "Loading branches…").into()
+                } else {
+                    let repo = git_branch_results.repo_label().unwrap_or_default();
+                    trf!(
+                        "{} · {} 个分支 · ↵ 切换 · ⌘R 刷新 · Esc 关闭",
+                        "{} · {} branches · ↵ switch · ⌘R refresh · Esc close",
+                        repo,
+                        git_branch.len()
                     )
                 }
             })
