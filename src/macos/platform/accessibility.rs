@@ -28,10 +28,10 @@ type AxError = i32;
 type AxRef = CFTypeRef;
 
 const AX_SUCCESS: AxError = 0;
-const AX_INVALID_UI_ELEMENT: AxError = -25202;
 const AX_ATTRIBUTE_UNSUPPORTED: AxError = -25205;
 const AX_ACTION_UNSUPPORTED: AxError = -25206;
 const AX_NOT_IMPLEMENTED: AxError = -25208;
+const AX_INVALID_UI_ELEMENT: AxError = -25202;
 
 #[link(name = "ApplicationServices", kind = "framework")]
 unsafe extern "C" {
