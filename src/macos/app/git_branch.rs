@@ -2,52 +2,37 @@ use super::*;
 
 impl Delegate {
     pub(super) fn refresh_git_branch(&self) {
-        let state = self.ivars();
         if !self.searching_git_branch() {
             return;
         }
         self.cancel_scoped_refresh();
-        if state.git_branch_receiver.borrow().is_some() {
-            return;
-        }
-        let (tx, rx) = mpsc::channel();
-        state.git_branch_receiver.replace(Some(rx));
+        let state = self.ivars();
         let pid = state.previous_pid.get();
         let window = state.previous_window.get();
         let projects = state.project_cache.borrow().projects.clone();
-        let wake = state.wake.get().unwrap().handle();
-        std::thread::spawn(move || {
-            let _ = tx.send(crate::macos::platform::git_branch::load(
-                pid, window, projects,
-            ));
-            wake.signal();
-        });
+        state
+            .git_branch_async
+            .start(&state.wake.get().unwrap().handle(), move || {
+                crate::macos::platform::git_branch::load(pid, window, projects)
+            });
     }
 
     pub(super) fn poll_git_branch(&self) {
-        let result = self
-            .ivars()
-            .git_branch_receiver
-            .borrow()
-            .as_ref()
-            .map(|rx| rx.try_recv());
-        let branches = match result {
-            Some(Ok(branches)) => branches,
-            Some(Err(TryRecvError::Disconnected)) => winlane::features::git_branch::Branches {
-                items: Vec::new(),
-                error: Some(
-                    tr!(
-                        "分支读取中断，按 ⌘R 重试。",
-                        "Branch loading stopped. Press ⌘R to retry."
-                    )
-                    .into(),
-                ),
-                repo: None,
-            },
-            _ => return,
+        let Some(result) = self.ivars().git_branch_async.poll() else {
+            return;
         };
+        let branches = result.unwrap_or_else(|()| winlane::features::git_branch::Branches {
+            items: Vec::new(),
+            error: Some(
+                tr!(
+                    "分支读取中断，按 ⌘R 重试。",
+                    "Branch loading stopped. Press ⌘R to retry."
+                )
+                .into(),
+            ),
+            repo: None,
+        });
         let state = self.ivars();
-        state.git_branch_receiver.take();
         let selected = self.selected_result();
         state.git_branch_results.replace(branches);
         if self.searching_git_branch() {
@@ -57,17 +42,7 @@ impl Delegate {
 
     pub(super) fn clear_git_branch_matches(&self) {
         self.ivars().git_branch_matches.borrow_mut().clear();
-        for ui in self.panels() {
-            for row in ui.rows.borrow_mut().iter_mut() {
-                if matches!(row.content, Some(RowContent::GitBranch(_))) {
-                    row.content = None;
-                    row.app.setStringValue(&NSString::from_str(""));
-                    row.title.setStringValue(&NSString::from_str(""));
-                    row.button.setToolTip(None);
-                    row.button.setAccessibilityLabel(None);
-                }
-            }
-        }
+        self.clear_scope_rows(|content| matches!(content, RowContent::GitBranch(_)));
     }
 
     pub(super) fn filter_git_branch(&self, selected: Option<SelectedResult>) {

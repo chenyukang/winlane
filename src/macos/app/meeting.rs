@@ -2,22 +2,17 @@ use super::*;
 
 impl Delegate {
     pub(super) fn refresh_meeting(&self) {
-        let state = self.ivars();
         if !self.searching_meeting() {
             return;
         }
         self.cancel_scoped_refresh();
-        if state.meeting_receiver.borrow().is_some() {
-            return;
-        }
-        let (tx, rx) = mpsc::channel();
-        state.meeting_receiver.replace(Some(rx));
+        let state = self.ivars();
         let offset = state.meeting_day_offset.get();
-        let wake = state.wake.get().unwrap().handle();
-        std::thread::spawn(move || {
-            let _ = tx.send(crate::macos::platform::meeting::load(offset));
-            wake.signal();
-        });
+        state
+            .meeting_async
+            .start(&state.wake.get().unwrap().handle(), move || {
+                crate::macos::platform::meeting::load(offset)
+            });
     }
 
     // Move to another day; > goes forward, < goes back.
@@ -25,7 +20,7 @@ impl Delegate {
         let offset = self.ivars().meeting_day_offset.get().saturating_add(delta);
         self.ivars().meeting_day_offset.set(offset);
         // Abandon the in-flight load for the old day and show a loading state.
-        self.ivars().meeting_receiver.take();
+        self.ivars().meeting_async.cancel();
         self.ivars().meeting_results.borrow_mut().items.clear();
         self.refresh_meeting();
         self.filter_preserving(None);
@@ -59,29 +54,21 @@ impl Delegate {
     }
 
     pub(super) fn poll_meeting(&self) {
-        let result = self
-            .ivars()
-            .meeting_receiver
-            .borrow()
-            .as_ref()
-            .map(|rx| rx.try_recv());
-        let meetings = match result {
-            Some(Ok(meetings)) => meetings,
-            Some(Err(TryRecvError::Disconnected)) => winlane::features::meeting::Meetings {
-                items: Vec::new(),
-                error: Some(
-                    tr!(
-                        "会议读取中断，按 ⌘R 重试。",
-                        "Meeting loading stopped. Press ⌘R to retry."
-                    )
-                    .into(),
-                ),
-                access_denied: false,
-            },
-            _ => return,
+        let Some(result) = self.ivars().meeting_async.poll() else {
+            return;
         };
+        let meetings = result.unwrap_or_else(|()| winlane::features::meeting::Meetings {
+            items: Vec::new(),
+            error: Some(
+                tr!(
+                    "会议读取中断，按 ⌘R 重试。",
+                    "Meeting loading stopped. Press ⌘R to retry."
+                )
+                .into(),
+            ),
+            access_denied: false,
+        });
         let state = self.ivars();
-        state.meeting_receiver.take();
         let selected = self.selected_result();
         {
             let mut cached = state.meeting_results.borrow_mut();
@@ -99,17 +86,7 @@ impl Delegate {
 
     pub(super) fn clear_meeting_matches(&self) {
         self.ivars().meeting_matches.borrow_mut().clear();
-        for ui in self.panels() {
-            for row in ui.rows.borrow_mut().iter_mut() {
-                if matches!(row.content, Some(RowContent::Meeting(_))) {
-                    row.content = None;
-                    row.app.setStringValue(&NSString::from_str(""));
-                    row.title.setStringValue(&NSString::from_str(""));
-                    row.button.setToolTip(None);
-                    row.button.setAccessibilityLabel(None);
-                }
-            }
-        }
+        self.clear_scope_rows(|content| matches!(content, RowContent::Meeting(_)));
     }
 
     pub(super) fn filter_meeting(&self, selected: Option<SelectedResult>) {

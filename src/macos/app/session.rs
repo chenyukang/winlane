@@ -228,8 +228,8 @@ impl Delegate {
         let needs_refresh = (self.searching_bluetooth() && !self.bluetooth_busy())
             || (self.searching_projects() && self.ivars().project_receiver.borrow().is_none())
             || (self.searching_open_url() && self.ivars().open_url_receiver.borrow().is_none())
-            || (self.searching_meeting() && self.ivars().meeting_receiver.borrow().is_none())
-            || (self.searching_git_branch() && self.ivars().git_branch_receiver.borrow().is_none());
+            || (self.searching_meeting() && !self.ivars().meeting_async.is_loading())
+            || (self.searching_git_branch() && !self.ivars().git_branch_async.is_loading());
         if !needs_refresh {
             return;
         }

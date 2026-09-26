@@ -22,6 +22,7 @@ mod projects;
 mod quicklinks;
 mod recency;
 mod render;
+mod scoped;
 mod scrolling;
 mod search;
 mod session;
@@ -39,6 +40,7 @@ use delegate::Delegate;
 #[cfg(test)]
 use input::insert_keyboard_layout_text;
 use layout::{alias_badge_size, label, panel_height, rect, row_height, set_label};
+use scoped::ScopedAsync;
 use settings_focus::PendingSettingsFocus;
 use views::{ListView, PanelContentView, RowAppearance, SearchPanel, WindowRowButton};
 
@@ -310,11 +312,11 @@ struct AppState {
     open_url_deep_loaded: Cell<bool>,
     meeting_matches: RefCell<Vec<winlane::features::meeting::Meeting>>,
     meeting_results: RefCell<winlane::features::meeting::Meetings>,
-    meeting_receiver: RefCell<Option<Receiver<winlane::features::meeting::Meetings>>>,
+    meeting_async: ScopedAsync<winlane::features::meeting::Meetings>,
     meeting_day_offset: Cell<i32>,
     git_branch_matches: RefCell<Vec<winlane::features::git_branch::Branch>>,
     git_branch_results: RefCell<winlane::features::git_branch::Branches>,
-    git_branch_receiver: RefCell<Option<Receiver<winlane::features::git_branch::Branches>>>,
+    git_branch_async: ScopedAsync<winlane::features::git_branch::Branches>,
     project_matches: RefCell<Vec<winlane::features::projects::Project>>,
     project_cache: RefCell<winlane::features::projects::Cache>,
     project_receiver: RefCell<Option<Receiver<projects::ProjectUpdate>>>,

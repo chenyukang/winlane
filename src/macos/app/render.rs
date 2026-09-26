@@ -523,8 +523,7 @@ impl Delegate {
                     )
                 }
             } else if in_meeting {
-                if state.meeting_receiver.borrow().is_some()
-                    || state.scoped_refresh_timer.borrow().is_some()
+                if state.meeting_async.is_loading() || state.scoped_refresh_timer.borrow().is_some()
                 {
                     (
                         tr!("正在读取会议…", "Loading meetings…"),
@@ -564,7 +563,7 @@ impl Delegate {
                     )
                 }
             } else if in_git_branch {
-                if state.git_branch_receiver.borrow().is_some()
+                if state.git_branch_async.is_loading()
                     || state.scoped_refresh_timer.borrow().is_some()
                 {
                     (
@@ -1181,8 +1180,7 @@ impl Delegate {
             meeting_results.error.clone().unwrap_or_else(|| {
                 let meeting_day =
                     crate::macos::platform::meeting::day_heading(state.meeting_day_offset.get());
-                if state.meeting_receiver.borrow().is_some()
-                    || state.scoped_refresh_timer.borrow().is_some()
+                if state.meeting_async.is_loading() || state.scoped_refresh_timer.borrow().is_some()
                 {
                     trf!("正在读取{}的会议…", "Loading {} meetings…", meeting_day)
                 } else {
@@ -1196,7 +1194,7 @@ impl Delegate {
             })
         } else if in_git_branch {
             git_branch_results.error.clone().unwrap_or_else(|| {
-                if (state.git_branch_receiver.borrow().is_some()
+                if (state.git_branch_async.is_loading()
                     || state.scoped_refresh_timer.borrow().is_some())
                     && git_branch.is_empty()
                 {
