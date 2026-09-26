@@ -1,7 +1,9 @@
 use crate::macos::platform::logging::{Level, record};
 use crate::macos::platform::window_server::Inventory;
 use core_foundation::array::CFArray;
-use core_foundation::base::{CFGetTypeID, CFHash, CFType, CFTypeID, CFTypeRef, TCFType};
+use core_foundation::base::{
+    CFGetTypeID, CFHash, CFRelease, CFRetain, CFType, CFTypeID, CFTypeRef, TCFType,
+};
 use core_foundation::boolean::CFBoolean;
 use core_foundation::data::{CFData, CFDataRef};
 use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
@@ -15,7 +17,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use winlane::core::discovery::{
     AX_NO_VALUE, FocusRead, READ_TIMEOUT, read_focused_window, read_published_windows,
-    read_with_retry, remote_window_token, switchable_window,
+    read_with_retry, remote_window_token, switchable_window_role,
 };
 use winlane::core::search::WindowInfo;
 use winlane::{tr, trf};
@@ -103,6 +105,35 @@ struct RemoteScan {
 fn remote_scans() -> &'static Mutex<HashMap<i32, RemoteScan>> {
     static SCANS: OnceLock<Mutex<HashMap<i32, RemoteScan>>> = OnceLock::new();
     SCANS.get_or_init(Mutex::default)
+}
+
+/// Last-known data of a window that disappeared from accessibility queries.
+struct RememberedWindow {
+    /// Winlane's stable window id, computed from the AX element identity.
+    id: u64,
+    title: String,
+    minimized: bool,
+    /// Retained `AXUIElement` address; the element usually keeps answering
+    /// reads and actions after the window is minimized.
+    element: usize,
+}
+
+impl Drop for RememberedWindow {
+    fn drop(&mut self) {
+        // SAFETY: `element` was retained when this entry was created.
+        unsafe { CFRelease(self.element as CFTypeRef) };
+    }
+}
+
+/// Windows seen in earlier scans, keyed by (pid, WindowServer id). Minimized
+/// windows become invisible to cross-process accessibility queries while
+/// their WindowServer surfaces stay in the inventory, so their element handle
+/// and last-known data are kept here to stay selectable. Kept apart from
+/// `RemoteScan` because the discovery scan must not hold a global lock.
+fn remembered_windows() -> &'static Mutex<HashMap<i32, HashMap<u32, RememberedWindow>>> {
+    static REMEMBERED: OnceLock<Mutex<HashMap<i32, HashMap<u32, RememberedWindow>>>> =
+        OnceLock::new();
+    REMEMBERED.get_or_init(Mutex::default)
 }
 
 #[derive(PartialEq)]
@@ -265,10 +296,18 @@ impl Element {
     fn is_window(&self) -> bool {
         let role = self.string("AXRole");
         let subrole = self.string("AXSubrole");
+        // Minimized AppKit windows report `AXDialog`; only accept that
+        // subrole when the window is actually minimized.
+        let minimized =
+            if role.as_deref() == Some("AXWindow") && subrole.as_deref() == Some("AXDialog") {
+                self.boolean("AXMinimized")
+            } else {
+                None
+            };
         record(Level::Debug, "accessibility", "candidate", || {
             format!("role={role:?} subrole={subrole:?}")
         });
-        switchable_window(role.as_deref(), subrole.as_deref())
+        switchable_window_role(role.as_deref(), subrole.as_deref(), minimized)
     }
 
     fn set_boolean_if_supported(&self, name: &str, value: bool) -> Result<bool, AxError> {
@@ -339,6 +378,15 @@ fn complete_windows(published: Vec<Element>, pid: i32, inventory: &Inventory) ->
         .collect();
     let mut missing = inventory.normal.get(&pid).cloned().unwrap_or_default();
     missing.retain(|id| !seen.contains(id));
+    // Windows that left the WindowServer inventory have closed; drop their
+    // remembered data. This must run even when the scan below is skipped.
+    {
+        let mut remembered = remembered_windows().lock().unwrap();
+        if let Some(entries) = remembered.get_mut(&pid) {
+            let alive = inventory.normal.get(&pid);
+            entries.retain(|server_id, _| alive.is_some_and(|ids| ids.contains(server_id)));
+        }
+    }
     if missing.is_empty() || WindowApi::get().is_none() {
         return windows;
     }
@@ -409,6 +457,39 @@ fn complete_windows(published: Vec<Element>, pid: i32, inventory: &Inventory) ->
     windows
 }
 
+fn remember_window(pid: i32, server_id: u32, info: &WindowInfo, element: &Element) {
+    // SAFETY: the raw element address stays valid because its reference count
+    // is bumped here; `RememberedWindow` releases it on drop.
+    let raw = element.0.as_CFTypeRef();
+    unsafe { CFRetain(raw) };
+    let entry = RememberedWindow {
+        id: info.id,
+        title: info.title.clone(),
+        minimized: info.minimized,
+        element: raw as usize,
+    };
+    remembered_windows()
+        .lock()
+        .unwrap()
+        .entry(pid)
+        .or_default()
+        .insert(server_id, entry);
+}
+
+/// A previously seen window that is still alive but currently invisible to
+/// accessibility queries, typically because it was minimized. The retained
+/// element handle keeps answering reads and actions after minimizing.
+fn remembered_element(pid: i32, id: u64) -> Option<Element> {
+    let remembered = remembered_windows().lock().unwrap();
+    let scan = remembered.get(&pid)?;
+    let entry = scan.values().find(|entry| entry.id == id)?;
+    // SAFETY: the address was retained when the window was remembered; the
+    // returned wrapper takes its own reference.
+    Some(Element(unsafe {
+        CFType::wrap_under_get_rule(entry.element as CFTypeRef)
+    }))
+}
+
 fn scan_application(
     pid: i32,
     app: &str,
@@ -419,21 +500,59 @@ fn scan_application(
     record(Level::Debug, "accessibility", "scan", || {
         format!("app_pid={pid} accepted={}", windows.len())
     });
-    Ok(windows
+    let mut results: Vec<(WindowInfo, Option<u32>)> = windows
         .into_iter()
         .map(|window| {
-            (
-                WindowInfo {
-                    id: window.id(pid),
+            let server_id = window.server_id();
+            let info = WindowInfo {
+                id: window.id(pid),
+                pid,
+                app: app.into(),
+                title: window.string("AXTitle").unwrap_or_default(),
+                minimized: window.boolean("AXMinimized").unwrap_or(false),
+            };
+            if let Some(server_id) = server_id {
+                remember_window(pid, server_id, &info, &window);
+            }
+            (info, server_id)
+        })
+        .collect();
+    // Minimized windows become invisible to cross-process accessibility
+    // queries while their WindowServer surfaces stay in the inventory. Keep
+    // windows we saw earlier in the list so they remain visible and selectable.
+    let mut unresolved = inventory.normal.get(&pid).cloned().unwrap_or_default();
+    unresolved.retain(|server_id| !results.iter().any(|(_, found)| found == &Some(*server_id)));
+    if !unresolved.is_empty() {
+        let mut remembered = remembered_windows().lock().unwrap();
+        if let Some(entries) = remembered.get_mut(&pid) {
+            for server_id in &unresolved {
+                let Some(entry) = entries.get_mut(server_id) else {
+                    continue;
+                };
+                let element_addr = entry.element;
+                let fallback_title = entry.title.clone();
+                let fallback_minimized = entry.minimized;
+                let remembered_id = entry.id;
+                // SAFETY: the address was retained when the window was
+                // remembered; the wrapper takes its own reference.
+                let element =
+                    Element(unsafe { CFType::wrap_under_get_rule(element_addr as CFTypeRef) });
+                let title = element.string("AXTitle").unwrap_or(fallback_title);
+                let minimized = element.boolean("AXMinimized").unwrap_or(fallback_minimized);
+                let info = WindowInfo {
+                    id: remembered_id,
                     pid,
                     app: app.into(),
-                    title: window.string("AXTitle").unwrap_or_default(),
-                    minimized: window.boolean("AXMinimized").unwrap_or(false),
-                },
-                window.server_id(),
-            )
-        })
-        .collect())
+                    title,
+                    minimized,
+                };
+                entry.title = info.title.clone();
+                entry.minimized = info.minimized;
+                results.push((info, Some(*server_id)));
+            }
+        }
+    }
+    Ok(results)
 }
 
 pub fn focused_window(pid: i32, policy: FocusRead) -> Option<u64> {
@@ -487,6 +606,10 @@ pub fn list_windows(apps: &[(i32, String)]) -> (Vec<WindowInfo>, HashMap<u64, u3
         .lock()
         .unwrap()
         .retain(|pid, _| apps.iter().any(|(app_pid, _)| app_pid == pid));
+    remembered_windows()
+        .lock()
+        .unwrap()
+        .retain(|pid, _| apps.iter().any(|(app_pid, _)| app_pid == pid));
     // Each worker owns its AX handles; a slow app does not delay every other app.
     let records: Vec<_> = std::thread::scope(|scope| {
         let workers = apps
@@ -532,18 +655,26 @@ fn find_window(pid: i32, id: u64) -> Result<Element, String> {
     ))?;
     let windows = all_windows(&application, pid, &Inventory::read());
     let mut matches = windows.iter().filter(|window| window.id(pid) == id);
-    let window = matches.next().ok_or(tr!(
+    if let Some(window) = matches.next() {
+        if matches.any(|other| other.0 != window.0) {
+            return Err(tr!(
+                "无法确定目标窗口，请刷新窗口列表。",
+                "Could not identify the window. Refresh the window list."
+            )
+            .to_owned());
+        }
+        return Ok(Element(window.0.clone()));
+    }
+    // Minimized windows are invisible to fresh accessibility queries; fall
+    // back to the retained element from when the window was last visible.
+    if let Some(window) = remembered_element(pid, id) {
+        return Ok(window);
+    }
+    Err(tr!(
         "窗口已关闭，请刷新窗口列表。",
         "The window has closed. Refresh the window list."
-    ))?;
-    if matches.any(|other| other.0 != window.0) {
-        return Err(tr!(
-            "无法确定目标窗口，请刷新窗口列表。",
-            "Could not identify the window. Refresh the window list."
-        )
-        .to_owned());
-    }
-    Ok(Element(window.0.clone()))
+    )
+    .to_owned())
 }
 
 pub fn set_minimized(pid: i32, id: u64, minimized: bool) -> Result<(), String> {

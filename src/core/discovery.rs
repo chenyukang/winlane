@@ -87,3 +87,18 @@ pub fn remote_window_token(pid: i32, element_id: u64) -> [u8; 20] {
 pub fn switchable_window(role: Option<&str>, subrole: Option<&str>) -> bool {
     role == Some("AXWindow") && subrole == Some("AXStandardWindow")
 }
+
+/// A window worth listing in the switcher, including minimized windows.
+///
+/// macOS hides minimized windows from cross-process window-list queries and
+/// reports AppKit ones as dialogs (`AXDialog`) when they are reachable at
+/// all. A minimized `AXDialog` is still a switchable window: selecting it
+/// restores and focuses it. Non-minimized dialogs stay excluded.
+pub fn switchable_window_role(
+    role: Option<&str>,
+    subrole: Option<&str>,
+    minimized: Option<bool>,
+) -> bool {
+    switchable_window(role, subrole)
+        || (role == Some("AXWindow") && subrole == Some("AXDialog") && minimized == Some(true))
+}

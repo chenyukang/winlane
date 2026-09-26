@@ -2,7 +2,7 @@ use winlane::core::config::{Config, visible_matches};
 use winlane::core::discovery::{
     AX_CANNOT_COMPLETE, AX_NO_VALUE, FocusRead, finish_application_scan, merge_window_sources,
     normal_window_surface, read_focused_window, read_published_windows, read_with_retry,
-    remote_window_token, switchable_window,
+    remote_window_token, switchable_window, switchable_window_role,
 };
 use winlane::core::search::WindowInfo;
 
@@ -238,6 +238,40 @@ fn only_standard_windows_are_candidates() {
         assert!(
             !switchable_window(role, Some("AXStandardWindow")),
             "{role:?}"
+        );
+    }
+}
+
+#[test]
+fn minimized_dialogs_are_candidates() {
+    // Minimized AppKit windows are reported as `AXDialog`; only accept that
+    // subrole when the window is actually minimized.
+    assert!(switchable_window_role(
+        Some("AXWindow"),
+        Some("AXDialog"),
+        Some(true)
+    ));
+    assert!(switchable_window_role(
+        Some("AXWindow"),
+        Some("AXStandardWindow"),
+        Some(true)
+    ));
+    // Non-minimized dialogs and unknown minimized states stay excluded.
+    for minimized in [None, Some(false)] {
+        assert!(
+            !switchable_window_role(Some("AXWindow"), Some("AXDialog"), minimized),
+            "{minimized:?}"
+        );
+    }
+    for (role, subrole) in [
+        (None, Some("AXDialog")),
+        (Some("AXSheet"), Some("AXDialog")),
+        (Some("AXWindow"), Some("AXSystemDialog")),
+        (Some("AXWindow"), None),
+    ] {
+        assert!(
+            !switchable_window_role(role, subrole, Some(true)),
+            "{role:?} {subrole:?}"
         );
     }
 }

@@ -23,6 +23,9 @@ pub(crate) fn inspect_window_discovery(bundle: &str) {
     if std::env::var_os("WINLANE_SCAN_TRANSITIONS").is_some() {
         for (pid, _) in &apps {
             crate::macos::platform::accessibility::tests::inspect_published_window_changes(*pid);
+            crate::macos::platform::accessibility::tests::inspect_remembered_windows_stay_listed(
+                *pid,
+            );
         }
         return;
     }

@@ -55,3 +55,53 @@ pub fn inspect_published_window_changes(pid: i32) {
     println!("Empty published list, closed window removal, and inventory addition passed.");
     remote_scans().lock().unwrap().remove(&pid);
 }
+
+/// Windows seen in an earlier scan must stay listed while their WindowServer
+/// surfaces are still alive, even when accessibility queries stop publishing
+/// them (as happens after minimizing).
+pub fn inspect_remembered_windows_stay_listed(pid: i32) {
+    let mut inventory = Inventory::read();
+    let application = Element::application(pid).unwrap();
+    let live = all_windows(&application, pid, &inventory);
+    let element = Element(live.first().expect("requires a live window").0.clone());
+    let info = WindowInfo {
+        id: element.id(pid),
+        pid,
+        app: "Winlane".into(),
+        title: "remembered".into(),
+        minimized: true,
+    };
+    remote_scans().lock().unwrap().remove(&pid);
+
+    // Simulate a minimized window: its server id stays in the inventory but
+    // no accessibility query publishes an element for it.
+    let fake_server_id = u32::MAX;
+    inventory
+        .normal
+        .entry(pid)
+        .or_default()
+        .insert(fake_server_id);
+    remember_window(pid, fake_server_id, &info, &element);
+
+    let scanned = scan_application(pid, "Winlane", &inventory).unwrap();
+    let remembered = scanned
+        .iter()
+        .find(|(window, _)| window.id == info.id)
+        .expect("remembered window must stay listed");
+    assert_eq!(remembered.1, Some(fake_server_id));
+
+    // Once the surface leaves the inventory the window is gone for good.
+    inventory
+        .normal
+        .get_mut(&pid)
+        .unwrap()
+        .remove(&fake_server_id);
+    let scanned = scan_application(pid, "Winlane", &inventory).unwrap();
+    assert!(
+        scanned.iter().all(|(window, _)| window.id != info.id),
+        "closed windows must leave the list"
+    );
+    remote_scans().lock().unwrap().remove(&pid);
+    remembered_windows().lock().unwrap().remove(&pid);
+    println!("Remembered windows stay listed while alive and leave when closed.");
+}
