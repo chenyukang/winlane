@@ -1,6 +1,6 @@
 # Developing Winlane
 
-Winlane uses Rust for window discovery, search, aliases, and shortcut routing, with native AppKit controls for its interface. Build and run it on macOS with a Rust toolchain and Xcode Command Line Tools installed.
+Winlane uses Rust for window discovery, search, aliases, and shortcut routing, with native AppKit controls for its interface. Build and run it on macOS with a Rust toolchain and Xcode Command Line Tools installed. The repository pins the compiler in `rust-toolchain.toml`, so rustup installs and uses the same version as CI automatically.
 
 See [code structure](architecture.md) for module responsibilities and the files to change for each feature.
 

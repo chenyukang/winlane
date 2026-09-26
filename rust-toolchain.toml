@@ -1,0 +1,5 @@
+# Keep local builds on the same compiler as CI and the release workflow.
+# Update this together with the `toolchain:` inputs in .github/workflows/.
+[toolchain]
+channel = "1.98.0"
+components = ["rustfmt", "clippy"]
