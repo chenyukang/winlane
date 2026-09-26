@@ -796,6 +796,48 @@ fn ax_failure(code: AxError) -> Option<String> {
     })
 }
 
+/// Which candidate the remembered window matches, when exactly one does. The
+/// AX identity (`id`) can change while the WindowServer surface stays the
+/// same, so the WindowServer identity is accepted too. Two different windows
+/// matching is an error: the caller must never focus a different window than
+/// the one selected.
+fn matching_window(
+    candidates: &[(u64, Option<u32>)],
+    id: u64,
+    server_id: Option<u32>,
+) -> Result<usize, WindowMatch> {
+    let mut found: Option<usize> = None;
+    for (index, candidate) in candidates.iter().enumerate() {
+        if !matches_identity(candidate, id, server_id) {
+            continue;
+        }
+        match found {
+            None => found = Some(index),
+            // The same window can be published twice; only a different window
+            // makes the choice ambiguous.
+            Some(first) if candidates[first] == *candidate => {}
+            Some(_) => return Err(WindowMatch::Ambiguous),
+        }
+    }
+    found.ok_or(WindowMatch::Missing)
+}
+
+/// Whether one scanned window is the remembered one. The AX identity is the
+/// usual match; the WindowServer identity survives an app rebuilding its
+/// accessibility objects.
+fn matches_identity(candidate: &(u64, Option<u32>), id: u64, server_id: Option<u32>) -> bool {
+    candidate.0 == id || server_id.is_some_and(|server_id| candidate.1 == Some(server_id))
+}
+
+/// Why a remembered window could not be pinned down to one live window.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum WindowMatch {
+    /// No live window matches; the window has closed.
+    Missing,
+    /// Several different live windows match; focusing one could be wrong.
+    Ambiguous,
+}
+
 /// Drop an invalid retained handle before scanning again. The AX identity may
 /// change while the WindowServer surface stays the same, so match the fresh
 /// element by its WindowServer ID as well as by the old AX-derived ID.
@@ -823,22 +865,23 @@ fn find_fresh_window(pid: i32, id: u64) -> Result<Element, String> {
         "The app has quit. Refresh the window list."
     ))?;
     let windows = all_windows(&application, pid, &Inventory::read(), true);
-    let mut matches = windows.into_iter().filter(|window| {
-        window.id(pid) == id
-            || server_id.is_some_and(|server_id| window.server_id() == Some(server_id))
-    });
-    let window = matches.next().ok_or(tr!(
-        "窗口已关闭，请刷新窗口列表。",
-        "The window has closed. Refresh the window list."
-    ))?;
-    if matches.any(|other| other.0 != window.0) {
-        return Err(tr!(
+    let candidates: Vec<(u64, Option<u32>)> = windows
+        .iter()
+        .map(|window| (window.id(pid), window.server_id()))
+        .collect();
+    let index = matching_window(&candidates, id, server_id).map_err(|outcome| match outcome {
+        WindowMatch::Missing => tr!(
+            "窗口已关闭，请刷新窗口列表。",
+            "The window has closed. Refresh the window list."
+        )
+        .to_owned(),
+        WindowMatch::Ambiguous => tr!(
             "无法确定目标窗口，请刷新窗口列表。",
             "Could not identify the window. Refresh the window list."
         )
-        .to_owned());
-    }
-    Ok(window)
+        .to_owned(),
+    })?;
+    Ok(Element(windows[index].0.clone()))
 }
 
 pub fn set_minimized(pid: i32, id: u64, minimized: bool) -> Result<(), String> {

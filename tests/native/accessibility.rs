@@ -133,3 +133,39 @@ pub fn inspect_remembered_windows_stay_listed(pid: i32) {
     remembered_windows().lock().unwrap().remove(&pid);
     println!("Remembered windows stay listed while alive and leave when closed.");
 }
+
+/// An app can rebuild its accessibility objects, so the remembered AX identity
+/// stops matching while the window itself is still there. Finding that window
+/// again must accept the WindowServer identity, must never focus a different
+/// window, and must report a closed window instead of guessing.
+pub fn verify_fresh_window_lookup() {
+    // The AX identity still matches.
+    assert_eq!(
+        matching_window(&[(7, Some(1)), (9, Some(2))], 9, Some(2)),
+        Ok(1)
+    );
+    // Only the WindowServer identity survives the rebuild.
+    assert_eq!(
+        matching_window(&[(7, Some(1)), (8, Some(2))], 9, Some(2)),
+        Ok(1)
+    );
+    // A window published twice is still one window.
+    assert_eq!(
+        matching_window(&[(9, Some(2)), (9, Some(2))], 9, Some(2)),
+        Ok(0)
+    );
+    // Two different windows matching must not focus either one.
+    assert_eq!(
+        matching_window(&[(8, Some(2)), (9, Some(3))], 9, Some(2)),
+        Err(WindowMatch::Ambiguous)
+    );
+    // The window closed, and an unknown handle has no identity to fall back on.
+    assert_eq!(
+        matching_window(&[(7, Some(1))], 9, Some(2)),
+        Err(WindowMatch::Missing)
+    );
+    assert_eq!(matching_window(&[], 9, None), Err(WindowMatch::Missing));
+    println!(
+        "Fresh-window lookup passed: WindowServer-id recovery plus duplicate, ambiguous and closed windows."
+    );
+}
