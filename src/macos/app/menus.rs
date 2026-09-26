@@ -129,16 +129,6 @@ impl Delegate {
                 "",
             ),
             (tr!("设置…", "Settings…"), sel!(showSettings:), ","),
-            (
-                tr!("刷新窗口列表", "Refresh Window List"),
-                sel!(refreshWindows:),
-                "",
-            ),
-            (
-                tr!("辅助功能设置…", "Accessibility Settings…"),
-                sel!(openPermissions:),
-                "",
-            ),
             (tr!("反馈…", "Feedback…"), sel!(openFeedback:), ""),
             (
                 tr!("检查更新…", "Check for Updates…"),
