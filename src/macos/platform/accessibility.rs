@@ -31,6 +31,7 @@ const AX_SUCCESS: AxError = 0;
 const AX_ATTRIBUTE_UNSUPPORTED: AxError = -25205;
 const AX_ACTION_UNSUPPORTED: AxError = -25206;
 const AX_NOT_IMPLEMENTED: AxError = -25208;
+const AX_INVALID_UI_ELEMENT: AxError = -25202;
 
 #[link(name = "ApplicationServices", kind = "framework")]
 unsafe extern "C" {
@@ -738,8 +739,13 @@ fn find_window(pid: i32, id: u64) -> Result<Element, String> {
     // WindowServer inventory. This avoids re-reading AXWindows and the
     // inventory for every selection; the fresh scan below remains the
     // fallback for windows that were never remembered (for example when
-    // minimized-window tracking is disabled).
-    if let Some(window) = remembered_element(pid, id) {
+    // minimized-window tracking is disabled) and for retained handles that an
+    // app invalidated by recreating its accessibility objects. Any other read
+    // error (for example a temporarily busy app) keeps the retained handle so
+    // minimized windows stay reachable.
+    if let Some(window) = remembered_element(pid, id)
+        && window.attribute_once("AXRole") != Err(AX_INVALID_UI_ELEMENT)
+    {
         return Ok(window);
     }
     let application = Element::application(pid).ok_or(tr!(

@@ -121,15 +121,18 @@ impl Delegate {
                 }
             }
         } else {
-            if let Err(error) = accessibility::raise_window(window.pid, window.id) {
-                self.selection_failed(&error);
-                return;
-            }
+            // Focus the exact window, but a stale handle (some apps recreate
+            // their accessibility objects) must not abort the switch:
+            // activating the app is still what the user asked for.
+            let raise_error = accessibility::raise_window(window.pid, window.id).err();
             if !self.activate_app(&target_app) {
-                self.selection_failed(tr!(
-                    "系统未接受切换请求，请重试或检查辅助功能权限。",
-                    "macOS did not accept the switch. Try again or check Accessibility access."
-                ));
+                match raise_error {
+                    Some(error) => self.selection_failed(&error),
+                    None => self.selection_failed(tr!(
+                        "系统未接受切换请求，请重试或检查辅助功能权限。",
+                        "macOS did not accept the switch. Try again or check Accessibility access."
+                    )),
+                }
                 return;
             }
         }
