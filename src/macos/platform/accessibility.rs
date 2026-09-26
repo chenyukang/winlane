@@ -554,34 +554,69 @@ fn scan_application(
     let mut unresolved = inventory.normal.get(&pid).cloned().unwrap_or_default();
     unresolved.retain(|server_id| !results.iter().any(|(_, found)| found == &Some(*server_id)));
     if !unresolved.is_empty() {
-        let mut remembered = remembered_windows().lock().unwrap();
-        if let Some(entries) = remembered.get_mut(&pid) {
-            for server_id in &unresolved {
-                let Some(entry) = entries.get_mut(server_id) else {
-                    continue;
-                };
-                let element_addr = entry.element;
-                let fallback_title = entry.title.clone();
-                let fallback_minimized = entry.minimized;
-                let remembered_id = entry.id;
-                // SAFETY: the address was retained when the window was
-                // remembered; the wrapper takes its own reference.
-                let element =
-                    Element(unsafe { CFType::wrap_under_get_rule(element_addr as CFTypeRef) });
-                let title = element.string("AXTitle").unwrap_or(fallback_title);
-                let minimized = element.boolean("AXMinimized").unwrap_or(fallback_minimized);
-                let info = WindowInfo {
-                    id: remembered_id,
+        // Collect the remembered data under the lock, then release it before
+        // the AX reads below: each read can block for up to READ_TIMEOUT and
+        // must not hold the global remembered-windows lock, which other scan
+        // workers and find_window also need.
+        struct Pending {
+            server_id: u32,
+            element_addr: usize,
+            fallback_title: String,
+            fallback_minimized: bool,
+            id: u64,
+        }
+        let pending: Vec<Pending> = {
+            let remembered = remembered_windows().lock().unwrap();
+            let mut pending = Vec::new();
+            if let Some(entries) = remembered.get(&pid) {
+                for server_id in &unresolved {
+                    if let Some(entry) = entries.get(server_id) {
+                        pending.push(Pending {
+                            server_id: *server_id,
+                            element_addr: entry.element,
+                            fallback_title: entry.title.clone(),
+                            fallback_minimized: entry.minimized,
+                            id: entry.id,
+                        });
+                    }
+                }
+            }
+            pending
+        };
+        let mut updates = Vec::new();
+        let mut new_results = Vec::new();
+        for entry in pending {
+            // SAFETY: the address was retained when the window was remembered;
+            // the wrapper takes its own reference.
+            let element =
+                Element(unsafe { CFType::wrap_under_get_rule(entry.element_addr as CFTypeRef) });
+            let title = element.string("AXTitle").unwrap_or(entry.fallback_title);
+            let minimized = element
+                .boolean("AXMinimized")
+                .unwrap_or(entry.fallback_minimized);
+            updates.push((entry.server_id, title.clone(), minimized));
+            new_results.push((
+                WindowInfo {
+                    id: entry.id,
                     pid,
                     app: app.into(),
                     title,
                     minimized,
-                };
-                entry.title = info.title.clone();
-                entry.minimized = info.minimized;
-                results.push((info, Some(*server_id)));
+                },
+                Some(entry.server_id),
+            ));
+        }
+        // Persist the refreshed title and minimized state.
+        let mut remembered = remembered_windows().lock().unwrap();
+        if let Some(entries) = remembered.get_mut(&pid) {
+            for (server_id, title, minimized) in updates {
+                if let Some(entry) = entries.get_mut(&server_id) {
+                    entry.title = title;
+                    entry.minimized = minimized;
+                }
             }
         }
+        results.extend(new_results);
     }
     Ok(results)
 }
@@ -684,6 +719,15 @@ fn find_window(pid: i32, id: u64) -> Result<Element, String> {
         )
         .to_owned());
     }
+    // Prefer the element retained during discovery: it is the same AX handle
+    // the switcher listed, and it stays alive until its window leaves the
+    // WindowServer inventory. This avoids re-reading AXWindows and the
+    // inventory for every selection; the fresh scan below remains the
+    // fallback for windows that were never remembered (for example when
+    // minimized-window tracking is disabled).
+    if let Some(window) = remembered_element(pid, id) {
+        return Ok(window);
+    }
     let application = Element::application(pid).ok_or(tr!(
         "应用已退出，请刷新窗口列表。",
         "The app has quit. Refresh the window list."
@@ -699,11 +743,6 @@ fn find_window(pid: i32, id: u64) -> Result<Element, String> {
             .to_owned());
         }
         return Ok(Element(window.0.clone()));
-    }
-    // Minimized windows are invisible to fresh accessibility queries; fall
-    // back to the retained element from when the window was last visible.
-    if let Some(window) = remembered_element(pid, id) {
-        return Ok(window);
     }
     Err(tr!(
         "窗口已关闭，请刷新窗口列表。",
