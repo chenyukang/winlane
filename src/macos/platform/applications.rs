@@ -71,6 +71,28 @@ pub fn resolve_application(target: &ApplicationTarget) -> Result<Retained<NSURL>
     ))
 }
 
+/// Activate a running app through LaunchServices. Unlike plain activation,
+/// this reliably switches Spaces from full-screen apps and restores minimized
+/// windows the way clicking the Dock icon does. Returns false when the app
+/// has no bundle URL to reopen.
+pub fn activate(app: &NSRunningApplication) -> bool {
+    let Some(url) = app.bundleURL() else {
+        return false;
+    };
+    let configuration = NSWorkspaceOpenConfiguration::configuration();
+    configuration.setActivates(true);
+    configuration.setCreatesNewApplicationInstance(false);
+    configuration.setAddsToRecentItems(false);
+    // Fire and forget: the app is already running, and the completion
+    // callback only reports the activation result.
+    NSWorkspace::sharedWorkspace().openApplicationAtURL_configuration_completionHandler(
+        &url,
+        &configuration,
+        None,
+    );
+    true
+}
+
 pub fn launch(
     target: &ApplicationTarget,
     wake: WakeHandle,

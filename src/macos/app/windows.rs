@@ -105,7 +105,21 @@ impl Delegate {
             self.selection_failed(&error);
             return;
         }
-        if !self.activate_app(&target_app) {
+        if window.minimized {
+            // A minimized window lives on no Space until restored. Plain app
+            // activation then fails to switch Spaces from a full-screen app,
+            // so reopen the app through LaunchServices like selecting the
+            // app row in search does.
+            if !crate::macos::platform::applications::activate(&target_app)
+                && !self.activate_app(&target_app)
+            {
+                self.selection_failed(tr!(
+                    "系统未接受切换请求，请重试或检查辅助功能权限。",
+                    "macOS did not accept the switch. Try again or check Accessibility access."
+                ));
+                return;
+            }
+        } else if !self.activate_app(&target_app) {
             self.selection_failed(tr!(
                 "系统未接受切换请求，请重试或检查辅助功能权限。",
                 "macOS did not accept the switch. Try again or check Accessibility access."
