@@ -71,26 +71,43 @@ pub fn resolve_application(target: &ApplicationTarget) -> Result<Retained<NSURL>
     ))
 }
 
-/// Activate a running app through LaunchServices. Unlike plain activation,
-/// this reliably switches Spaces from full-screen apps and restores minimized
-/// windows the way clicking the Dock icon does. Returns false when the app
-/// has no bundle URL to reopen.
-pub fn activate(app: &NSRunningApplication) -> bool {
+/// Activate a running app through LaunchServices and, once it is frontmost
+/// on its own Space, restore and focus a specific window. Activation must
+/// come first so macOS switches Spaces from a full-screen app the way
+/// clicking the Dock icon does; restoring the window only afterwards keeps
+/// it from landing on the full-screen app's Space. Returns an error only
+/// when the app has no bundle URL to reopen.
+pub fn activate_and_raise(
+    app: &NSRunningApplication,
+    window_id: u64,
+    wake: WakeHandle,
+) -> Result<(), String> {
     let Some(url) = app.bundleURL() else {
-        return false;
+        return Err(tr!(
+            "系统未接受切换请求，请重试或检查辅助功能权限。",
+            "macOS did not accept the switch. Try again or check Accessibility access."
+        )
+        .into());
     };
+    let pid = app.processIdentifier();
     let configuration = NSWorkspaceOpenConfiguration::configuration();
     configuration.setActivates(true);
     configuration.setCreatesNewApplicationInstance(false);
     configuration.setAddsToRecentItems(false);
-    // Fire and forget: the app is already running, and the completion
-    // callback only reports the activation result.
+    // The completion handler runs after macOS finishes activating the app,
+    // so the chosen window is deminiaturized and focused on its own Space.
+    let completion = RcBlock::new(move |_: *mut NSRunningApplication, _: *mut NSError| {
+        autoreleasepool(|_| {
+            let _ = crate::macos::platform::accessibility::raise_window(pid, window_id);
+            wake.signal();
+        });
+    });
     NSWorkspace::sharedWorkspace().openApplicationAtURL_configuration_completionHandler(
         &url,
         &configuration,
-        None,
+        Some(&completion),
     );
-    true
+    Ok(())
 }
 
 pub fn launch(
