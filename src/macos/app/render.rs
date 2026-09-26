@@ -803,262 +803,7 @@ impl Delegate {
             }
             let row = &mut rows[position];
             if row.content.as_ref() != Some(&content) {
-                let tooltip = match &content {
-                    RowContent::Emoji(emoji) => {
-                        set_label(&row.app, emoji.text);
-                        set_label(&row.title, emoji.name());
-                        set_label(&row.alias, "");
-                        row.icon.setImage(None);
-                        format!("{} — {} / {}", emoji.text, emoji.name_en, emoji.name_zh)
-                    }
-                    RowContent::File(entry) => {
-                        set_label(&row.app, &entry.name);
-                        set_label(&row.title, &entry.parent_label(&super::files::home()));
-                        set_label(&row.alias, "");
-                        row.icon.setImage(
-                            NSImage::imageWithSystemSymbolName_accessibilityDescription(
-                                &NSString::from_str(entry.symbol()),
-                                None,
-                            )
-                            .as_deref(),
-                        );
-                        entry.path.to_string_lossy().into_owned()
-                    }
-                    RowContent::KeepAwake(choice) => {
-                        set_label(&row.app, &choice.title());
-                        set_label(&row.title, choice.detail());
-                        set_label(&row.alias, "☕");
-                        row.icon.setImage(
-                            NSImage::imageWithSystemSymbolName_accessibilityDescription(
-                                ns_string!("cup.and.saucer"),
-                                None,
-                            )
-                            .as_deref(),
-                        );
-                        format!("{} · {}", choice.title(), choice.detail())
-                    }
-                    RowContent::Bluetooth(device, pending) => {
-                        let status = super::bluetooth::device_status(device, *pending);
-                        set_label(&row.app, status);
-                        set_label(&row.title, &device.name);
-                        set_label(&row.alias, if device.connected { "●" } else { "○" });
-                        row.icon.setImage(
-                            NSImage::imageWithSystemSymbolName_accessibilityDescription(
-                                &NSString::from_str("antenna.radiowaves.left.and.right"),
-                                Some(&NSString::from_str(tr!("蓝牙设备", "Bluetooth device"))),
-                            )
-                            .as_deref(),
-                        );
-                        format!("{} — {} — {}", device.name, status, device.address)
-                    }
-                    RowContent::Command(id) => {
-                        let command = id.definition();
-                        let title = if *id == CommandId::Date {
-                            crate::macos::platform::system_commands::current_datetime()
-                        } else {
-                            command.title().to_owned()
-                        };
-                        set_label(&row.title, &title);
-                        set_label(&row.app, command.name);
-                        set_label(&row.alias, ">_");
-                        row.icon.setImage(
-                            NSImage::imageWithSystemSymbolName_accessibilityDescription(
-                                &NSString::from_str(command.symbol),
-                                Some(&NSString::from_str(command.category())),
-                            )
-                            .as_deref(),
-                        );
-                        format!("{} — {} · {}", command.name, title, command.category())
-                    }
-                    RowContent::OpenUrl(page) => {
-                        let host = page.url.split_once("://").map_or("Chrome", |(_, rest)| {
-                            rest.split(['/', '?', '#']).next().unwrap_or("Chrome")
-                        });
-                        set_label(&row.app, host);
-                        let detail = format!("{} — {}", page.title, page.url);
-                        set_label(&row.title, &detail);
-                        set_label(&row.alias, "↗");
-                        row.icon.setImage(
-                            NSImage::imageWithSystemSymbolName_accessibilityDescription(
-                                &NSString::from_str("globe"),
-                                Some(&NSString::from_str(tr!("最近网址", "Recent URL"))),
-                            )
-                            .as_deref(),
-                        );
-                        detail
-                    }
-                    RowContent::Meeting(meeting) => {
-                        set_label(&row.app, &meeting.start_label);
-                        let base = match &meeting.link {
-                            Some(link) => format!("{} — {}", meeting.title, link),
-                            None if !meeting.location.is_empty() => {
-                                format!("{} — {}", meeting.title, meeting.location)
-                            }
-                            None => meeting.title.clone(),
-                        };
-                        let mut detail = if meeting.relative.is_empty() {
-                            base
-                        } else {
-                            format!("{} · {}", meeting.relative, base)
-                        };
-                        if !meeting.day.is_empty() {
-                            detail = format!("{} · {}", meeting.day, detail);
-                        }
-                        set_label(&row.title, &detail);
-                        set_label(&row.alias, if meeting.link.is_some() { "↗" } else { "·" });
-                        row.icon.setImage(
-                            NSImage::imageWithSystemSymbolName_accessibilityDescription(
-                                &NSString::from_str(if meeting.link.is_some() {
-                                    "video"
-                                } else {
-                                    "calendar"
-                                }),
-                                Some(&NSString::from_str(tr!("会议", "Meeting"))),
-                            )
-                            .as_deref(),
-                        );
-                        format!("{} · {}", meeting.start_label, detail)
-                    }
-                    RowContent::GitBranch(branch) => {
-                        set_label(&row.app, &branch.detail);
-                        let title = if branch.elsewhere {
-                            trf!("{} · 其他工作树", "{} · other worktree", branch.name)
-                        } else {
-                            branch.name.clone()
-                        };
-                        set_label(&row.title, &title);
-                        let alias = if branch.current {
-                            format!("{}*", branch.alias)
-                        } else {
-                            branch.alias.clone()
-                        };
-                        set_label(&row.alias, &alias);
-                        row.icon.setImage(
-                            NSImage::imageWithSystemSymbolName_accessibilityDescription(
-                                &NSString::from_str("arrow.triangle.branch"),
-                                Some(&NSString::from_str(tr!("分支", "Branch"))),
-                            )
-                            .as_deref(),
-                        );
-                        format!("{} · {}", branch.name, branch.detail)
-                    }
-                    RowContent::Project(project) => {
-                        let path = project.path.to_string_lossy();
-                        set_label(&row.app, &project.name);
-                        set_label(&row.title, &path);
-                        set_label(&row.alias, "↗");
-                        let symbol = if project.kind == winlane::features::projects::Kind::Workspace
-                        {
-                            "rectangle.stack"
-                        } else {
-                            "folder"
-                        };
-                        row.icon.setImage(
-                            NSImage::imageWithSystemSymbolName_accessibilityDescription(
-                                &NSString::from_str(symbol),
-                                Some(&NSString::from_str(tr!("VS Code 项目", "VS Code project"))),
-                            )
-                            .as_deref(),
-                        );
-                        format!("{} — {}", project.name, path)
-                    }
-                    RowContent::Quicklink(link) => {
-                        set_label(&row.app, &link.name);
-                        set_label(
-                            &row.title,
-                            &trf!("打开链接 · {}", "Open link · {}", link.link),
-                        );
-                        set_label(&row.alias, "↗");
-                        row.icon.setImage(
-                            NSImage::imageWithSystemSymbolName_accessibilityDescription(
-                                &NSString::from_str("link"),
-                                Some(&NSString::from_str(tr!("快捷链接", "Quicklink"))),
-                            )
-                            .as_deref(),
-                        );
-                        trf!("打开链接：{}", "Open link: {}", link.link)
-                    }
-                    RowContent::Snippet(snippet) => {
-                        set_label(&row.app, &snippet.name);
-                        let preview = snippet.body.lines().next().unwrap_or("");
-                        set_label(
-                            &row.title,
-                            &trf!("粘贴片段 · {}", "Paste snippet · {}", preview),
-                        );
-                        set_label(&row.alias, "{}");
-                        row.icon.setImage(
-                            NSImage::imageWithSystemSymbolName_accessibilityDescription(
-                                ns_string!("text.quote"),
-                                Some(&NSString::from_str(tr!("文本片段", "Snippet"))),
-                            )
-                            .as_deref(),
-                        );
-                        trf!("粘贴片段：{}", "Paste snippet: {}", snippet.name)
-                    }
-                    RowContent::Clipboard(id, source, preview, tooltip) => {
-                        set_label(&row.app, source);
-                        set_label(&row.title, preview);
-                        set_label(&row.alias, "↵");
-                        let thumbnail = clipboard.as_ref().and_then(|clipboard| {
-                            clipboard
-                                .history
-                                .get(*id)
-                                .and_then(|entry| entry.image.as_ref())
-                                .and_then(|image| clipboard.thumbnail(image))
-                        });
-                        row.icon.setImage(
-                            thumbnail
-                                .or_else(|| {
-                                    NSImage::imageWithSystemSymbolName_accessibilityDescription(
-                                        ns_string!("clipboard"),
-                                        Some(&NSString::from_str(tr!(
-                                            "剪贴板历史",
-                                            "Clipboard history"
-                                        ))),
-                                    )
-                                })
-                                .as_deref(),
-                        );
-                        tooltip.clone()
-                    }
-                    RowContent::Window(item, alias) => {
-                        let title = if item.title.trim().is_empty() {
-                            &item.app
-                        } else {
-                            &item.title
-                        };
-                        let tooltip = format!(
-                            "{} — {}{}",
-                            item.app,
-                            title,
-                            alias
-                                .as_deref()
-                                .map_or(String::new(), |alias| format!(" · alias {alias}"))
-                        );
-                        let identities = state.identities.borrow();
-                        let title = window_display_title(
-                            item,
-                            identities.get(&item.pid).map(|app| app.id.as_str()),
-                        );
-                        let title = if item.minimized {
-                            trf!("{title} · 已最小化", "{title} · Minimized")
-                        } else {
-                            title.into_owned()
-                        };
-                        set_label(&row.title, &title);
-                        set_label(&row.app, &item.app);
-                        set_label(&row.alias, alias.as_deref().unwrap_or(""));
-                        row.icon.setImage(self.cached_icon(item.pid).as_deref());
-                        tooltip
-                    }
-                    RowContent::Application(app) => {
-                        set_label(&row.title, tr!("启动应用", "Launch app"));
-                        set_label(&row.app, &app.name);
-                        set_label(&row.alias, "↗");
-                        row.icon.setImage(Some(&self.application_icon(app)));
-                        trf!("启动 {} — {}", "Launch {} — {}", app.name, app.path)
-                    }
-                };
+                let tooltip = self.apply_row_content(row, &content, clipboard.as_ref());
                 row.button.setToolTip(Some(&NSString::from_str(&tooltip)));
                 row.button
                     .setAccessibilityLabel(Some(&NSString::from_str(&tooltip)));
@@ -1307,6 +1052,270 @@ impl Delegate {
         set_label(&ui.footer, &status);
         ui.footer
             .setHidden(!show_hints && !has_error && !in_keep_awake && !in_meeting);
+    }
+
+    /// Apply one row's content to its views and return the tooltip. Each
+    /// scope's layout stays local to this match instead of the row loop. The
+    /// clipboard runtime is passed in because the caller holds that borrow
+    /// for the whole pass.
+    fn apply_row_content(
+        &self,
+        row: &mut RowUi,
+        content: &RowContent,
+        clipboard: Option<&crate::macos::platform::clipboard::ClipboardRuntime>,
+    ) -> String {
+        match content {
+            RowContent::Emoji(emoji) => {
+                set_label(&row.app, emoji.text);
+                set_label(&row.title, emoji.name());
+                set_label(&row.alias, "");
+                row.icon.setImage(None);
+                format!("{} — {} / {}", emoji.text, emoji.name_en, emoji.name_zh)
+            }
+            RowContent::File(entry) => {
+                set_label(&row.app, &entry.name);
+                set_label(&row.title, &entry.parent_label(&super::files::home()));
+                set_label(&row.alias, "");
+                row.icon.setImage(
+                    NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                        &NSString::from_str(entry.symbol()),
+                        None,
+                    )
+                    .as_deref(),
+                );
+                entry.path.to_string_lossy().into_owned()
+            }
+            RowContent::KeepAwake(choice) => {
+                set_label(&row.app, &choice.title());
+                set_label(&row.title, choice.detail());
+                set_label(&row.alias, "☕");
+                row.icon.setImage(
+                    NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                        ns_string!("cup.and.saucer"),
+                        None,
+                    )
+                    .as_deref(),
+                );
+                format!("{} · {}", choice.title(), choice.detail())
+            }
+            RowContent::Bluetooth(device, pending) => {
+                let status = super::bluetooth::device_status(device, *pending);
+                set_label(&row.app, status);
+                set_label(&row.title, &device.name);
+                set_label(&row.alias, if device.connected { "●" } else { "○" });
+                row.icon.setImage(
+                    NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                        &NSString::from_str("antenna.radiowaves.left.and.right"),
+                        Some(&NSString::from_str(tr!("蓝牙设备", "Bluetooth device"))),
+                    )
+                    .as_deref(),
+                );
+                format!("{} — {} — {}", device.name, status, device.address)
+            }
+            RowContent::Command(id) => {
+                let command = id.definition();
+                let title = if *id == CommandId::Date {
+                    crate::macos::platform::system_commands::current_datetime()
+                } else {
+                    command.title().to_owned()
+                };
+                set_label(&row.title, &title);
+                set_label(&row.app, command.name);
+                set_label(&row.alias, ">_");
+                row.icon.setImage(
+                    NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                        &NSString::from_str(command.symbol),
+                        Some(&NSString::from_str(command.category())),
+                    )
+                    .as_deref(),
+                );
+                format!("{} — {} · {}", command.name, title, command.category())
+            }
+            RowContent::OpenUrl(page) => {
+                let host = page.url.split_once("://").map_or("Chrome", |(_, rest)| {
+                    rest.split(['/', '?', '#']).next().unwrap_or("Chrome")
+                });
+                set_label(&row.app, host);
+                let detail = format!("{} — {}", page.title, page.url);
+                set_label(&row.title, &detail);
+                set_label(&row.alias, "↗");
+                row.icon.setImage(
+                    NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                        &NSString::from_str("globe"),
+                        Some(&NSString::from_str(tr!("最近网址", "Recent URL"))),
+                    )
+                    .as_deref(),
+                );
+                detail
+            }
+            RowContent::Meeting(meeting) => {
+                set_label(&row.app, &meeting.start_label);
+                let base = match &meeting.link {
+                    Some(link) => format!("{} — {}", meeting.title, link),
+                    None if !meeting.location.is_empty() => {
+                        format!("{} — {}", meeting.title, meeting.location)
+                    }
+                    None => meeting.title.clone(),
+                };
+                let mut detail = if meeting.relative.is_empty() {
+                    base
+                } else {
+                    format!("{} · {}", meeting.relative, base)
+                };
+                if !meeting.day.is_empty() {
+                    detail = format!("{} · {}", meeting.day, detail);
+                }
+                set_label(&row.title, &detail);
+                set_label(&row.alias, if meeting.link.is_some() { "↗" } else { "·" });
+                row.icon.setImage(
+                    NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                        &NSString::from_str(if meeting.link.is_some() {
+                            "video"
+                        } else {
+                            "calendar"
+                        }),
+                        Some(&NSString::from_str(tr!("会议", "Meeting"))),
+                    )
+                    .as_deref(),
+                );
+                format!("{} · {}", meeting.start_label, detail)
+            }
+            RowContent::GitBranch(branch) => {
+                set_label(&row.app, &branch.detail);
+                let title = if branch.elsewhere {
+                    trf!("{} · 其他工作树", "{} · other worktree", branch.name)
+                } else {
+                    branch.name.clone()
+                };
+                set_label(&row.title, &title);
+                let alias = if branch.current {
+                    format!("{}*", branch.alias)
+                } else {
+                    branch.alias.clone()
+                };
+                set_label(&row.alias, &alias);
+                row.icon.setImage(
+                    NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                        &NSString::from_str("arrow.triangle.branch"),
+                        Some(&NSString::from_str(tr!("分支", "Branch"))),
+                    )
+                    .as_deref(),
+                );
+                format!("{} · {}", branch.name, branch.detail)
+            }
+            RowContent::Project(project) => {
+                let path = project.path.to_string_lossy();
+                set_label(&row.app, &project.name);
+                set_label(&row.title, &path);
+                set_label(&row.alias, "↗");
+                let symbol = if project.kind == winlane::features::projects::Kind::Workspace {
+                    "rectangle.stack"
+                } else {
+                    "folder"
+                };
+                row.icon.setImage(
+                    NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                        &NSString::from_str(symbol),
+                        Some(&NSString::from_str(tr!("VS Code 项目", "VS Code project"))),
+                    )
+                    .as_deref(),
+                );
+                format!("{} — {}", project.name, path)
+            }
+            RowContent::Quicklink(link) => {
+                set_label(&row.app, &link.name);
+                set_label(
+                    &row.title,
+                    &trf!("打开链接 · {}", "Open link · {}", link.link),
+                );
+                set_label(&row.alias, "↗");
+                row.icon.setImage(
+                    NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                        &NSString::from_str("link"),
+                        Some(&NSString::from_str(tr!("快捷链接", "Quicklink"))),
+                    )
+                    .as_deref(),
+                );
+                trf!("打开链接：{}", "Open link: {}", link.link)
+            }
+            RowContent::Snippet(snippet) => {
+                set_label(&row.app, &snippet.name);
+                let preview = snippet.body.lines().next().unwrap_or("");
+                set_label(
+                    &row.title,
+                    &trf!("粘贴片段 · {}", "Paste snippet · {}", preview),
+                );
+                set_label(&row.alias, "{}");
+                row.icon.setImage(
+                    NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                        ns_string!("text.quote"),
+                        Some(&NSString::from_str(tr!("文本片段", "Snippet"))),
+                    )
+                    .as_deref(),
+                );
+                trf!("粘贴片段：{}", "Paste snippet: {}", snippet.name)
+            }
+            RowContent::Clipboard(id, source, preview, tooltip) => {
+                set_label(&row.app, source);
+                set_label(&row.title, preview);
+                set_label(&row.alias, "↵");
+                let thumbnail = clipboard.and_then(|clipboard| {
+                    clipboard
+                        .history
+                        .get(*id)
+                        .and_then(|entry| entry.image.as_ref())
+                        .and_then(|image| clipboard.thumbnail(image))
+                });
+                row.icon.setImage(
+                    thumbnail
+                        .or_else(|| {
+                            NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                                ns_string!("clipboard"),
+                                Some(&NSString::from_str(tr!("剪贴板历史", "Clipboard history"))),
+                            )
+                        })
+                        .as_deref(),
+                );
+                tooltip.clone()
+            }
+            RowContent::Window(item, alias) => {
+                let title = if item.title.trim().is_empty() {
+                    &item.app
+                } else {
+                    &item.title
+                };
+                let tooltip = format!(
+                    "{} — {}{}",
+                    item.app,
+                    title,
+                    alias
+                        .as_deref()
+                        .map_or(String::new(), |alias| format!(" · alias {alias}"))
+                );
+                let identities = self.ivars().identities.borrow();
+                let title = window_display_title(
+                    item,
+                    identities.get(&item.pid).map(|app| app.id.as_str()),
+                );
+                let title = if item.minimized {
+                    trf!("{title} · 已最小化", "{title} · Minimized")
+                } else {
+                    title.into_owned()
+                };
+                set_label(&row.title, &title);
+                set_label(&row.app, &item.app);
+                set_label(&row.alias, alias.as_deref().unwrap_or(""));
+                row.icon.setImage(self.cached_icon(item.pid).as_deref());
+                tooltip
+            }
+            RowContent::Application(app) => {
+                set_label(&row.title, tr!("启动应用", "Launch app"));
+                set_label(&row.app, &app.name);
+                set_label(&row.alias, "↗");
+                row.icon.setImage(Some(&self.application_icon(app)));
+                trf!("启动 {} — {}", "Launch {} — {}", app.name, app.path)
+            }
+        }
     }
 
     pub(super) fn create_row(&self, position: usize, density: DisplayDensity) -> RowUi {
