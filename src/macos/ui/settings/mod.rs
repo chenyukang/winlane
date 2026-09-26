@@ -28,7 +28,7 @@ use scrolling::ScrollingPage;
 use shortcuts::ShortcutsPage;
 use std::cell::{OnceCell, RefCell};
 use winlane::core::config::{
-    Appearance, Config, DisplayDensity, Shortcut, SortOrder, parse_excluded,
+    Appearance, Config, DisplayDensity, PanelDisplayTarget, Shortcut, SortOrder, parse_excluded,
 };
 use winlane::core::i18n::Language;
 #[cfg(test)]

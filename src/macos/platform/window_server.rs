@@ -11,6 +11,36 @@ unsafe extern "C" {
     fn CGWindowListCopyWindowInfo(options: u32, relative_to: u32) -> CFArrayRef;
 }
 
+/// Center in CoreGraphics coordinates (origin at the main display's upper-left).
+pub fn window_center(id: u32) -> Option<(f64, f64)> {
+    // SAFETY: The returned array follows the Create rule and is checked before use.
+    let raw = unsafe { CGWindowListCopyWindowInfo(1 << 3, id) };
+    if raw.is_null() {
+        return None;
+    }
+    let array = unsafe { CFArray::<*const std::ffi::c_void>::wrap_under_create_rule(raw) };
+    for raw in array.iter() {
+        let value = unsafe { CFType::wrap_under_get_rule(*raw) };
+        let Some(dict) = value.downcast_into::<CFDictionary>() else {
+            continue;
+        };
+        if integer(&dict, "kCGWindowNumber") != Some(i64::from(id)) {
+            continue;
+        }
+        let bounds = value_for(&dict, "kCGWindowBounds")?.downcast_into::<CFDictionary>()?;
+        let (x, y, width, height) = (
+            number(&bounds, "X")?,
+            number(&bounds, "Y")?,
+            number(&bounds, "Width")?,
+            number(&bounds, "Height")?,
+        );
+        if width > 0.0 && height > 0.0 {
+            return Some((x + width / 2.0, y + height / 2.0));
+        }
+    }
+    None
+}
+
 #[derive(Default)]
 pub struct Inventory {
     pub normal: HashMap<i32, HashSet<u32>>,

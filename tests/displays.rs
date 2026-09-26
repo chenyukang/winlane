@@ -1,4 +1,4 @@
-use winlane::core::displays::{Display, Rect, placements};
+use winlane::core::displays::{Display, Rect, active_display, placements};
 
 fn display(id: u32, x: f64, y: f64, width: f64, height: f64) -> Display {
     Display {
@@ -104,4 +104,29 @@ fn a_pointer_on_a_display_boundary_selects_exactly_one_display() {
     let positions = placements(&displays, (660.0, 590.0), (1920.0, 0.0), None);
     assert!(!positions[0].receives_keyboard);
     assert!(positions[1].receives_keyboard);
+}
+
+#[test]
+fn active_display_prefers_pointer_then_focused_window_then_main() {
+    let displays = [
+        display(1, 0.0, 0.0, 1920.0, 1080.0),
+        display(2, 1920.0, 0.0, 1920.0, 1080.0),
+    ];
+    assert_eq!(
+        active_display(&displays, (2000.0, 500.0), Some((500.0, 500.0)), Some(1)),
+        Some(2)
+    );
+    assert_eq!(
+        active_display(&displays, (-100.0, 500.0), Some((2000.0, 500.0)), Some(1)),
+        Some(2)
+    );
+    assert_eq!(
+        active_display(&displays, (-100.0, 500.0), None, Some(1)),
+        Some(1)
+    );
+    assert_eq!(
+        active_display(&displays, (-100.0, 500.0), None, Some(9)),
+        Some(1)
+    );
+    assert_eq!(active_display(&[], (0.0, 0.0), None, Some(1)), None);
 }

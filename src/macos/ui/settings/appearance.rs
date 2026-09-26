@@ -3,6 +3,7 @@ use super::*;
 pub(super) struct AppearancePage {
     pub(super) appearance: Retained<NSPopUpButton>,
     pub(super) density: Retained<NSPopUpButton>,
+    pub(super) panel_display_target: Retained<NSPopUpButton>,
     pub(super) opacity_slider: Retained<NSSlider>,
     pub(super) opacity_input: Retained<NSTextField>,
     pub(super) opacity_preview: crate::macos::ui::material::PanelBackdrop,
@@ -11,11 +12,11 @@ pub(super) struct AppearancePage {
 
 impl AppearancePage {
     pub(super) fn new(appearance_tab: &NSView, target: &AnyObject, mtm: MainThreadMarker) -> Self {
-        let display = settings_group(appearance_tab, tr!("显示", "Display"), 570.0, 192.0, mtm);
+        let display = settings_group(appearance_tab, tr!("显示", "Display"), 570.0, 270.0, mtm);
         display.addSubview(&label(
             tr!("外观", "Appearance"),
             14.0,
-            rect(20.0, 150.0, 300.0, 24.0),
+            rect(20.0, 228.0, 300.0, 24.0),
             mtm,
         ));
         let appearance = popup(
@@ -24,11 +25,11 @@ impl AppearancePage {
                 tr!("浅色", "Light"),
                 tr!("深色", "Dark"),
             ],
-            rect(420.0, 148.0, 300.0, 28.0),
+            rect(420.0, 226.0, 300.0, 28.0),
             mtm,
         );
         display.addSubview(&appearance);
-        row_divider(&display, 128.0, mtm);
+        row_divider(&display, 206.0, mtm);
         row_text(
             &display,
             tr!("显示密度", "Display density"),
@@ -36,13 +37,13 @@ impl AppearancePage {
                 "标准模式使用更大的文字和图标。",
                 "Normal uses larger text and icons."
             ),
-            124.0,
+            202.0,
             380.0,
             mtm,
         );
         let density = popup(
             &[tr!("紧凑", "Compact"), tr!("标准", "Normal")],
-            rect(420.0, 73.0, 300.0, 28.0),
+            rect(420.0, 151.0, 300.0, 28.0),
             mtm,
         );
         density.setAccessibilityLabel(Some(&NSString::from_str(tr!(
@@ -50,7 +51,32 @@ impl AppearancePage {
             "Display density"
         ))));
         display.addSubview(&density);
-        row_divider(&display, 49.0, mtm);
+        row_divider(&display, 129.0, mtm);
+        row_text(
+            &display,
+            tr!("面板显示位置", "Panel displays"),
+            tr!(
+                "搜索和窗口切换面板显示在哪些屏幕上。",
+                "Choose where search and window switching panels appear."
+            ),
+            125.0,
+            380.0,
+            mtm,
+        );
+        let panel_display_target = popup(
+            &[
+                tr!("所有显示器", "All displays"),
+                tr!("活动显示器", "Active display"),
+            ],
+            rect(420.0, 74.0, 300.0, 28.0),
+            mtm,
+        );
+        panel_display_target.setAccessibilityLabel(Some(&NSString::from_str(tr!(
+            "面板显示位置",
+            "Panel displays"
+        ))));
+        display.addSubview(&panel_display_target);
+        row_divider(&display, 52.0, mtm);
         let usage_hints = checkbox(
             tr!(
                 "显示底部提示和设置按钮",
@@ -64,7 +90,7 @@ impl AppearancePage {
         let opacity = settings_group(
             appearance_tab,
             tr!("背景不透明度", "Background opacity"),
-            324.0,
+            246.0,
             196.0,
             mtm,
         );
@@ -136,12 +162,13 @@ impl AppearancePage {
             .cell()
             .unwrap()
             .setSendsActionOnEndEditing(true);
-        for control in [&*appearance, &*density] {
+        for control in [&*appearance, &*density, &*panel_display_target] {
             set_action(control, target, sel!(settingsChanged:));
         }
         Self {
             appearance,
             density,
+            panel_display_target,
             opacity_slider,
             opacity_input,
             opacity_preview,
@@ -159,6 +186,11 @@ impl AppearancePage {
                 DisplayDensity::Compact => 0,
                 DisplayDensity::Normal => 1,
             });
+        self.panel_display_target
+            .selectItemAtIndex(match config.panel_display_target {
+                PanelDisplayTarget::AllDisplays => 0,
+                PanelDisplayTarget::ActiveDisplay => 1,
+            });
         self.usage_hints.setState(if config.show_usage_hints {
             NSControlStateValueOn
         } else {
@@ -175,6 +207,10 @@ impl AppearancePage {
         config.display_density = match self.density.indexOfSelectedItem() {
             0 => DisplayDensity::Compact,
             _ => DisplayDensity::Normal,
+        };
+        config.panel_display_target = match self.panel_display_target.indexOfSelectedItem() {
+            1 => PanelDisplayTarget::ActiveDisplay,
+            _ => PanelDisplayTarget::AllDisplays,
         };
         config.show_usage_hints = self.usage_hints.state() == NSControlStateValueOn;
         config.background_opacity = self.read_opacity()?;

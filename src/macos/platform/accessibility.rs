@@ -646,6 +646,12 @@ pub fn focused_window(pid: i32, policy: FocusRead) -> Option<u64> {
     Some(id)
 }
 
+pub fn focused_window_server_id(pid: i32) -> Option<u32> {
+    let application = Element::application(pid)?;
+    let window = application.element("AXFocusedWindow").ok()?;
+    window.server_id()
+}
+
 pub fn project_windows(pid: i32) -> Vec<winlane::features::projects::focus::Window> {
     if !is_trusted() {
         return Vec::new();

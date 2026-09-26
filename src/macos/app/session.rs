@@ -123,6 +123,9 @@ impl Delegate {
             self.refresh();
         }
         self.ivars().preparing_panel.set(false);
+        if self.ivars().config.borrow().panel_display_target == PanelDisplayTarget::ActiveDisplay {
+            self.select_active_panel_display();
+        }
         self.sync_displays();
     }
 

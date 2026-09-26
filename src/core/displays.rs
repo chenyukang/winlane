@@ -27,6 +27,31 @@ pub struct Placement {
     pub receives_keyboard: bool,
 }
 
+pub fn active_display(
+    displays: &[Display],
+    pointer: (f64, f64),
+    focused_window_center: Option<(f64, f64)>,
+    main_display: Option<u32>,
+) -> Option<u32> {
+    displays
+        .iter()
+        .find(|display| display.frame.contains(pointer))
+        .or_else(|| {
+            focused_window_center.and_then(|center| {
+                displays
+                    .iter()
+                    .find(|display| display.frame.contains(center))
+            })
+        })
+        .or_else(|| {
+            displays
+                .iter()
+                .find(|display| Some(display.id) == main_display)
+        })
+        .or_else(|| displays.first())
+        .map(|display| display.id)
+}
+
 pub fn placements(
     displays: &[Display],
     panel_size: (f64, f64),
