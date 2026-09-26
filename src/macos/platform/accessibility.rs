@@ -16,8 +16,8 @@ use std::ptr;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use winlane::core::discovery::{
-    AX_NO_VALUE, FocusRead, READ_TIMEOUT, read_focused_window, read_published_windows,
-    read_with_retry, remote_window_token, switchable_window_role,
+    AX_CANNOT_COMPLETE, AX_NO_VALUE, FocusRead, READ_TIMEOUT, read_focused_window,
+    read_published_windows, read_with_retry, remote_window_token, switchable_window_role,
 };
 use winlane::core::search::WindowInfo;
 use winlane::{tr, trf};
@@ -771,6 +771,31 @@ fn find_window(pid: i32, id: u64) -> Result<Element, String> {
     .to_owned())
 }
 
+/// Turn a common Accessibility error into a message with a next step. The raw
+/// codes mean nothing to most people, so the usual ones (an invalidated
+/// element, a busy app, an unsupported action) explain themselves; anything
+/// else keeps the caller's specific wording via `None`.
+fn ax_failure(code: AxError) -> Option<String> {
+    Some(match code {
+        AX_INVALID_UI_ELEMENT => tr!(
+            "窗口已失效，请按 ⌘R 刷新窗口列表。",
+            "The window is no longer valid. Press ⌘R to refresh the window list."
+        )
+        .into(),
+        AX_CANNOT_COMPLETE | AX_NO_VALUE => tr!(
+            "应用暂时无响应，请重试。",
+            "The app is not responding. Try again."
+        )
+        .into(),
+        AX_ATTRIBUTE_UNSUPPORTED | AX_ACTION_UNSUPPORTED | AX_NOT_IMPLEMENTED => tr!(
+            "此应用不支持该操作。",
+            "This app does not support that action."
+        )
+        .into(),
+        _ => return None,
+    })
+}
+
 pub fn set_minimized(pid: i32, id: u64, minimized: bool) -> Result<(), String> {
     let window = find_window(pid, id)?;
     match window.set_boolean_if_supported("AXMinimized", minimized) {
@@ -780,10 +805,12 @@ pub fn set_minimized(pid: i32, id: u64, minimized: bool) -> Result<(), String> {
             "This app does not support minimizing or restoring this window."
         )
         .into()),
-        Err(code) => Err(trf!(
-            "无法更改最小化状态（错误 {code}）。",
-            "Could not change minimized state (error {code})."
-        )),
+        Err(code) => Err(ax_failure(code).unwrap_or_else(|| {
+            trf!(
+                "无法更改最小化状态（错误 {code}）。",
+                "Could not change minimized state (error {code})."
+            )
+        })),
     }
 }
 
@@ -800,10 +827,12 @@ pub fn raise_window(pid: i32, id: u64) -> Result<(), String> {
                 .into());
             }
             Err(code) => {
-                return Err(trf!(
-                    "无法恢复最小化窗口（错误 {code}）。",
-                    "Could not restore the window (error {code})."
-                ));
+                return Err(ax_failure(code).unwrap_or_else(|| {
+                    trf!(
+                        "无法恢复最小化窗口（错误 {code}）。",
+                        "Could not restore the window (error {code})."
+                    )
+                }));
             }
         }
     }
@@ -811,10 +840,12 @@ pub fn raise_window(pid: i32, id: u64) -> Result<(), String> {
         window
             .set_boolean_if_supported(attribute, true)
             .map_err(|code| {
-                trf!(
-                    "无法聚焦窗口（错误 {code}）。",
-                    "Could not focus the window (error {code})."
-                )
+                ax_failure(code).unwrap_or_else(|| {
+                    trf!(
+                        "无法聚焦窗口（错误 {code}）。",
+                        "Could not focus the window (error {code})."
+                    )
+                })
             })?;
     }
     let action = CFString::new("AXRaise");
@@ -829,10 +860,12 @@ pub fn raise_window(pid: i32, id: u64) -> Result<(), String> {
     ) {
         Ok(())
     } else {
-        Err(trf!(
-            "无法置前窗口（错误 {status}）。",
-            "Could not raise the window (error {status})."
-        ))
+        Err(ax_failure(status).unwrap_or_else(|| {
+            trf!(
+                "无法置前窗口（错误 {status}）。",
+                "Could not raise the window (error {status})."
+            )
+        }))
     }
 }
 
