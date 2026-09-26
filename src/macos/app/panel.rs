@@ -1,9 +1,9 @@
 use super::*;
 
 impl Delegate {
-    pub(super) fn select_active_panel_display(&self) {
-        let screens = NSScreen::screens(self.mtm());
-        let displays: Vec<_> = screens
+    /// The current screens, shared by the active-display selection and placement.
+    fn current_displays(&self) -> Vec<Display> {
+        NSScreen::screens(self.mtm())
             .iter()
             .enumerate()
             .map(|(index, screen)| Display {
@@ -15,16 +15,27 @@ impl Delegate {
                 frame: display_rect(screen.frame()),
                 visible: display_rect(screen.visibleFrame()),
             })
-            .collect();
+            .collect()
+    }
+
+    /// The menu-bar display that CoreGraphics window coordinates are relative to.
+    /// Falls back to the first screen when the system does not report one.
+    fn main_display_id(&self, displays: &[Display]) -> Option<u32> {
+        let main = crate::macos::platform::window_server::main_display_id();
+        displays
+            .iter()
+            .find(|display| display.id == main)
+            .or_else(|| displays.first())
+            .map(|display| display.id)
+    }
+
+    pub(super) fn select_active_panel_display(&self) {
+        let displays = self.current_displays();
         let pointer = NSEvent::mouseLocation();
         let pointer = (pointer.x, pointer.y);
-        let pointer_on_screen = displays.iter().any(|screen| {
-            pointer.0 >= screen.frame.x
-                && pointer.0 < screen.frame.x + screen.frame.width
-                && pointer.1 >= screen.frame.y
-                && pointer.1 < screen.frame.y + screen.frame.height
-        });
-        let window_center = if pointer_on_screen {
+        // Only pay for the focused-window lookup when the pointer is off every
+        // screen; otherwise the pointer decides the display on its own.
+        let window_center = if displays.iter().any(|screen| screen.frame.contains(pointer)) {
             None
         } else {
             self.frontmost_window_center(&displays)
@@ -33,7 +44,7 @@ impl Delegate {
             &displays,
             pointer,
             window_center,
-            displays.first().map(|screen| screen.id),
+            self.main_display_id(&displays),
         ));
     }
 
@@ -45,17 +56,25 @@ impl Delegate {
             .or_else(|| {
                 (self.ivars().previous_pid.get() > 0).then_some(self.ivars().previous_pid.get())
             })?;
-        let server_id = accessibility::focused_window_server_id(pid).or_else(|| {
-            if self.ivars().previous_pid.get() != pid {
-                return None;
-            }
+        // Prefer the window we already tracked: reading AXFocusedWindow happens
+        // on the main thread, and a busy app would otherwise stall this call.
+        let cached = if self.ivars().previous_pid.get() == pid {
             self.ivars()
                 .previous_window
                 .get()
                 .and_then(|id| self.ivars().window_server_ids.borrow().get(&id).copied())
-        })?;
+        } else {
+            None
+        };
+        let server_id = cached
+            .or_else(|| accessibility::focused_window_server_id(pid, FocusRead::Immediate))?;
         let (x, y) = crate::macos::platform::window_server::window_center(server_id)?;
-        let main = displays.first()?;
+        // CoreGraphics window coordinates start at the menu-bar display's
+        // upper-left with y down; AppKit screen coordinates use its lower-left
+        // with y up.
+        let main = displays
+            .iter()
+            .find(|display| Some(display.id) == self.main_display_id(displays))?;
         Some((x, main.frame.y + main.frame.height - y))
     }
 
@@ -80,22 +99,7 @@ impl Delegate {
             .iter()
             .find(|ui| ui.panel.isKeyWindow())
             .map(|ui| ui.display_id);
-        let displays: Vec<_> = NSScreen::screens(self.mtm())
-            .iter()
-            .enumerate()
-            .map(|(index, screen)| {
-                let id = screen
-                    .deviceDescription()
-                    .objectForKey(ns_string!("NSScreenNumber"))
-                    .and_then(|value| value.downcast::<NSNumber>().ok())
-                    .map_or(index as u32, |number| number.unsignedIntValue());
-                Display {
-                    id,
-                    frame: display_rect(screen.frame()),
-                    visible: display_rect(screen.visibleFrame()),
-                }
-            })
-            .collect();
+        let displays = self.current_displays();
         let pointer = NSEvent::mouseLocation();
         let target = self.ivars().config.borrow().panel_display_target;
         let focused = if target == PanelDisplayTarget::ActiveDisplay {

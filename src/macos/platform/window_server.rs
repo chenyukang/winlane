@@ -9,6 +9,15 @@ use winlane::core::discovery::normal_window_surface;
 #[link(name = "CoreGraphics", kind = "framework")]
 unsafe extern "C" {
     fn CGWindowListCopyWindowInfo(options: u32, relative_to: u32) -> CFArrayRef;
+    fn CGMainDisplayID() -> u32;
+}
+
+/// The display that owns the menu bar. CoreGraphics window coordinates (see
+/// [`window_center`]) originate at its upper-left corner, so it is the
+/// reference for converting them into AppKit screen coordinates.
+pub fn main_display_id() -> u32 {
+    // SAFETY: No arguments; returns the current main display id.
+    unsafe { CGMainDisplayID() }
 }
 
 /// Center in CoreGraphics coordinates (origin at the main display's upper-left).
