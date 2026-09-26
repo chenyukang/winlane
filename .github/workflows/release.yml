@@ -32,7 +32,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
         with:
-          toolchain: 1.95.0
+          toolchain: 1.98.0
           targets: aarch64-apple-darwin, x86_64-apple-darwin
       - name: Validate release source
         id: version

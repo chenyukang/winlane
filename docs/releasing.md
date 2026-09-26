@@ -8,7 +8,7 @@ The **CI** workflow runs on pull requests and pushes to `master`, and can be sta
 
 Download test builds from the workflow's `Winlane-ci-arm64` and `Winlane-ci-x86_64` artifacts. They expire after seven days. These are not notarized and should not replace a locally signed development installation. CI does not request Accessibility permission or test interactive window activation.
 
-GitHub Actions are pinned to commit SHAs. Dependabot checks Actions and Cargo dependencies weekly. The workflows currently use Rust 1.95.0; update both workflow files together when changing the release toolchain.
+GitHub Actions are pinned to commit SHAs. Dependabot checks Actions and Cargo dependencies weekly. The workflows currently use Rust 1.98.0; update both workflow files together when changing the release toolchain.
 
 ## Publish a version
 
