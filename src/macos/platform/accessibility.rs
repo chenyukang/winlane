@@ -28,10 +28,10 @@ type AxError = i32;
 type AxRef = CFTypeRef;
 
 const AX_SUCCESS: AxError = 0;
+const AX_INVALID_UI_ELEMENT: AxError = -25202;
 const AX_ATTRIBUTE_UNSUPPORTED: AxError = -25205;
 const AX_ACTION_UNSUPPORTED: AxError = -25206;
 const AX_NOT_IMPLEMENTED: AxError = -25208;
-const AX_INVALID_UI_ELEMENT: AxError = -25202;
 
 #[link(name = "ApplicationServices", kind = "framework")]
 unsafe extern "C" {
@@ -796,6 +796,51 @@ fn ax_failure(code: AxError) -> Option<String> {
     })
 }
 
+/// Drop an invalid retained handle before scanning again. The AX identity may
+/// change while the WindowServer surface stays the same, so match the fresh
+/// element by its WindowServer ID as well as by the old AX-derived ID.
+fn find_fresh_window(pid: i32, id: u64) -> Result<Element, String> {
+    let server_id = {
+        let mut remembered = remembered_windows().lock().unwrap();
+        let entries = remembered.get_mut(&pid);
+        let server_id = entries
+            .as_ref()
+            .and_then(|entries| entries.iter().find(|(_, entry)| entry.id == id))
+            .map(|(&server_id, _)| server_id);
+        if let (Some(entries), Some(server_id)) = (entries, server_id) {
+            entries.remove(&server_id);
+        }
+        server_id
+    };
+    if let Some(server_id) = server_id
+        && let Some(scan) = remote_scans().lock().unwrap().get_mut(&pid)
+    {
+        scan.elements.remove(&server_id);
+        scan.next = 0;
+    }
+    let application = Element::application(pid).ok_or(tr!(
+        "应用已退出，请刷新窗口列表。",
+        "The app has quit. Refresh the window list."
+    ))?;
+    let windows = all_windows(&application, pid, &Inventory::read(), true);
+    let mut matches = windows.into_iter().filter(|window| {
+        window.id(pid) == id
+            || server_id.is_some_and(|server_id| window.server_id() == Some(server_id))
+    });
+    let window = matches.next().ok_or(tr!(
+        "窗口已关闭，请刷新窗口列表。",
+        "The window has closed. Refresh the window list."
+    ))?;
+    if matches.any(|other| other.0 != window.0) {
+        return Err(tr!(
+            "无法确定目标窗口，请刷新窗口列表。",
+            "Could not identify the window. Refresh the window list."
+        )
+        .to_owned());
+    }
+    Ok(window)
+}
+
 pub fn set_minimized(pid: i32, id: u64, minimized: bool) -> Result<(), String> {
     let window = find_window(pid, id)?;
     match window.set_boolean_if_supported("AXMinimized", minimized) {
@@ -816,23 +861,39 @@ pub fn set_minimized(pid: i32, id: u64, minimized: bool) -> Result<(), String> {
 
 pub fn raise_window(pid: i32, id: u64) -> Result<(), String> {
     let window = find_window(pid, id)?;
+    match raise_window_element(&window) {
+        Err((AX_INVALID_UI_ELEMENT, original)) => {
+            let refreshed = find_fresh_window(pid, id).map_err(|_| original)?;
+            raise_window_element(&refreshed).map_err(|(_, message)| message)
+        }
+        result => result.map_err(|(_, message)| message),
+    }
+}
+
+fn raise_window_element(window: &Element) -> Result<(), (AxError, String)> {
     if window.boolean("AXMinimized") == Some(true) {
         match window.set_boolean_if_supported("AXMinimized", false) {
             Ok(true) => {}
             Ok(false) => {
-                return Err(tr!(
-                    "此应用不支持恢复该最小化窗口。",
-                    "This app does not support restoring this minimized window."
-                )
-                .into());
+                return Err((
+                    AX_ATTRIBUTE_UNSUPPORTED,
+                    tr!(
+                        "此应用不支持恢复该最小化窗口。",
+                        "This app does not support restoring this minimized window."
+                    )
+                    .into(),
+                ));
             }
             Err(code) => {
-                return Err(ax_failure(code).unwrap_or_else(|| {
-                    trf!(
-                        "无法恢复最小化窗口（错误 {code}）。",
-                        "Could not restore the window (error {code})."
-                    )
-                }));
+                return Err((
+                    code,
+                    ax_failure(code).unwrap_or_else(|| {
+                        trf!(
+                            "无法恢复最小化窗口（错误 {code}）。",
+                            "Could not restore the window (error {code})."
+                        )
+                    }),
+                ));
             }
         }
     }
@@ -840,12 +901,15 @@ pub fn raise_window(pid: i32, id: u64) -> Result<(), String> {
         window
             .set_boolean_if_supported(attribute, true)
             .map_err(|code| {
-                ax_failure(code).unwrap_or_else(|| {
-                    trf!(
-                        "无法聚焦窗口（错误 {code}）。",
-                        "Could not focus the window (error {code})."
-                    )
-                })
+                (
+                    code,
+                    ax_failure(code).unwrap_or_else(|| {
+                        trf!(
+                            "无法聚焦窗口（错误 {code}）。",
+                            "Could not focus the window (error {code})."
+                        )
+                    }),
+                )
             })?;
     }
     let action = CFString::new("AXRaise");
@@ -860,12 +924,15 @@ pub fn raise_window(pid: i32, id: u64) -> Result<(), String> {
     ) {
         Ok(())
     } else {
-        Err(ax_failure(status).unwrap_or_else(|| {
-            trf!(
-                "无法置前窗口（错误 {status}）。",
-                "Could not raise the window (error {status})."
-            )
-        }))
+        Err((
+            status,
+            ax_failure(status).unwrap_or_else(|| {
+                trf!(
+                    "无法置前窗口（错误 {status}）。",
+                    "Could not raise the window (error {status})."
+                )
+            }),
+        ))
     }
 }
 
