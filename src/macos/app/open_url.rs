@@ -20,6 +20,7 @@ impl Delegate {
             return;
         }
         self.cancel_scoped_refresh();
+        self.reset_open_url_deep();
         if state.open_url_receiver.borrow().is_some() {
             return;
         }
@@ -39,6 +40,7 @@ impl Delegate {
     }
 
     pub(super) fn poll_open_url(&self) {
+        self.poll_open_url_deep();
         let result = self
             .ivars()
             .open_url_receiver
@@ -78,7 +80,78 @@ impl Delegate {
         }
     }
 
+    /// Apply a finished full-history fallback search for the current query.
+    fn poll_open_url_deep(&self) {
+        let state = self.ivars();
+        let result = state
+            .open_url_deep_receiver
+            .borrow()
+            .as_ref()
+            .map(|rx| rx.try_recv());
+        match result {
+            Some(Ok(result)) => {
+                state.open_url_deep_receiver.take();
+                // Reject a result whose query is no longer the active one.
+                if *state.open_url_deep_query.borrow() != *state.query.borrow() {
+                    return;
+                }
+                match result {
+                    Ok(pages) => {
+                        state.open_url_deep_pages.replace(pages);
+                    }
+                    Err(_) => state.open_url_deep_pages.borrow_mut().clear(),
+                }
+                state.open_url_deep_loaded.set(true);
+                if self.searching_open_url() {
+                    self.filter_preserving(self.selected_result());
+                }
+            }
+            Some(Err(TryRecvError::Disconnected)) => {
+                state.open_url_deep_receiver.take();
+            }
+            _ => {}
+        }
+    }
+
+    /// Drop any cached or in-flight full-history fallback search.
+    fn reset_open_url_deep(&self) {
+        let state = self.ivars();
+        state.open_url_deep_receiver.borrow_mut().take();
+        state.open_url_deep_query.borrow_mut().clear();
+        state.open_url_deep_pages.borrow_mut().clear();
+        state.open_url_deep_loaded.set(false);
+    }
+
+    /// Search the whole `Default` profile in the background for queries the
+    /// cached recent URLs cannot answer.
+    fn ensure_open_url_deep_search(&self, query: &str) {
+        let state = self.ivars();
+        if state.open_url_deep_receiver.borrow().is_some()
+            && *state.open_url_deep_query.borrow() == query
+        {
+            return;
+        }
+        let Some(home) = std::env::var_os("HOME") else {
+            return;
+        };
+        let (tx, rx) = mpsc::channel();
+        state.open_url_deep_receiver.replace(Some(rx));
+        state.open_url_deep_query.replace(query.to_owned());
+        state.open_url_deep_pages.borrow_mut().clear();
+        state.open_url_deep_loaded.set(false);
+        let wake = state.wake.get().unwrap().handle();
+        let query = query.to_owned();
+        std::thread::spawn(move || {
+            let root = winlane::features::open_url::chrome_directory(std::path::Path::new(&home));
+            let _ = tx.send(winlane::features::open_url::deep_search_default(
+                &root, &query,
+            ));
+            wake.signal();
+        });
+    }
+
     pub(super) fn clear_open_url_matches(&self) {
+        self.reset_open_url_deep();
         self.ivars().open_url_matches.borrow_mut().clear();
         for ui in self.panels() {
             for row in ui.rows.borrow_mut().iter_mut() {
@@ -95,10 +168,27 @@ impl Delegate {
 
     pub(super) fn filter_open_url(&self, selected: Option<SelectedResult>) {
         let state = self.ivars();
-        let pages = winlane::features::open_url::matching(
-            &state.open_url_history.borrow().pages,
-            &state.query.borrow(),
-        );
+        let query = state.query.borrow().clone();
+        let mut pages =
+            winlane::features::open_url::matching(&state.open_url_history.borrow().pages, &query);
+        // When the cached recent URLs have no match, fall back to the whole
+        // Default profile history (loaded once per query in the background).
+        // Only when the recent window was actually full: a smaller list already
+        // holds every URL, so there is nothing older to search.
+        if pages.is_empty()
+            && !query.trim().is_empty()
+            && state.open_url_history.borrow().pages.len() >= winlane::features::open_url::MAX_URLS
+        {
+            let reused = {
+                let deep_query = state.open_url_deep_query.borrow();
+                *deep_query == query && state.open_url_deep_loaded.get()
+            };
+            if reused {
+                pages = state.open_url_deep_pages.borrow().clone();
+            } else {
+                self.ensure_open_url_deep_search(&query);
+            }
+        }
         let selected = if let Some(SelectedResult::OpenUrl(url)) = selected {
             pages.iter().position(|page| page.url == url)
         } else {

@@ -47,6 +47,7 @@ impl Delegate {
         let open_url = state.open_url_matches.borrow();
         let url_history = state.open_url_history.borrow();
         let in_open_url = self.searching_open_url();
+        let open_url_deep = in_open_url && state.open_url_deep_receiver.borrow().is_some();
         let meeting = state.meeting_matches.borrow();
         let meeting_results = state.meeting_results.borrow();
         let in_meeting = self.searching_meeting();
@@ -476,6 +477,14 @@ impl Delegate {
                     (
                         tr!("正在读取 Chrome 历史…", "Loading Chrome history…"),
                         tr!("可以继续输入搜索。", "You can keep typing."),
+                    )
+                } else if open_url_deep {
+                    (
+                        tr!("正在搜索完整历史…", "Searching full history…"),
+                        tr!(
+                            "最近 5000 条里没有匹配，正在查找更早的浏览记录。",
+                            "No match in the most recent 5000 URLs; searching older history."
+                        ),
                     )
                 } else if url_history.access_denied {
                     (
@@ -1158,6 +1167,8 @@ impl Delegate {
                     || state.scoped_refresh_timer.borrow().is_some()
                 {
                     tr!("正在更新浏览记录…", "Updating browsing history…").into()
+                } else if open_url_deep {
+                    tr!("正在搜索完整历史…", "Searching full history…").into()
                 } else {
                     trf!(
                         "{} 个网址 · ↵ 打开 · ⌃↵ 使用输入 · ⌘R 刷新 · Esc 关闭",

@@ -4,14 +4,18 @@ mod snapshot;
 pub use input::{InputTarget, input_target};
 
 use crate::{tr, trf};
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::types::Value;
+use rusqlite::{Connection, OpenFlags, params_from_iter};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const MAX_URLS: usize = 1000;
+pub const MAX_URLS: usize = 5000;
 pub const MAX_RESULTS: usize = 100;
 const MAX_PROFILES: usize = 32;
+/// Upper bound on rows fetched from the full `Default` profile during the
+/// fallback search, before ranking.
+const DEEP_SEARCH_LIMIT: usize = 4000;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Page {
@@ -227,4 +231,83 @@ fn read_profile(profile: &Path) -> Result<Vec<Page>, Box<dyn std::error::Error>>
         }
     }
     Ok(pages)
+}
+
+/// Escape a query term for use inside a SQL `LIKE` pattern with `ESCAPE '\'`,
+/// so literal `%`, `_`, and `\` are not treated as wildcards.
+pub fn escape_like(term: &str) -> String {
+    let mut escaped = String::with_capacity(term.len());
+    for ch in term.chars() {
+        if matches!(ch, '\\' | '%' | '_') {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    escaped
+}
+
+/// Read a profile's whole `urls` table filtered by `terms` (every term must
+/// match the URL or title), most recent first, up to `DEEP_SEARCH_LIMIT` rows.
+fn read_profile_matching(
+    profile: &Path,
+    terms: &[String],
+) -> Result<Vec<Page>, Box<dyn std::error::Error>> {
+    let snapshot = snapshot::Snapshot::new(profile)?;
+    let db = Connection::open_with_flags(
+        snapshot.database(),
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    db.execute_batch("PRAGMA trusted_schema=OFF; PRAGMA temp_store=MEMORY; PRAGMA query_only=ON;")?;
+    let mut sql = String::from(
+        "SELECT url, substr(COALESCE(title, ''), 1, 1024), last_visit_time FROM urls WHERE hidden=0 AND last_visit_time>0 AND length(url)<=16384 AND (url LIKE 'https://%' OR url LIKE 'http://%')",
+    );
+    for _ in terms {
+        sql.push_str(" AND (url LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\')");
+    }
+    sql.push_str(" ORDER BY last_visit_time DESC, id DESC LIMIT ?");
+    let mut params: Vec<Value> = Vec::with_capacity(terms.len() * 2 + 1);
+    for term in terms {
+        let pattern = format!("%{}%", escape_like(term));
+        params.push(Value::Text(pattern.clone()));
+        params.push(Value::Text(pattern));
+    }
+    params.push(Value::Integer(DEEP_SEARCH_LIMIT as i64));
+    let mut statement = db.prepare(&sql)?;
+    let rows = statement.query_map(params_from_iter(params), |row| {
+        let url: String = row.get(0)?;
+        let title: String = row.get(1)?;
+        Ok(Page {
+            title: if title.trim().is_empty() {
+                url.clone()
+            } else {
+                title
+            },
+            url,
+            last_visit_time: row.get(2)?,
+        })
+    })?;
+    let mut pages = Vec::new();
+    for row in rows {
+        let page = row?;
+        if is_web_url(&page.url) {
+            pages.push(page);
+        }
+    }
+    Ok(pages)
+}
+
+/// Search the whole `Default` profile history for `query`, beyond the recent
+/// URLs held in memory. Ranked like the in-memory list. Used as a fallback
+/// when the cached recent URLs have no match.
+pub fn deep_search_default(root: &Path, query: &str) -> Result<Vec<Page>, String> {
+    let terms: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+    if terms.is_empty() {
+        return Ok(Vec::new());
+    }
+    let profile = root.join("Default");
+    if !profile.join("History").exists() {
+        return Ok(Vec::new());
+    }
+    let pages = read_profile_matching(&profile, &terms).map_err(|error| error.to_string())?;
+    Ok(matching(&pages, query))
 }

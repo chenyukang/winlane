@@ -406,3 +406,76 @@ fn local_chrome_history_read() {
         start.elapsed()
     );
 }
+
+#[test]
+fn escape_like_escapes_sql_wildcards() {
+    use winlane::features::open_url::escape_like;
+    assert_eq!(escape_like("plain"), "plain");
+    assert_eq!(escape_like("a_b"), "a\\_b");
+    assert_eq!(escape_like("100%"), "100\\%");
+    assert_eq!(escape_like("a\\b"), "a\\\\b");
+}
+
+#[test]
+fn deep_search_reads_past_the_recent_window_in_the_default_profile() {
+    let root = tempfile::tempdir().unwrap();
+    let mut db = database(root.path(), "Default", false);
+    let tx = db.transaction().unwrap();
+    // One old page the bounded recent window cannot hold...
+    add(&tx, "https://example.test/old/dotbackup", "Old repo", 1);
+    for i in 0..MAX_URLS + 5 {
+        add(
+            &tx,
+            &format!("https://example.test/recent/{i}"),
+            "Recent page",
+            (100 + i) as i64,
+        );
+    }
+    tx.commit().unwrap();
+    // ...and an equally old one in another profile, which must stay invisible.
+    let other = database(root.path(), "Profile 1", false);
+    add(&other, "https://other.test/old/dotbackup", "Other repo", 2);
+
+    let history = load(root.path());
+    assert!(
+        matching(&history.pages, "dotbackup").is_empty(),
+        "the old URL must be outside the bounded recent window"
+    );
+    let deep = winlane::features::open_url::deep_search_default(root.path(), "dotbackup").unwrap();
+    assert_eq!(
+        deep.len(),
+        1,
+        "only the Default profile is searched: {deep:?}"
+    );
+    assert_eq!(deep[0].url, "https://example.test/old/dotbackup");
+    assert!(
+        winlane::features::open_url::deep_search_default(root.path(), "   ")
+            .unwrap()
+            .is_empty(),
+        "an empty query does not search"
+    );
+    assert!(
+        winlane::features::open_url::deep_search_default(root.path(), "absent")
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn deep_search_matches_literally_and_skips_hidden_rows() {
+    let root = tempfile::tempdir().unwrap();
+    let db = database(root.path(), "Default", false);
+    add(&db, "https://video.example.test/a_b", "Guide", 5);
+    add(&db, "https://video.example.test/axb", "Guide", 4);
+    add(&db, "https://example.test/a_b", "Video guide", 3);
+    add(&db, "https://example.test/hidden", "Video guide a_b", 9);
+    db.execute("UPDATE urls SET hidden=1 WHERE url LIKE '%hidden'", [])
+        .unwrap();
+    let deep = winlane::features::open_url::deep_search_default(root.path(), "a_b").unwrap();
+    let urls: Vec<_> = deep.iter().map(|page| page.url.as_str()).collect();
+    assert_eq!(
+        urls,
+        ["https://video.example.test/a_b", "https://example.test/a_b",],
+        "literal `_` is matched, hidden rows are excluded, most recent first"
+    );
+}

@@ -201,6 +201,10 @@ struct PendingFocus {
     recency: Vec<u64>,
 }
 
+/// Background result of a full-history fallback search for one query.
+type OpenUrlDeepResult = Result<Vec<winlane::features::open_url::Page>, String>;
+type OpenUrlDeepReceiver = Receiver<OpenUrlDeepResult>;
+
 #[derive(Default)]
 struct AppState {
     emoji_matches: RefCell<Vec<winlane::features::emoji::Emoji>>,
@@ -297,6 +301,10 @@ struct AppState {
     open_url_matches: RefCell<Vec<winlane::features::open_url::Page>>,
     open_url_history: RefCell<winlane::features::open_url::History>,
     open_url_receiver: RefCell<Option<Receiver<winlane::features::open_url::History>>>,
+    open_url_deep_receiver: RefCell<Option<OpenUrlDeepReceiver>>,
+    open_url_deep_query: RefCell<String>,
+    open_url_deep_pages: RefCell<Vec<winlane::features::open_url::Page>>,
+    open_url_deep_loaded: Cell<bool>,
     meeting_matches: RefCell<Vec<winlane::features::meeting::Meeting>>,
     meeting_results: RefCell<winlane::features::meeting::Meetings>,
     meeting_receiver: RefCell<Option<Receiver<winlane::features::meeting::Meetings>>>,
