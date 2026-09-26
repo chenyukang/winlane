@@ -1,5 +1,6 @@
 use winlane::core::config::{
-    Appearance, Config, DisplayDensity, KEYS, Shortcut, SortOrder, parse_excluded, visible_matches,
+    Appearance, Config, DisplayDensity, KEYS, PanelDisplayTarget, Shortcut, SortOrder,
+    parse_excluded, visible_matches,
 };
 use winlane::core::search::WindowInfo;
 
@@ -27,6 +28,7 @@ fn saved_preferences_round_trip_without_window_data() {
         sort: SortOrder::Title,
         appearance: Appearance::Dark,
         display_density: DisplayDensity::Compact,
+        panel_display_target: PanelDisplayTarget::ActiveDisplay,
         excluded_apps: vec!["Safari".into()],
         ..Config::default()
     };
@@ -34,6 +36,10 @@ fn saved_preferences_round_trip_without_window_data() {
     assert_eq!(Config::from_json(&json).unwrap(), config);
     assert!(!json.contains("Zebra"));
     assert_eq!(Config::from_json("{}").unwrap(), Config::default());
+    assert_eq!(
+        Config::from_json("{}").unwrap().panel_display_target,
+        PanelDisplayTarget::AllDisplays
+    );
     assert_eq!(
         Config::from_json("{}").unwrap().display_density,
         DisplayDensity::Normal

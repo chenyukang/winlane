@@ -326,7 +326,21 @@ impl Delegate {
             .borrow_mut()
             .configure(&candidate.auto_appclose);
         input_source::set_rules(&candidate.input_rules, self.mtm());
+        let panel_target_changed = candidate.panel_display_target != previous.panel_display_target;
         self.ivars().config.replace(candidate);
+        if panel_target_changed {
+            let visible = self.any_panel_visible();
+            if self.ivars().config.borrow().panel_display_target
+                == PanelDisplayTarget::ActiveDisplay
+            {
+                self.select_active_panel_display();
+            }
+            self.sync_displays();
+            self.render();
+            if visible {
+                self.present_panels();
+            }
+        }
         self.update_scrolling_status();
         if input_rules_changed {
             self.configure_app_input_rules();

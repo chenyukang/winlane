@@ -1,6 +1,64 @@
 use super::*;
 
 impl Delegate {
+    pub(super) fn select_active_panel_display(&self) {
+        let screens = NSScreen::screens(self.mtm());
+        let displays: Vec<_> = screens
+            .iter()
+            .enumerate()
+            .map(|(index, screen)| Display {
+                id: screen
+                    .deviceDescription()
+                    .objectForKey(ns_string!("NSScreenNumber"))
+                    .and_then(|value| value.downcast::<NSNumber>().ok())
+                    .map_or(index as u32, |number| number.unsignedIntValue()),
+                frame: display_rect(screen.frame()),
+                visible: display_rect(screen.visibleFrame()),
+            })
+            .collect();
+        let pointer = NSEvent::mouseLocation();
+        let pointer = (pointer.x, pointer.y);
+        let pointer_on_screen = displays.iter().any(|screen| {
+            pointer.0 >= screen.frame.x
+                && pointer.0 < screen.frame.x + screen.frame.width
+                && pointer.1 >= screen.frame.y
+                && pointer.1 < screen.frame.y + screen.frame.height
+        });
+        let window_center = if pointer_on_screen {
+            None
+        } else {
+            self.frontmost_window_center(&displays)
+        };
+        self.ivars().active_panel_display.set(active_display(
+            &displays,
+            pointer,
+            window_center,
+            displays.first().map(|screen| screen.id),
+        ));
+    }
+
+    fn frontmost_window_center(&self, displays: &[Display]) -> Option<(f64, f64)> {
+        let pid = NSWorkspace::sharedWorkspace()
+            .frontmostApplication()
+            .map(|app| app.processIdentifier())
+            .filter(|pid| *pid != std::process::id() as i32)
+            .or_else(|| {
+                (self.ivars().previous_pid.get() > 0).then_some(self.ivars().previous_pid.get())
+            })?;
+        let server_id = accessibility::focused_window_server_id(pid).or_else(|| {
+            if self.ivars().previous_pid.get() != pid {
+                return None;
+            }
+            self.ivars()
+                .previous_window
+                .get()
+                .and_then(|id| self.ivars().window_server_ids.borrow().get(&id).copied())
+        })?;
+        let (x, y) = crate::macos::platform::window_server::window_center(server_id)?;
+        let main = displays.first()?;
+        Some((x, main.frame.y + main.frame.height - y))
+    }
+
     pub(super) fn panels(&self) -> Vec<Rc<PanelUi>> {
         self.ivars().panels.borrow().clone()
     }
@@ -39,7 +97,22 @@ impl Delegate {
             })
             .collect();
         let pointer = NSEvent::mouseLocation();
-        let positions = placements(&displays, (WIDTH, HEIGHT), (pointer.x, pointer.y), focused);
+        let target = self.ivars().config.borrow().panel_display_target;
+        let focused = if target == PanelDisplayTarget::ActiveDisplay {
+            let selected = state
+                .active_panel_display
+                .get()
+                .filter(|id| displays.iter().any(|display| display.id == *id))
+                .or_else(|| displays.first().map(|display| display.id));
+            state.active_panel_display.set(selected);
+            selected
+        } else {
+            focused
+        };
+        let mut positions = placements(&displays, (WIDTH, HEIGHT), (pointer.x, pointer.y), focused);
+        if target == PanelDisplayTarget::ActiveDisplay {
+            positions.retain(|position| position.receives_keyboard);
+        }
         state.keyboard_display.set(
             positions
                 .iter()

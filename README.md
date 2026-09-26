@@ -37,7 +37,7 @@ Hold **Command** and press **Tab**. Keep holding Command while you select a wind
 | **Space** | Enter search mode. |
 | **Esc** | Cancel. |
 
-Each row is a window, so different projects or documents in the same app appear separately. With the default Recent sorting, the current window comes first and the previous window is initially selected. On multiple displays, the picker appears on every screen with a shared selection.
+Each row is a window, so different projects or documents in the same app appear separately. With the default Recent sorting, the current window comes first and the previous window is initially selected. On multiple displays, the picker appears on every screen with a shared selection by default. In **Settings → Appearance → Display**, choose **Active display** to show search and window switching panels only on the screen under the pointer when they open. If the pointer is outside all screens, Winlane uses the focused window of the foreground app, then the main display. The panel stays on its chosen screen until reopened or that screen disconnects.
 
 The short letter labels beside windows are their **aliases**. For example, hold Command, type `g`, then release Command to switch to the window labeled `g`. Winlane assigns aliases automatically; you can set your own in Settings.
 

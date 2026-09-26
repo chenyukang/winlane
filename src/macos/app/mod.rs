@@ -62,9 +62,11 @@ use std::time::{Duration, Instant};
 use winlane::core::aliases::{AliasInput, AliasMatch, Aliases, AppIdentity};
 use winlane::core::app_catalog::{InstalledApp, matching_apps};
 use winlane::core::commands::{CommandId, matching_commands};
-use winlane::core::config::{ApplicationTarget, Config, DisplayDensity, visible_matches};
+use winlane::core::config::{
+    ApplicationTarget, Config, DisplayDensity, PanelDisplayTarget, visible_matches,
+};
 use winlane::core::discovery::FocusRead;
-use winlane::core::displays::{Display, Rect, placements};
+use winlane::core::displays::{Display, Rect, active_display, placements};
 use winlane::core::search::WindowInfo;
 use winlane::core::shortcuts::{
     Action, ActionKind, PanelCommand, PanelMode, SPACE, SwitchSelection, panel_command,
@@ -220,6 +222,7 @@ struct AppState {
     scoped_refresh_timer: RefCell<Option<Retained<NSTimer>>>,
     current_app_only: Cell<bool>,
     keyboard_display: Cell<Option<u32>>,
+    active_panel_display: Cell<Option<u32>>,
     changing_displays: Cell<bool>,
     syncing_controls: Cell<bool>,
     preparing_panel: Cell<bool>,

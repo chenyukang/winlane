@@ -458,6 +458,7 @@ fn verify_lazy_pages(target: &AnyObject, mtm: MainThreadMarker) {
     let mut config = Config {
         appearance: Appearance::Dark,
         display_density: DisplayDensity::Compact,
+        panel_display_target: winlane::core::config::PanelDisplayTarget::ActiveDisplay,
         input_rules: winlane::features::input_rules::Settings::for_winlane(InputMethod::Chinese),
         sort: SortOrder::Title,
         excluded_apps: vec!["com.example.hidden".into()],
@@ -578,6 +579,17 @@ pub fn verify_autosave_controls(settings: &SettingsWindow, saved: impl Fn() -> C
         settings.appearance().density.selectItemAtIndex(index);
         send(&settings.appearance().density);
         assert_eq!(saved().display_density, density);
+    }
+    for (index, target) in [
+        (1, winlane::core::config::PanelDisplayTarget::ActiveDisplay),
+        (0, winlane::core::config::PanelDisplayTarget::AllDisplays),
+    ] {
+        settings
+            .appearance()
+            .panel_display_target
+            .selectItemAtIndex(index);
+        send(&settings.appearance().panel_display_target);
+        assert_eq!(saved().panel_display_target, target);
     }
     settings
         .windows()

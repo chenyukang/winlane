@@ -269,6 +269,13 @@ pub enum DisplayDensity {
     Normal,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PanelDisplayTarget {
+    #[default]
+    AllDisplays,
+    ActiveDisplay,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApplicationTarget {
     pub bundle_id: String,
@@ -336,6 +343,7 @@ pub struct Config {
     pub sort: SortOrder,
     pub appearance: Appearance,
     pub display_density: DisplayDensity,
+    pub panel_display_target: PanelDisplayTarget,
     pub background_opacity: u8,
     pub show_usage_hints: bool,
     pub logging: crate::core::logging::Settings,
@@ -366,6 +374,7 @@ impl Default for Config {
             sort: SortOrder::Recent,
             appearance: Appearance::System,
             display_density: DisplayDensity::default(),
+            panel_display_target: PanelDisplayTarget::default(),
             background_opacity: 100,
             show_usage_hints: true,
             logging: Default::default(),
