@@ -1,11 +1,11 @@
 use super::*;
 use crate::macos::platform::preferences as preference_store;
 
-/// Target pixel size for cached window icons. This is larger than the row's
-/// 20–24 pt display so the same cached image can serve a larger icon view
-/// later without re-reading the source ICNS, while still avoiding caching a
-/// full-size (up to 1024 px) representation per running app.
-const WINDOW_ICON_PIXELS: f64 = 256.0;
+/// Target pixel size for cached window icons. Rows draw them at 20–24 pt, so
+/// 96 px covers a 3× display with room for a slightly larger icon view, while
+/// one full-size (up to 1024 px) ICNS representation per running app would
+/// cost roughly a hundred times as much memory.
+const WINDOW_ICON_PIXELS: f64 = 96.0;
 
 fn downsampled_icon(source: &NSImage, pixels: f64) -> Retained<NSImage> {
     let image = NSImage::initWithSize(NSImage::alloc(), NSSize::new(pixels, pixels));
