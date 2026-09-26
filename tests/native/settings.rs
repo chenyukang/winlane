@@ -861,6 +861,8 @@ fn verify_multiple_search_controls(settings: &SettingsWindow) {
 }
 
 fn verify_settings_bounds(parent: &NSView) {
+    let bounds = parent.bounds().size;
+    let mut placed = Vec::new();
     for child in parent.subviews() {
         let frame = child.frame();
         assert!(
@@ -868,11 +870,17 @@ fn verify_settings_bounds(parent: &NSView) {
             "negative control origin: {frame:?}"
         );
         assert!(
-            frame.origin.x + frame.size.width <= parent.bounds().size.width + 0.5,
+            frame.origin.x + frame.size.width <= bounds.width + 0.5,
             "control wider than its container: {frame:?}"
         );
+        // Manual frames let a control run into the one below it even when each
+        // stays inside the container. Hidden controls and full-bleed
+        // backgrounds are exempt: they are meant to sit under everything else.
+        if !child.isHidden() && frame.size != bounds {
+            placed.push(frame);
+        }
         assert!(
-            frame.origin.y + frame.size.height <= parent.bounds().size.height + 0.5,
+            frame.origin.y + frame.size.height <= bounds.height + 0.5,
             "control taller than its container: {frame:?}"
         );
         if child.downcast_ref::<NSControl>().is_none()
@@ -880,6 +888,17 @@ fn verify_settings_bounds(parent: &NSView) {
             && child.downcast_ref::<NSScrollView>().is_none()
         {
             verify_settings_bounds(&child);
+        }
+    }
+    for (index, first) in placed.iter().enumerate() {
+        for second in placed.iter().skip(index + 1) {
+            assert!(
+                !(first.origin.x < second.origin.x + second.size.width
+                    && second.origin.x < first.origin.x + first.size.width
+                    && first.origin.y < second.origin.y + second.size.height
+                    && second.origin.y < first.origin.y + first.size.height),
+                "settings controls overlap: {first:?} and {second:?}"
+            );
         }
     }
 }

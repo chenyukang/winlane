@@ -13,11 +13,11 @@ pub(super) struct AppearancePage {
 
 impl AppearancePage {
     pub(super) fn new(appearance_tab: &NSView, target: &AnyObject, mtm: MainThreadMarker) -> Self {
-        let display = settings_group(appearance_tab, tr!("显示", "Display"), 570.0, 310.0, mtm);
+        let display = settings_group(appearance_tab, tr!("显示", "Display"), 570.0, 290.0, mtm);
         display.addSubview(&label(
             tr!("外观", "Appearance"),
             14.0,
-            rect(20.0, 268.0, 300.0, 24.0),
+            rect(20.0, 256.0, 300.0, 24.0),
             mtm,
         ));
         let appearance = popup(
@@ -26,7 +26,7 @@ impl AppearancePage {
                 tr!("浅色", "Light"),
                 tr!("深色", "Dark"),
             ],
-            rect(420.0, 266.0, 300.0, 28.0),
+            rect(420.0, 254.0, 300.0, 28.0),
             mtm,
         );
         display.addSubview(&appearance);
