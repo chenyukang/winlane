@@ -82,6 +82,17 @@ impl Delegate {
         self.ivars().panels.borrow().clone()
     }
 
+    /// Close and forget every panel so the next `sync_displays` rebuilds them.
+    /// The backdrop material is fixed when a panel is created, so a material
+    /// change has to go through here.
+    pub(super) fn discard_panels(&self) {
+        for ui in self.ivars().panels.borrow_mut().drain(..) {
+            ui.panel.setDelegate(None);
+            ui.panel.orderOut(None);
+            ui.panel.close();
+        }
+    }
+
     pub(super) fn any_panel_visible(&self) -> bool {
         self.panels().iter().any(|ui| ui.panel.isVisible())
     }
@@ -221,7 +232,11 @@ impl Delegate {
         };
         panel.setContentView(Some(&root));
         panel.setInitialFirstResponder(Some(&root));
-        let backdrop = PanelBackdrop::new(root.bounds(), mtm);
+        let backdrop = if self.ivars().config.borrow().solid_background {
+            PanelBackdrop::tinted(root.bounds(), mtm)
+        } else {
+            PanelBackdrop::new(root.bounds(), mtm)
+        };
         root.addSubview(backdrop.view());
         let root = &backdrop.content;
 

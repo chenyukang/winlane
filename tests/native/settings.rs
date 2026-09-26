@@ -625,6 +625,14 @@ pub fn verify_autosave_controls(settings: &SettingsWindow, saved: impl Fn() -> C
         send(&settings.appearance().usage_hints);
         assert_eq!(saved().show_usage_hints, show);
     }
+    for (state, solid) in [
+        (NSControlStateValueOn, true),
+        (NSControlStateValueOff, false),
+    ] {
+        settings.appearance().solid_background.setState(state);
+        send(&settings.appearance().solid_background);
+        assert_eq!(saved().solid_background, solid);
+    }
     settings.windows().sort.selectItemAtIndex(1);
     send(&settings.windows().sort);
     assert_eq!(saved().sort, SortOrder::Application);

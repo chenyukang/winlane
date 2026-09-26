@@ -163,7 +163,7 @@ Shortcut conflicts show the existing binding so you can choose another combinati
 
 ### Appearance and window lists
 
-Choose **Normal** or **Compact** density, system/light/dark appearance, background opacity, and optional usage hints in **Settings → Appearance**. Normal is the default.
+Choose **Normal** or **Compact** density, system/light/dark appearance, background opacity, and optional usage hints in **Settings → Appearance**. Normal is the default. Turn on **Solid background** to replace the frosted glass material with a flat tint: it uses noticeably less graphics memory, at the cost of the blur.
 
 Use **Settings → Windows** to change sorting, switcher delay, minimized-window handling, and excluded apps. Interface language and launch at login are under **General**.
 

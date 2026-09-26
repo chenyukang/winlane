@@ -25,6 +25,13 @@ define_class!(
                 (tint(0xf5f7ff, 0.94), tint(0xecf8fa, 0.88))
             };
             if let Some(gradient) = NSGradient::initWithStartingColor_endingColor(NSGradient::alloc(), &start, &end) {
+                // Round the flat tint to match the glass and popover materials.
+                NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(
+                    self.bounds(),
+                    PANEL_CORNER_RADIUS,
+                    PANEL_CORNER_RADIUS,
+                )
+                .addClip();
                 gradient.drawInRect_angle(self.bounds(), -25.0);
             }
         }
@@ -35,11 +42,18 @@ pub(crate) fn glass_available() -> bool {
     AnyClass::get(c"NSGlassEffectView").is_some()
 }
 
+/// Corner radius shared by the glass, popover and flat tint materials.
+const PANEL_CORNER_RADIUS: f64 = 18.0;
+
 enum PanelMaterial {
     Glass(Retained<NSGlassEffectView>),
     Frosted {
         container: Retained<NSView>,
         blur: Retained<NSVisualEffectView>,
+    },
+    Tinted {
+        container: Retained<NSView>,
+        surface: Retained<PanelSurface>,
     },
 }
 
@@ -51,6 +65,29 @@ pub(crate) struct PanelBackdrop {
 impl PanelBackdrop {
     pub(crate) fn new(frame: NSRect, mtm: MainThreadMarker) -> Self {
         Self::with_glass(frame, mtm, glass_available())
+    }
+
+    /// A flat gradient tint with no blur or glass. Far cheaper in graphics
+    /// memory than the platform materials, at the cost of the frosted look.
+    pub(crate) fn tinted(frame: NSRect, mtm: MainThreadMarker) -> Self {
+        let resize = NSAutoresizingMaskOptions::ViewWidthSizable
+            | NSAutoresizingMaskOptions::ViewHeightSizable;
+        let bounds = NSRect::new(NSPoint::ZERO, frame.size);
+        let content = NSView::initWithFrame(NSView::alloc(mtm), bounds);
+        content.setAutoresizingMask(resize);
+        let container = NSView::initWithFrame(NSView::alloc(mtm), frame);
+        // SAFETY: PanelSurface inherits NSView's frame initializer.
+        let surface: Retained<PanelSurface> =
+            unsafe { msg_send![PanelSurface::alloc(mtm), initWithFrame: bounds] };
+        surface.setAutoresizingMask(resize);
+        container.addSubview(&surface);
+        container.addSubview(&content);
+        let backdrop = Self {
+            content,
+            material: PanelMaterial::Tinted { container, surface },
+        };
+        backdrop.view().setAutoresizingMask(resize);
+        backdrop
     }
 
     fn with_glass(frame: NSRect, mtm: MainThreadMarker, glass: bool) -> Self {
@@ -82,15 +119,25 @@ impl PanelBackdrop {
         match &self.material {
             PanelMaterial::Glass(view) => view,
             PanelMaterial::Frosted { container, .. } => container,
+            PanelMaterial::Tinted { container, .. } => container,
         }
     }
 
     pub(crate) fn set_opacity(&self, opacity: f64) {
-        // Glass owns the content; fading that view would also fade text and icons.
-        if let PanelMaterial::Frosted { blur, .. } = &self.material
-            && blur.alphaValue() != opacity
-        {
-            blur.setAlphaValue(opacity);
+        match &self.material {
+            // Glass owns the content; fading that view would also fade text and icons.
+            PanelMaterial::Glass(_) => {}
+            PanelMaterial::Frosted { blur, .. } => {
+                if blur.alphaValue() != opacity {
+                    blur.setAlphaValue(opacity);
+                }
+            }
+            // Fade only the tint so labels and icons stay opaque.
+            PanelMaterial::Tinted { surface, .. } => {
+                if surface.alphaValue() != opacity {
+                    surface.setAlphaValue(opacity);
+                }
+            }
         }
     }
 

@@ -327,13 +327,18 @@ impl Delegate {
             .configure(&candidate.auto_appclose);
         input_source::set_rules(&candidate.input_rules, self.mtm());
         let panel_target_changed = candidate.panel_display_target != previous.panel_display_target;
+        let solid_background_changed = candidate.solid_background != previous.solid_background;
         self.ivars().config.replace(candidate);
-        if panel_target_changed {
+        if panel_target_changed || solid_background_changed {
             let visible = self.any_panel_visible();
-            if self.ivars().config.borrow().panel_display_target
-                == PanelDisplayTarget::ActiveDisplay
+            if panel_target_changed
+                && self.ivars().config.borrow().panel_display_target
+                    == PanelDisplayTarget::ActiveDisplay
             {
                 self.select_active_panel_display();
+            }
+            if solid_background_changed {
+                self.discard_panels();
             }
             self.sync_displays();
             self.render();

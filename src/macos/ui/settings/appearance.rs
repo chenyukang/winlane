@@ -8,15 +8,16 @@ pub(super) struct AppearancePage {
     pub(super) opacity_input: Retained<NSTextField>,
     pub(super) opacity_preview: crate::macos::ui::material::PanelBackdrop,
     pub(super) usage_hints: Retained<NSButton>,
+    pub(super) solid_background: Retained<NSButton>,
 }
 
 impl AppearancePage {
     pub(super) fn new(appearance_tab: &NSView, target: &AnyObject, mtm: MainThreadMarker) -> Self {
-        let display = settings_group(appearance_tab, tr!("显示", "Display"), 570.0, 270.0, mtm);
+        let display = settings_group(appearance_tab, tr!("显示", "Display"), 570.0, 310.0, mtm);
         display.addSubview(&label(
             tr!("外观", "Appearance"),
             14.0,
-            rect(20.0, 228.0, 300.0, 24.0),
+            rect(20.0, 268.0, 300.0, 24.0),
             mtm,
         ));
         let appearance = popup(
@@ -25,11 +26,11 @@ impl AppearancePage {
                 tr!("浅色", "Light"),
                 tr!("深色", "Dark"),
             ],
-            rect(420.0, 226.0, 300.0, 28.0),
+            rect(420.0, 266.0, 300.0, 28.0),
             mtm,
         );
         display.addSubview(&appearance);
-        row_divider(&display, 206.0, mtm);
+        row_divider(&display, 246.0, mtm);
         row_text(
             &display,
             tr!("显示密度", "Display density"),
@@ -37,13 +38,13 @@ impl AppearancePage {
                 "标准模式使用更大的文字和图标。",
                 "Normal uses larger text and icons."
             ),
-            202.0,
+            242.0,
             380.0,
             mtm,
         );
         let density = popup(
             &[tr!("紧凑", "Compact"), tr!("标准", "Normal")],
-            rect(420.0, 151.0, 300.0, 28.0),
+            rect(420.0, 191.0, 300.0, 28.0),
             mtm,
         );
         density.setAccessibilityLabel(Some(&NSString::from_str(tr!(
@@ -51,7 +52,7 @@ impl AppearancePage {
             "Display density"
         ))));
         display.addSubview(&density);
-        row_divider(&display, 129.0, mtm);
+        row_divider(&display, 169.0, mtm);
         row_text(
             &display,
             tr!("面板显示位置", "Panel displays"),
@@ -59,7 +60,7 @@ impl AppearancePage {
                 "搜索和窗口切换面板显示在哪些屏幕上。",
                 "Choose where search and window switching panels appear."
             ),
-            125.0,
+            165.0,
             380.0,
             mtm,
         );
@@ -68,7 +69,7 @@ impl AppearancePage {
                 tr!("所有显示器", "All displays"),
                 tr!("活动显示器", "Active display"),
             ],
-            rect(420.0, 74.0, 300.0, 28.0),
+            rect(420.0, 114.0, 300.0, 28.0),
             mtm,
         );
         panel_display_target.setAccessibilityLabel(Some(&NSString::from_str(tr!(
@@ -76,7 +77,7 @@ impl AppearancePage {
             "Panel displays"
         ))));
         display.addSubview(&panel_display_target);
-        row_divider(&display, 52.0, mtm);
+        row_divider(&display, 92.0, mtm);
         let usage_hints = checkbox(
             tr!(
                 "显示底部提示和设置按钮",
@@ -84,9 +85,20 @@ impl AppearancePage {
             ),
             mtm,
         );
-        usage_hints.setFrame(rect(20.0, 13.0, 690.0, 26.0));
+        usage_hints.setFrame(rect(20.0, 53.0, 690.0, 26.0));
         set_action(&usage_hints, target, sel!(settingsChanged:));
         display.addSubview(&usage_hints);
+        row_divider(&display, 47.0, mtm);
+        let solid_background = checkbox(
+            tr!(
+                "纯色背景（不使用毛玻璃，省内存）",
+                "Solid background (no blur, less memory)"
+            ),
+            mtm,
+        );
+        solid_background.setFrame(rect(20.0, 13.0, 690.0, 26.0));
+        set_action(&solid_background, target, sel!(settingsChanged:));
+        display.addSubview(&solid_background);
         let opacity = settings_group(
             appearance_tab,
             tr!("背景不透明度", "Background opacity"),
@@ -173,6 +185,7 @@ impl AppearancePage {
             opacity_input,
             opacity_preview,
             usage_hints,
+            solid_background,
         }
     }
     pub(super) fn fill(&self, config: &Config) {
@@ -196,6 +209,11 @@ impl AppearancePage {
         } else {
             NSControlStateValueOff
         });
+        self.solid_background.setState(if config.solid_background {
+            NSControlStateValueOn
+        } else {
+            NSControlStateValueOff
+        });
         self.set_opacity(config.background_opacity);
     }
     pub(super) fn read(&self, config: &mut Config) -> Result<(), String> {
@@ -213,6 +231,7 @@ impl AppearancePage {
             _ => PanelDisplayTarget::AllDisplays,
         };
         config.show_usage_hints = self.usage_hints.state() == NSControlStateValueOn;
+        config.solid_background = self.solid_background.state() == NSControlStateValueOn;
         config.background_opacity = self.read_opacity()?;
         Ok(())
     }
