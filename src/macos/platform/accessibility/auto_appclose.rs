@@ -78,7 +78,7 @@ fn snapshot(rule: &Rule, inventory: &Inventory) -> Result<Snapshot, String> {
         let published = application
             .windows()
             .map_err(|_| "window list unavailable")?;
-        for window in complete_windows(published, pid, inventory) {
+        for window in complete_windows(published, pid, inventory, false) {
             if window.string("AXSubrole").as_deref() != Some("AXStandardWindow") {
                 continue;
             }

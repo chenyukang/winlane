@@ -3,7 +3,7 @@ use super::*;
 pub fn inspect_published_window_changes(pid: i32) {
     let mut inventory = Inventory::read();
     let application = Element::application(pid).unwrap();
-    let windows = all_windows(&application, pid, &inventory);
+    let windows = all_windows(&application, pid, &inventory, true);
     let expected: HashSet<_> = windows.iter().filter_map(Element::server_id).collect();
     assert!(
         expected.len() >= 3,
@@ -15,7 +15,7 @@ pub fn inspect_published_window_changes(pid: i32) {
     // active window or Space. Remote lookups still use the live AX objects.
     for round in 0..12 {
         let published = &windows[round % windows.len()];
-        let found = complete_windows(vec![Element(published.0.clone())], pid, &inventory);
+        let found = complete_windows(vec![Element(published.0.clone())], pid, &inventory, true);
         let found: HashSet<_> = found.iter().filter_map(Element::server_id).collect();
         println!(
             "published transition={} current={:?} windows={} ids={found:?}",
@@ -29,7 +29,7 @@ pub fn inspect_published_window_changes(pid: i32) {
         );
     }
 
-    let found = complete_windows(Vec::new(), pid, &inventory);
+    let found = complete_windows(Vec::new(), pid, &inventory, true);
     let found: HashSet<_> = found.iter().filter_map(Element::server_id).collect();
     assert_eq!(
         found, expected,
@@ -38,7 +38,7 @@ pub fn inspect_published_window_changes(pid: i32) {
 
     let closed = windows.last().unwrap().server_id().unwrap();
     inventory.normal.get_mut(&pid).unwrap().remove(&closed);
-    let found = complete_windows(vec![Element(windows[0].0.clone())], pid, &inventory);
+    let found = complete_windows(vec![Element(windows[0].0.clone())], pid, &inventory, true);
     let found: HashSet<_> = found.iter().filter_map(Element::server_id).collect();
     assert!(
         !found.contains(&closed),
@@ -46,7 +46,7 @@ pub fn inspect_published_window_changes(pid: i32) {
     );
     assert_eq!(found.len(), expected.len() - 1);
     inventory.normal.get_mut(&pid).unwrap().insert(closed);
-    let found = complete_windows(vec![Element(windows[0].0.clone())], pid, &inventory);
+    let found = complete_windows(vec![Element(windows[0].0.clone())], pid, &inventory, true);
     let found: HashSet<_> = found.iter().filter_map(Element::server_id).collect();
     assert_eq!(
         found, expected,
@@ -62,7 +62,7 @@ pub fn inspect_published_window_changes(pid: i32) {
 pub fn inspect_remembered_windows_stay_listed(pid: i32) {
     let mut inventory = Inventory::read();
     let application = Element::application(pid).unwrap();
-    let live = all_windows(&application, pid, &inventory);
+    let live = all_windows(&application, pid, &inventory, true);
     let element = Element(live.first().expect("requires a live window").0.clone());
     let info = WindowInfo {
         id: element.id(pid),
@@ -83,7 +83,7 @@ pub fn inspect_remembered_windows_stay_listed(pid: i32) {
         .insert(fake_server_id);
     remember_window(pid, fake_server_id, &info, &element);
 
-    let scanned = scan_application(pid, "Winlane", &inventory).unwrap();
+    let scanned = scan_application(pid, "Winlane", &inventory, true).unwrap();
     let remembered = scanned
         .iter()
         .find(|(window, _)| window.id == info.id)
@@ -96,11 +96,39 @@ pub fn inspect_remembered_windows_stay_listed(pid: i32) {
         .get_mut(&pid)
         .unwrap()
         .remove(&fake_server_id);
-    let scanned = scan_application(pid, "Winlane", &inventory).unwrap();
+    let scanned = scan_application(pid, "Winlane", &inventory, true).unwrap();
     assert!(
         scanned.iter().all(|(window, _)| window.id != info.id),
         "closed windows must leave the list"
     );
+
+    // With minimized-window tracking disabled, remembered data is released
+    // and hidden windows are not merged back into the list.
+    inventory
+        .normal
+        .entry(pid)
+        .or_default()
+        .insert(fake_server_id);
+    remember_window(pid, fake_server_id, &info, &element);
+    let scanned = scan_application(pid, "Winlane", &inventory, false).unwrap();
+    assert!(
+        scanned.iter().all(|(window, _)| window.id != info.id),
+        "tracking disabled must not list remembered windows"
+    );
+    assert!(
+        remembered_windows()
+            .lock()
+            .unwrap()
+            .get(&pid)
+            .is_none_or(|entries| entries.is_empty()),
+        "tracking disabled must drop remembered windows"
+    );
+    inventory
+        .normal
+        .get_mut(&pid)
+        .unwrap()
+        .remove(&fake_server_id);
+
     remote_scans().lock().unwrap().remove(&pid);
     remembered_windows().lock().unwrap().remove(&pid);
     println!("Remembered windows stay listed while alive and leave when closed.");

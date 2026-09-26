@@ -31,7 +31,7 @@ pub(crate) fn inspect_window_discovery(bundle: &str) {
     }
     for round in 0..12 {
         let start = Instant::now();
-        let (windows, _) = accessibility::list_windows(&apps);
+        let (windows, _) = accessibility::list_windows(&apps, true);
         println!(
             "scan round={} windows={} elapsed_ms={:.1} ids={:?}",
             round + 1,

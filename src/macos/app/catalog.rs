@@ -17,12 +17,14 @@ impl Delegate {
         }
         state.closed_windows.borrow_mut().clear();
         let identities = state.identities.borrow().clone();
+        let include_minimized = state.config.borrow().include_minimized;
         state.loading.set(true);
         let (tx, rx) = mpsc::channel();
         state.receiver.replace(Some(rx));
         let wake = state.wake.get().unwrap().handle();
         std::thread::spawn(move || {
-            let snapshot = objc2::rc::autoreleasepool(|_| read_window_snapshot(identities));
+            let snapshot =
+                objc2::rc::autoreleasepool(|_| read_window_snapshot(identities, include_minimized));
             let _ = tx.send(snapshot);
             wake.signal();
         });
@@ -353,7 +355,10 @@ impl Delegate {
     }
 }
 
-pub(super) fn read_window_snapshot(cached: HashMap<i32, AppIdentity>) -> WindowSnapshot {
+pub(super) fn read_window_snapshot(
+    cached: HashMap<i32, AppIdentity>,
+    include_minimized: bool,
+) -> WindowSnapshot {
     let mut identities = HashMap::new();
     // runningApplications is thread-safe. Keep bundle metadata and AX reads
     // together in the worker; only plain Rust data crosses back to AppKit.
@@ -387,7 +392,7 @@ pub(super) fn read_window_snapshot(cached: HashMap<i32, AppIdentity>) -> WindowS
             )
         })
         .collect::<Vec<_>>();
-    let (windows, server_ids) = accessibility::list_windows(&apps);
+    let (windows, server_ids) = accessibility::list_windows(&apps, include_minimized);
     WindowSnapshot {
         windows,
         identities,

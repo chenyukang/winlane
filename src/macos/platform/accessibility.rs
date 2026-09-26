@@ -294,16 +294,24 @@ impl Element {
     }
 
     fn is_window(&self) -> bool {
+        self.switchable(true)
+    }
+
+    /// Whether this element is a window worth listing. With `minimized_ok`,
+    /// minimized windows are accepted even when they report `AXDialog`.
+    fn switchable(&self, minimized_ok: bool) -> bool {
         let role = self.string("AXRole");
         let subrole = self.string("AXSubrole");
         // Minimized AppKit windows report `AXDialog`; only accept that
         // subrole when the window is actually minimized.
-        let minimized =
-            if role.as_deref() == Some("AXWindow") && subrole.as_deref() == Some("AXDialog") {
-                self.boolean("AXMinimized")
-            } else {
-                None
-            };
+        let minimized = if minimized_ok
+            && role.as_deref() == Some("AXWindow")
+            && subrole.as_deref() == Some("AXDialog")
+        {
+            self.boolean("AXMinimized")
+        } else {
+            None
+        };
         record(Level::Debug, "accessibility", "candidate", || {
             format!("role={role:?} subrole={subrole:?}")
         });
@@ -358,11 +366,26 @@ pub fn request_permission() {
     unsafe { AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef()) };
 }
 
-fn all_windows(application: &Element, pid: i32, inventory: &Inventory) -> Vec<Element> {
-    complete_windows(application.windows().unwrap_or_default(), pid, inventory)
+fn all_windows(
+    application: &Element,
+    pid: i32,
+    inventory: &Inventory,
+    include_minimized: bool,
+) -> Vec<Element> {
+    complete_windows(
+        application.windows().unwrap_or_default(),
+        pid,
+        inventory,
+        include_minimized,
+    )
 }
 
-fn complete_windows(published: Vec<Element>, pid: i32, inventory: &Inventory) -> Vec<Element> {
+fn complete_windows(
+    published: Vec<Element>,
+    pid: i32,
+    inventory: &Inventory,
+    include_minimized: bool,
+) -> Vec<Element> {
     let mut seen = HashSet::new();
     let mut windows: Vec<_> = published
         .into_iter()
@@ -416,7 +439,7 @@ fn complete_windows(published: Vec<Element>, pid: i32, inventory: &Inventory) ->
         }
         if let Some(window) = Element::from_remote_id(pid, *element_id)
             && window.server_id() == Some(server_id)
-            && window.is_window()
+            && window.switchable(include_minimized)
         {
             missing.remove(&server_id);
             windows.push(window);
@@ -436,7 +459,7 @@ fn complete_windows(published: Vec<Element>, pid: i32, inventory: &Inventory) ->
         if let Some(window) = Element::from_remote_id(pid, element_id)
             && let Some(server_id) = window.server_id()
             && missing.contains(&server_id)
-            && window.is_window()
+            && window.switchable(include_minimized)
         {
             // Electron can expose an AXUnknown object before the real AXWindow
             // for the same WindowServer ID. Only a validated window resolves it.
@@ -494,9 +517,10 @@ fn scan_application(
     pid: i32,
     app: &str,
     inventory: &Inventory,
+    include_minimized: bool,
 ) -> Result<Vec<(WindowInfo, Option<u32>)>, AxError> {
     let application = Element::application(pid).ok_or(AX_NO_VALUE)?;
-    let windows = all_windows(&application, pid, inventory);
+    let windows = all_windows(&application, pid, inventory, include_minimized);
     record(Level::Debug, "accessibility", "scan", || {
         format!("app_pid={pid} accepted={}", windows.len())
     });
@@ -511,12 +535,18 @@ fn scan_application(
                 title: window.string("AXTitle").unwrap_or_default(),
                 minimized: window.boolean("AXMinimized").unwrap_or(false),
             };
-            if let Some(server_id) = server_id {
+            if include_minimized && let Some(server_id) = server_id {
                 remember_window(pid, server_id, &info, &window);
             }
             (info, server_id)
         })
         .collect();
+    if !include_minimized {
+        // The user opted out of minimized-window tracking: release any data
+        // remembered while the option was enabled.
+        remembered_windows().lock().unwrap().remove(&pid);
+        return Ok(results);
+    }
     // Minimized windows become invisible to cross-process accessibility
     // queries while their WindowServer surfaces stay in the inventory. Keep
     // windows we saw earlier in the list so they remain visible and selectable.
@@ -587,7 +617,7 @@ pub fn project_windows(pid: i32) -> Vec<winlane::features::projects::focus::Wind
     let Some(application) = Element::application(pid) else {
         return Vec::new();
     };
-    all_windows(&application, pid, &Inventory::read())
+    all_windows(&application, pid, &Inventory::read(), true)
         .into_iter()
         .map(|window| winlane::features::projects::focus::Window {
             id: window.id(pid),
@@ -597,7 +627,10 @@ pub fn project_windows(pid: i32) -> Vec<winlane::features::projects::focus::Wind
         .collect()
 }
 
-pub fn list_windows(apps: &[(i32, String)]) -> (Vec<WindowInfo>, HashMap<u64, u32>) {
+pub fn list_windows(
+    apps: &[(i32, String)],
+    include_minimized: bool,
+) -> (Vec<WindowInfo>, HashMap<u64, u32>) {
     if !is_trusted() {
         return (Vec::new(), HashMap::new());
     }
@@ -620,7 +653,8 @@ pub fn list_windows(apps: &[(i32, String)]) -> (Vec<WindowInfo>, HashMap<u64, u3
                     chunk
                         .iter()
                         .flat_map(|(pid, app)| {
-                            scan_application(*pid, app, inventory).unwrap_or_default()
+                            scan_application(*pid, app, inventory, include_minimized)
+                                .unwrap_or_default()
                         })
                         .collect::<Vec<_>>()
                 })
@@ -653,7 +687,7 @@ fn find_window(pid: i32, id: u64) -> Result<Element, String> {
         "应用已退出，请刷新窗口列表。",
         "The app has quit. Refresh the window list."
     ))?;
-    let windows = all_windows(&application, pid, &Inventory::read());
+    let windows = all_windows(&application, pid, &Inventory::read(), true);
     let mut matches = windows.iter().filter(|window| window.id(pid) == id);
     if let Some(window) = matches.next() {
         if matches.any(|other| other.0 != window.0) {
