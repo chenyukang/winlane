@@ -1,7 +1,6 @@
 use crate::features::snippets;
 use crate::{tr, trf};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 
 pub const MAX_LINKS: usize = 200;
@@ -378,7 +377,7 @@ pub fn import_json(existing: &[Quicklink], json: &str) -> Result<Import, String>
             continue;
         }
         let identity = serde_json::to_vec(&(&name, &link, &open_with)).unwrap();
-        let mut id = format!("import-{:x}", Sha256::digest(&identity));
+        let mut id = format!("import-{}", crate::core::hash::sha256_hex(&identity));
         while links.iter().any(|q| q.id == id) {
             id.push('x');
         }

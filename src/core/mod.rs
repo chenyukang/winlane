@@ -4,6 +4,7 @@ pub mod commands;
 pub mod config;
 pub mod discovery;
 pub mod displays;
+pub mod hash;
 pub mod i18n;
 pub mod input_method;
 pub mod logging;

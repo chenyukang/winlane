@@ -1,5 +1,4 @@
 use crate::features::clipboard::{ImageInfo, MAX_IMAGE_BYTES};
-use sha2::{Digest, Sha256};
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -93,7 +92,7 @@ impl SessionFiles {
     }
 }
 pub fn digest(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    crate::core::hash::sha256_hex(bytes)
 }
 pub fn image_bytes(info: &ImageInfo) -> io::Result<Vec<u8>> {
     let asset = info
