@@ -735,3 +735,56 @@ pub(crate) fn launch_search_fixture(target: ApplicationTarget) -> Receiver<Resul
     assert!(matches!(pending.origin, LaunchOrigin::Search));
     pending.receiver
 }
+
+pub(super) fn verify_minimized_windows_do_not_hide_the_app(mtm: MainThreadMarker) {
+    let delegate = Delegate::new(mtm);
+    let state = delegate.ivars();
+    state.catalog_checked.set(Some(Instant::now()));
+    state.mode.set(Some(PanelMode::Search));
+    state.identities.borrow_mut().insert(
+        -10,
+        AppIdentity {
+            id: "notion.id".into(),
+            english_name: "Notion".into(),
+        },
+    );
+    state.installed_apps.replace(vec![InstalledApp {
+        names: vec!["Notion".into()],
+        target: ApplicationTarget {
+            bundle_id: "notion.id".into(),
+            name: "Notion".into(),
+            path: "/Applications/Notion.app".into(),
+        },
+    }]);
+    delegate.install_windows(vec![WindowInfo {
+        id: 1,
+        pid: -10,
+        app: "Notion".into(),
+        title: "Meeting Notes".into(),
+        minimized: true,
+    }]);
+    // A minimized window hidden by the settings must not hide the app itself.
+    state.config.borrow_mut().include_minimized = false;
+    state.query.replace("notion".into());
+    delegate.filter();
+    assert_eq!(
+        state.launch_matches.borrow().len(),
+        1,
+        "a minimized window hidden by settings must not hide the app from search"
+    );
+    assert_eq!(delegate.match_count(), 1);
+    assert!(delegate.selected_window().is_none());
+    // With minimized windows included, the window row represents the app.
+    state.config.borrow_mut().include_minimized = true;
+    delegate.filter();
+    assert_eq!(
+        state.launch_matches.borrow().len(),
+        0,
+        "a visible minimized window must occupy its app row"
+    );
+    assert_eq!(delegate.match_count(), 1);
+    assert_eq!(delegate.selected_window().unwrap().id, 1);
+    println!(
+        "Minimized windows hidden by settings leave the app searchable; visible ones represent it."
+    );
+}

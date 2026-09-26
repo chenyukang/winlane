@@ -76,7 +76,7 @@ fn snapshot(rule: &Rule, inventory: &Inventory) -> Result<Snapshot, String> {
         }
         // Unlike display-only discovery, an incomplete AX read must never trigger automatic window closing.
         let published = application
-            .windows()
+            .windows(false)
             .map_err(|_| "window list unavailable")?;
         for window in complete_windows(published, pid, inventory, false) {
             if window.string("AXSubrole").as_deref() != Some("AXStandardWindow") {

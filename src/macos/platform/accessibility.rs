@@ -276,7 +276,7 @@ impl Element {
         Ok(windows)
     }
 
-    fn windows(&self) -> Result<Vec<Self>, AxError> {
+    fn windows(&self, minimized_ok: bool) -> Result<Vec<Self>, AxError> {
         // Reading the application role lets Electron enable native accessibility
         // without turning on its more expensive screen-reader mode.
         let _ = self.attribute("AXRole");
@@ -285,16 +285,17 @@ impl Element {
                 "AXWindows" | "AXChildren" => self.elements(name),
                 _ => self.element(name).map(|element| vec![element]),
             };
-            elements.map(|elements| elements.into_iter().filter(Element::is_window).collect())
+            elements.map(|elements| {
+                elements
+                    .into_iter()
+                    .filter(|e| e.switchable(minimized_ok))
+                    .collect()
+            })
         })
     }
 
     fn id(&self, pid: i32) -> u64 {
         element_id(pid, &self.0)
-    }
-
-    fn is_window(&self) -> bool {
-        self.switchable(true)
     }
 
     /// Whether this element is a window worth listing. With `minimized_ok`,
@@ -373,7 +374,7 @@ fn all_windows(
     include_minimized: bool,
 ) -> Vec<Element> {
     complete_windows(
-        application.windows().unwrap_or_default(),
+        application.windows(include_minimized).unwrap_or_default(),
         pid,
         inventory,
         include_minimized,

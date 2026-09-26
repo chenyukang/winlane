@@ -33,7 +33,8 @@ use input_start::{
 pub(crate) use launch_search::launch_search_fixture;
 use launch_search::{
     verify_catalog_refresh, verify_external_focus_history, verify_launch_search,
-    verify_project_rule_search, verify_shortcut_recency, verify_switch_delay, verify_typo_search,
+    verify_minimized_windows_do_not_hide_the_app, verify_project_rule_search,
+    verify_shortcut_recency, verify_switch_delay, verify_typo_search,
 };
 use main_wake::verify_main_wake;
 use panels::{verify_adaptive_panels, verify_display_density, verify_usage_hint_visibility};
@@ -128,6 +129,7 @@ pub fn verify_hidden_panels() {
     verify_async_window_snapshot(mtm);
     window_liveness::verify_window_liveness(mtm);
     verify_project_rule_search(mtm);
+    verify_minimized_windows_do_not_hide_the_app(mtm);
     verify_adaptive_panels(mtm);
     verify_display_density(mtm);
     verify_usage_hint_visibility(mtm);

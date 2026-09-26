@@ -161,9 +161,13 @@ impl Delegate {
             && scope_pid.is_none()
         {
             let identities = self.ivars().identities.borrow();
-            let occupied: HashSet<_> = windows
+            // An app only occupies its window rows when those rows are
+            // actually shown. Windows filtered out by the current settings
+            // (for example minimized windows with "Include minimized
+            // windows" off) must not hide the app from search.
+            let occupied: HashSet<_> = matched
                 .iter()
-                .filter_map(|window| identities.get(&window.pid))
+                .filter_map(|&index| identities.get(&windows[index].pid))
                 .map(|app| app.id.clone())
                 .collect();
             matching_apps(
