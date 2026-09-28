@@ -35,7 +35,7 @@ The script converts every plain remap it understands and reports the rest. Layer
 
 ## Behaviour worth knowing
 
-- **Every application, Winlane included.** Remapping runs before shortcut routing, so a rule that overlaps one of Winlane's own shortcuts wins. Keep that in mind before remapping a key Winlane uses.
+- **Winlane's own shortcuts win.** A combination Winlane is configured to handle — the search or switch shortcut, or an app, quicklink or command shortcut — is never remapped, so a migrated rule cannot silently shadow a shortcut you set up in Winlane. Every other combination is remapped in every application, Winlane's panel included.
 - **Exclusions need to know the frontmost application.** Winlane publishes it whenever an application is activated. Until it knows, a rule that names applications stays off rather than firing where it should not.
 - **This is an event tap, not a keyboard device.** Karabiner-Elements replaces the keyboard at the HID layer; Winlane rewrites events after the system has already seen them. Remaps therefore do not apply during secure input (password fields, Terminal's Secure Keyboard Entry), and they stop while Winlane is not running or whenever macOS disables the tap.
 - **Failure is inert.** A rule that cannot be parsed is dropped, and an invalid rule is rejected before it replaces the active configuration, so a bad edit leaves the previous rules running.

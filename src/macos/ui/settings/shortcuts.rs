@@ -105,7 +105,11 @@ impl ShortcutsPage {
             .scrollRectToVisible(self.search_header.bounds());
         self.switch_shortcut.fill(&config.switch_shortcut);
         self.command_shortcuts.fill(&config.command_shortcuts);
+        // Filling the remap rows changes the card height, so lay the document
+        // out again afterwards; without this the card keeps the empty height
+        // and its rows are drawn over the heading.
         self.key_remaps.fill(config);
+        self.layout_search_shortcuts();
     }
     pub(super) fn read(&self, config: &mut Config) -> Result<(), String> {
         config.shortcut = self.search_shortcut.read()?;

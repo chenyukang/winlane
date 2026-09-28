@@ -168,6 +168,21 @@ impl ShortcutRouter {
             .any(|binding| binding.matches(key, flags, false))
     }
 
+    /// Whether a shortcut Winlane was told to handle covers this keystroke.
+    /// Key remaps ask this so a rule cannot quietly take over a combination the
+    /// user configured here — an app shortcut that stopped working because a
+    /// migrated rule stepped in front of it is impossible to explain.
+    pub fn claims(&self, key: i64, flags: u64) -> bool {
+        if self.matches_search(key, flags) || self.switch.matches(key, flags, true) {
+            return true;
+        }
+        self.app_shortcuts
+            .iter()
+            .chain(self.quicklink_shortcuts.iter().map(|(_, binding)| binding))
+            .chain(self.command_shortcuts.iter().map(|(_, binding)| binding))
+            .any(|binding| binding.matches(key, flags, false))
+    }
+
     pub fn with_command_shortcuts(
         mut self,
         bindings: Vec<(crate::core::commands::CommandId, Binding)>,

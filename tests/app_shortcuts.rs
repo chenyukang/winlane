@@ -153,3 +153,28 @@ fn fixed_binding_leaves_switching_and_prevents_a_second_commit_on_release() {
         ActionKind::LaunchApp(0)
     );
 }
+
+/// Key remaps ask the router this before rewriting anything: a combination
+/// Winlane was told to handle belongs to Winlane, so a migrated rule cannot
+/// silently shadow an app shortcut configured here.
+#[test]
+fn configured_shortcuts_keep_their_keys_back_from_key_remaps() {
+    let mut router = router();
+    for (key, flags, claimed, what) in [
+        (18, COMMAND, true, "Command + 1 is an app shortcut"),
+        (13, COMMAND, true, "Command + W is an app shortcut"),
+        (34, CONTROL, true, "the search shortcut"),
+        (48, COMMAND, true, "the switch shortcut"),
+        (18, CONTROL, false, "Control + 1 belongs to a rule"),
+        (4, COMMAND, false, "Command + H belongs to a rule"),
+        (119, 0, false, "a bare key belongs to a rule"),
+    ] {
+        assert_eq!(router.claims(key, flags), claimed, "{what}");
+    }
+
+    // Claiming is only a question: it must not consume the key or fire an action.
+    assert!(router.claims(18, COMMAND));
+    let (consume, action) = router.handle(KEY_DOWN, 18, COMMAND, false);
+    assert!(consume, "the shortcut still runs afterwards");
+    assert_eq!(action.unwrap().kind, ActionKind::LaunchApp(0));
+}

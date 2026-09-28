@@ -450,6 +450,30 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
 
 /// Key remaps live on the Shortcuts page: they are the same kind of thing
 /// (a key combination) and the sidebar has no room for another entry.
+fn layout_page(settings: &SettingsWindow, index: isize, mtm: MainThreadMarker) {
+    settings.select_tab(index);
+    settings
+        .window
+        .contentView()
+        .unwrap()
+        .layoutSubtreeIfNeeded();
+    let _ = mtm;
+}
+
+fn scroll_document(settings: &SettingsWindow, index: isize) -> Retained<NSView> {
+    let view = settings
+        .tabs
+        .tabViewItemAtIndex(index)
+        .view(settings.window.mtm())
+        .unwrap();
+    view.subviews()
+        .objectAtIndex(0)
+        .downcast_ref::<NSScrollView>()
+        .unwrap()
+        .documentView()
+        .unwrap()
+}
+
 fn verify_key_remaps(target: &AnyObject, mtm: MainThreadMarker) {
     use winlane::core::key_remap::KeyRemap;
     let settings = SettingsWindow::new(target, mtm);
@@ -480,6 +504,19 @@ fn verify_key_remaps(target: &AnyObject, mtm: MainThreadMarker) {
     settings.fill(&config);
     let page = &settings.shortcuts().key_remaps;
     assert_eq!(page.row_count(), 2, "one row per configured rule");
+    layout_page(&settings, 0, mtm);
+    verify_settings_bounds(&scroll_document(&settings, 0));
+    let card = page.card_frame();
+    let expected = 116.0 + 8.0 * 2.0 + 2.0 * (58.0 + 6.0);
+    assert!(
+        (card.size.height - expected).abs() < 0.5,
+        "the card has to grow with its rows: {card:?}"
+    );
+    let app_shortcuts = settings.shortcuts().app_shortcuts_card.frame();
+    assert!(
+        card.origin.y + card.size.height < app_shortcuts.origin.y,
+        "the remap card must sit below the cards above it: {card:?} vs {app_shortcuts:?}"
+    );
     assert_eq!(
         settings.candidate().unwrap().key_remaps,
         vec![save.clone(), end.clone()],
@@ -511,6 +548,12 @@ fn verify_key_remaps(target: &AnyObject, mtm: MainThreadMarker) {
 
     settings.remove_key_remap(2);
     assert_eq!(page.row_count(), 2);
+    layout_page(&settings, 0, mtm);
+    verify_settings_bounds(&scroll_document(&settings, 0));
+    assert!(
+        (page.card_frame().size.height - expected).abs() < 0.5,
+        "removing a row shrinks the card again"
+    );
     assert_eq!(
         settings.candidate().unwrap().key_remaps,
         vec![save, end],

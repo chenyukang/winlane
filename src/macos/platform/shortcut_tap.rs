@@ -216,11 +216,14 @@ unsafe extern "C" fn callback(
     let Ok(mut keys) = state.keys.try_borrow_mut() else {
         return event;
     };
-    // Remapping happens first so every application, including Winlane's own
-    // panel, sees the combination the rules describe. Rewriting the live event
-    // keeps the release and any auto-repeat consistent with the press.
+    // Remapping runs before shortcut routing, but a combination Winlane was
+    // explicitly told to handle stays with Winlane: a migrated rule must not
+    // silently shadow an app shortcut the user configured here. Rewriting the
+    // live event keeps the release and any auto-repeat consistent with the
+    // press.
+    let claimed = keys.claims(key, flags);
     let (key, flags) = match state.remaps.try_borrow_mut() {
-        Ok(mut remaps) if !remaps.is_empty() => {
+        Ok(mut remaps) if !claimed && !remaps.is_empty() => {
             let frontmost = state.frontmost.borrow();
             match remaps.rewrite(event_type, key, flags, frontmost.as_deref()) {
                 Some((key, flags)) => {
