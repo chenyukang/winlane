@@ -337,6 +337,24 @@ pub(crate) fn verify_scrolling_retry(mtm: MainThreadMarker) {
         );
     }
 
+    // Every state of the tap is decided by one function, including the case a
+    // test cannot produce: permission taken away while a tap is installed.
+    use super::scrolling::{ScrollingHealth, scrolling_health};
+    assert_eq!(
+        scrolling_health(false, true, true),
+        ScrollingHealth::Unpermitted,
+        "a tap that can no longer see input is dropped, not trusted"
+    );
+    assert_eq!(
+        scrolling_health(false, false, true),
+        ScrollingHealth::Disabled
+    );
+    assert_eq!(scrolling_health(true, true, true), ScrollingHealth::Active);
+    assert_eq!(
+        scrolling_health(true, true, false),
+        ScrollingHealth::Missing
+    );
+
     // The retry is throttled: the poll runs every second and a tap that cannot
     // start must not be rebuilt on every pass.
     let now = Instant::now();

@@ -11,29 +11,71 @@ pub(super) fn retry_due(last_attempt: Option<Instant>, now: Instant) -> bool {
     last_attempt.is_none_or(|at| now.duration_since(at) >= SCROLL_RETRY_INTERVAL)
 }
 
+/// What the poll has to do about the scroll tap. Kept apart from the work so
+/// every case can be checked without a real permission change.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub(super) enum ScrollingHealth {
+    /// The setting is off.
+    Disabled,
+    /// Winlane is not allowed to watch input. A tap installed before access was
+    /// taken away still reports as enabled while it cannot see anything, so it
+    /// is dropped and installed again once access comes back.
+    Unpermitted,
+    /// The setting is on and no tap is running.
+    Missing,
+    /// A tap is installed and running.
+    Active,
+}
+
+pub(super) fn scrolling_health(trusted: bool, enabled: bool, tap_active: bool) -> ScrollingHealth {
+    if !enabled {
+        ScrollingHealth::Disabled
+    } else if !trusted {
+        ScrollingHealth::Unpermitted
+    } else if tap_active {
+        ScrollingHealth::Active
+    } else {
+        ScrollingHealth::Missing
+    }
+}
+
 impl Delegate {
     /// Install the scroll tap again when it is missing. Permission is checked
     /// while the app starts, so without this the setting stayed dead after the
     /// user granted Accessibility access back until they pressed Retry.
     pub(super) fn retry_scrolling_if_needed(&self) {
-        if !accessibility::is_trusted() || !self.ivars().config.borrow().scrolling.enabled {
-            return;
+        let health = scrolling_health(
+            accessibility::is_trusted(),
+            self.ivars().config.borrow().scrolling.enabled,
+            self.ivars()
+                .scroll_tap
+                .borrow()
+                .as_ref()
+                .is_some_and(ScrollTap::is_enabled),
+        );
+        match health {
+            ScrollingHealth::Unpermitted => {
+                if self.ivars().scroll_tap.borrow_mut().take().is_some() {
+                    self.ivars().scroll_error.replace(Some(
+                        tr!(
+                            "滚动监听已停止，恢复系统授权后会自动重试。",
+                            "Scroll monitoring stopped until Winlane is allowed again, then it retries by itself."
+                        )
+                        .into(),
+                    ));
+                    self.update_scrolling_status();
+                }
+            }
+            ScrollingHealth::Missing => {
+                let now = Instant::now();
+                if !retry_due(self.ivars().scroll_retry_at.get(), now) {
+                    return;
+                }
+                self.ivars().scroll_retry_at.set(Some(now));
+                self.ensure_scrolling();
+            }
+            ScrollingHealth::Disabled | ScrollingHealth::Active => {}
         }
-        if self
-            .ivars()
-            .scroll_tap
-            .borrow()
-            .as_ref()
-            .is_some_and(ScrollTap::is_enabled)
-        {
-            return;
-        }
-        let now = Instant::now();
-        if !retry_due(self.ivars().scroll_retry_at.get(), now) {
-            return;
-        }
-        self.ivars().scroll_retry_at.set(Some(now));
-        self.ensure_scrolling();
     }
 
     pub(super) fn ensure_scrolling(&self) {
