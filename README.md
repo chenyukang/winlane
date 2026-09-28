@@ -2,7 +2,11 @@
 
 Switch windows, launch apps, and handle everyday Mac tasks from your keyboard.
 
-Winlane combines a window switcher with search for apps, saved links, snippets, clipboard history, files, and recent projects. It lives in the menu bar and opens when you need it.
+Winlane is a native macOS launcher that lives in the menu bar. Hold **Command** and press **Tab** to switch to any window — minimized ones included — or press **Control + I** to search apps, files, clipboard history, saved links, snippets, projects, your calendar, and more.
+
+- **Windows and apps** — every window is its own row, apps that are not running are still searchable, and alias letters jump straight to a window.
+- **Everyday tools** — files, projects, Chrome history, clipboard history, snippets, Quicklinks, emoji, meetings, git branches, Bluetooth, and system actions.
+- **Your keys** — search and switch shortcuts, app shortcuts, alias letters, and key remaps, all in one place.
 
 | Light mode | Dark mode |
 | --- | --- |
@@ -37,7 +41,11 @@ Hold **Command** and press **Tab**. Keep holding Command while you select a wind
 | **Space** | Enter search mode. |
 | **Esc** | Cancel. |
 
-Each row is a window, so different projects or documents in the same app appear separately. With the default Recent sorting, the current window comes first and the previous window is initially selected. On multiple displays, the picker appears on every screen with a shared selection by default. In **Settings → Appearance → Display**, choose **Active display** to show search and window switching panels only on the screen under the pointer when they open. If the pointer is outside all screens, Winlane uses the focused window of the foreground app, then the main display. The panel stays on its chosen screen until reopened or that screen disconnects.
+Each row is a window, so different projects or documents in the same app appear separately. With the default Recent sorting, the current window comes first and the previous window is initially selected.
+
+Minimized windows are listed too, marked **· Minimized**: selecting one restores and focuses it, including from a full-screen app. Turn this off in **Settings → Windows → Include minimized windows**; the app itself still appears as a launch row so you can reopen it.
+
+On multiple displays, the picker appears on every screen with a shared selection by default. In **Settings → Appearance → Display**, choose **Active display** to show search and window switching panels only on the screen under the pointer when they open. If the pointer is outside all screens, Winlane uses the focused window of the foreground app, then the main display. The panel stays on its chosen screen until reopened or that screen disconnects.
 
 The short letter labels beside windows are their **aliases**. For example, hold Command, type `g`, then release Command to switch to the window labeled `g`. Winlane assigns aliases automatically; you can set your own in Settings.
 
@@ -74,9 +82,15 @@ Press **Enter** to browse into a folder or open a file, **Control + Enter** to o
 
 Run **`projects`** to find recent local VS Code folders and workspaces. Search by name or path, then press **Enter** to open the project and bring its window forward. VS Code launches if needed; existing windows keep their normal or full-screen layout.
 
-The list opens with cached projects while history refreshes in the background. The most recent 25 projects are remembered across Winlane restarts. **Command + R** forces a refresh.
+The list opens with cached projects while history refreshes in the background. Winlane remembers up to 500 recent projects and shows the 25 most recent. **Command + R** forces a refresh.
 
 Currently supports local projects in the stable VS Code app. [Project support and details](docs/projects.md).
+
+### Switch a project branch
+
+Run **`branch`** — or **`git branch`** or **`checkout`** — to list the local branches of the VS Code project you were working in, then press **Enter** to switch with `git switch`.
+
+The current branch is marked with `*`, and branches checked out in another worktree are labeled. If the working tree has uncommitted changes or another worktree holds the branch, Git's own message is shown unchanged: Winlane never commits, stashes, or discards anything for you. [Branch switching](docs/git-branch.md).
 
 ### Open a website or search Google
 
@@ -126,9 +140,19 @@ the emoji supported by your macOS version.
 
 Run **`clipboard`** to search copied text, links, and images. **Enter** pastes the selected entry into your previous app; **Command + C** copies it without pasting. **Command + Backspace** removes an entry from history.
 
-Recording is on by default, keeping up to **200 entries for 7 days** on this Mac across restarts. Change retention, pause recording, turn off disk storage, or clear history in **Settings → Clipboard**.
+Using an entry moves it to the top of the list, so the things you paste often stay within reach. Recording is on by default, keeping up to **200 entries for 7 days** on this Mac across restarts. Change retention, pause recording, turn off disk storage, or clear history in **Settings → Clipboard**.
 
 Screenshots copied to the clipboard are included. Screenshots saved only as files are not. [Clipboard controls and privacy](docs/clipboard.md).
+
+### See today's meetings
+
+Run **`meeting`** — or **`calendar`** — to list today's events from the macOS Calendar. Each row shows the start time, a countdown such as **Starting in 20 minutes**, the title, and the detected join link or location. **Enter** opens the link in your browser.
+
+The whole day is sorted by start time: finished meetings are marked **Completed**, an ongoing one **In progress**. Press **`>`** for the next day and **`<`** for the previous one, **Command + R** to refresh, and **Esc** to return to search. Winlane reads events through EventKit — it asks for Calendar access on first use and only ever displays events. [Meetings](docs/meeting.md).
+
+### Check the date and time
+
+Run **`date`** — or **`time`** — to show the current local date and time as a result, formatted like `2026-9-23 18:06:55`. The row keeps updating as you type, and selecting it copies the shown timestamp without pasting into another app.
 
 ### Control your Mac
 
@@ -151,30 +175,37 @@ While Keep Awake is active, a coffee badge shows its mode and remaining time. Re
 
 Open **Settings** from the menu bar, or press **Command + ,** while using Winlane. Valid changes save automatically.
 
-### Shortcuts and aliases
+### Shortcuts, aliases, and key remaps
 
 - **Search and switching:** change the defaults in **Settings → Shortcuts**. Use **Add Search Shortcut** for additional ways to open search; up to eight are supported. To use **Command + Space**, first reassign Spotlight or any other app using that shortcut.
 - **Commands:** assign a shortcut under **Command shortcuts** to open a list such as `projects` directly. Action commands such as `lock-screen` run immediately.
 - **Apps:** use **App Shortcuts** to open or activate an app without the picker.
 - **Quicklinks:** select a saved link in **Settings → Quicklinks** and set its **Global shortcut**.
 - **Aliases:** in **Settings → Aliases**, assign one or two lowercase letters to an app. Add an optional window-title keyword to target a particular project or document. Custom aliases stay reserved even when their target is closed.
-- **Key remaps:** rewrite a key combination for every application, the way a keyboard remapper does. Edit them in **Settings → Shortcuts → Key remaps**, or convert Karabiner-Elements rules with `python3 scripts/migrate-karabiner.py`. [Key remaps and migration](docs/key-remaps.md).
+- **Key remaps:** rewrite one key combination into another for every application, the way a keyboard remapper does. **Settings → Shortcuts → Key remaps** lists the rules, each with its own switch and an **Enable key remaps** master switch. Already using Karabiner-Elements? `python3 scripts/migrate-karabiner.py` converts plain remap rules, including their per-application exclusions. [Key remaps and migration](docs/key-remaps.md).
 
-Shortcut conflicts show the existing binding so you can choose another combination. A conflicting edit leaves your previous valid shortcut active.
+Shortcut conflicts show the existing binding so you can choose another combination. A conflicting edit leaves your previous valid shortcut active. A combination you gave Winlane is never taken over by a key remap, so a migrated rule cannot shadow an app shortcut you set up here.
 
-### Appearance and window lists
+### Appearance
 
 Choose **Normal** or **Compact** density, system/light/dark appearance, background opacity, and optional usage hints in **Settings → Appearance**. Normal is the default. Turn on **Solid background** to replace the frosted glass material with a flat tint: it uses noticeably less graphics memory, at the cost of the blur.
 
-Use **Settings → Windows** to change sorting, switcher delay, minimized-window handling, and excluded apps. Interface language and launch at login are under **General**.
+### Window lists and timing
 
-### Input sources
+Use **Settings → Windows** to change sorting, switcher delay, whether minimized windows are listed, and which apps are excluded from results.
+
+### Input sources and indicators
 
 **Settings → Input Rules** lets you choose a default input source for each app, or restore the source last used in that app. Apps without an override follow your global rule.
 
 Winlane has its own rule, set to **English** by default, shared by search, command inputs, and editors. To manage other apps, enable **automatic switching for other apps**, then add their rules. You can still switch sources manually while typing. [Input rules guide](docs/input-rules.md).
 
-For a visible reminder of the current source, enable **Settings → Input Indicator**. Choose a bar, name badge, circle, or rounded rectangle; adjust its color, size, position, and offsets. You can hide it for selected input sources and choose which displays show it. [Indicator options](docs/input-indicator.md).
+**Settings → Indicator** puts the current state on screen:
+
+- **Input source** — a bar, name badge, circle, or rounded rectangle, with its color, size, position, and offsets. Hide it for selected sources and choose which displays show it. [Indicator options](docs/input-indicator.md).
+- **Time** — enable **Always show the current time** for a small clock badge, refreshed every second and configurable the same way.
+
+Both follow displays and Spaces, stay visible over full-screen apps, let clicks pass through, and the Keep Awake badge moves out of their way.
 
 ### Mouse and trackpad scrolling
 
@@ -188,6 +219,10 @@ In **Settings → Auto AppClose**, add an app and choose how many windows to kee
 
 The check interval is configurable and defaults to **10 seconds**. Winlane preserves the active window and gives newly discovered windows a grace period of **twice the interval**. It uses each app's normal close button and pauses automatic closing for that app if a window remains open or needs a save decision. [Auto AppClose behavior and logs](docs/auto-appclose.md).
 
+### Language, startup, and logs
+
+**Settings → General** holds the rest: the interface language (System, 中文, or English), **Launch at login**, automatic update checks, and logging. Set the log level to **Debug** when you are diagnosing something, and use **Open Logs Folder** or change the log file path.
+
 ## Privacy and permissions
 
 Winlane keeps settings, aliases, snippets, Quicklinks, and clipboard history on your Mac. Window and app searches run locally. Web searches and links open in your browser or the app you choose.
@@ -197,6 +232,7 @@ Winlane keeps settings, aliases, snippets, Quicklinks, and clipboard history on 
 - **Input rules and projects:** remembered input sources and the recent-project cache are stored locally. Filled-in snippet arguments are not saved as form history; the pasted text remains on your clipboard.
 - **Files:** filename search uses Spotlight. The last 25 paths opened through Winlane are stored locally and can be cleared in Settings → Files. No file contents or search queries are saved.
 - **Chrome history:** read locally when you use `open-url`, with no separate permanent history library. macOS may require Full Disk Access; Winlane shows an access-settings action if needed.
+- **Calendar:** read locally when you use `meeting`, and only displayed. Winlane never creates, edits, or deletes calendar data.
 - **Bluetooth:** macOS requests Bluetooth permission when you use the device command.
 - **Updates:** update checks contact GitHub for release information and downloads. They do not include window titles or search terms.
 
@@ -207,7 +243,9 @@ See [clipboard storage and retention](docs/clipboard.md#retention-and-privacy) f
 - **Windows are missing or will not switch:** confirm permission for the installed Winlane app in System Settings, then reopen the picker. Press **Command + R** to refresh.
 - **A newly installed app is missing:** type its name in search and press **Command + R** to refresh the app list.
 - **A shortcut does nothing:** check Spotlight, other launchers, and keyboard remappers for competing bindings.
+- **A key remap does nothing:** the combination may belong to a Winlane shortcut, which keeps priority, or the tap may be paused while macOS is in secure input — password fields and Terminal's Secure Keyboard Entry. Quit Karabiner-Elements or another remapper while testing, or it will handle the key first.
 - **Chrome history cannot be read:** follow the access-settings action in `open-url`. If you grant Full Disk Access, restart Winlane and try again.
+- **Meetings are empty:** grant Calendar access when Winlane asks, then open `meeting` again.
 - **An input rule does not affect another app:** enable automatic switching for other apps in **Input Rules**, then switch away from and back to that app.
 - **Collect diagnostics:** choose **Debug** in **Settings → General → Logging**, then use **Open Logs Folder**. You can change the log file path here. Logs stay on this Mac; return to **Info** when finished.
 
