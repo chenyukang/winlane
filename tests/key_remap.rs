@@ -352,3 +352,40 @@ fn the_migrated_karabiner_rules_map_the_same_way() {
         "Ctrl+U is not part of the migration"
     );
 }
+
+#[test]
+fn an_unknown_frontmost_application_keeps_excluded_rules_off() {
+    let mut remapper = KeyRemapper::new(&[excluding(
+        with_extra(rule("save", "s", &["control"], "s", &["command"])),
+        &["com.apple.Terminal"],
+    )]);
+    assert_eq!(
+        remapper.rewrite(KEY_DOWN, key_code("s").unwrap(), CONTROL, None),
+        None,
+        "until the tap knows what is in front, an exclusion list keeps the rule off"
+    );
+    assert!(
+        remapper
+            .rewrite(
+                KEY_DOWN,
+                key_code("s").unwrap(),
+                CONTROL,
+                Some("dev.warp.Warp-Stable")
+            )
+            .is_some()
+    );
+
+    // A rule without exclusions does not depend on knowing the frontmost app.
+    let mut plain = KeyRemapper::new(&[with_extra(rule(
+        "save",
+        "s",
+        &["control"],
+        "s",
+        &["command"],
+    ))]);
+    assert!(
+        plain
+            .rewrite(KEY_DOWN, key_code("s").unwrap(), CONTROL, None)
+            .is_some()
+    );
+}

@@ -17,6 +17,7 @@ impl Delegate {
                 self.ivars().shortcut_tap.replace(Some(tap));
                 self.ivars().shortcut_rx.replace(Some(receiver));
                 self.ivars().hotkey_error.replace(None);
+                self.publish_current_frontmost();
             }
             Err(error) => {
                 self.ivars().hotkey_error.replace(Some(error));

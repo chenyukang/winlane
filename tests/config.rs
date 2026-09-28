@@ -671,3 +671,47 @@ fn additional_search_shortcuts_migrate_persist_and_validate_every_conflict() {
             .contains("additional_search_shortcuts")
     );
 }
+
+#[test]
+fn key_remaps_round_trip_and_unusable_rules_are_rejected() {
+    let remap = winlane::core::key_remap::KeyRemap {
+        id: "save".into(),
+        enabled: true,
+        from_key: "s".into(),
+        from_modifiers: vec!["left_control".into()],
+        allow_extra_modifiers: true,
+        to_key: "s".into(),
+        to_modifiers: vec!["left_command".into()],
+        except_apps: vec!["com.apple.Terminal".into()],
+    };
+    let config = Config {
+        key_remaps: vec![remap.clone()],
+        ..Config::default()
+    };
+    config.validate().expect("a migrated rule must validate");
+    assert_eq!(
+        Config::from_json(&config.to_json().unwrap()).unwrap(),
+        config
+    );
+    assert_eq!(
+        Config::from_json("{}").unwrap().key_remaps,
+        Vec::new(),
+        "a configuration saved before key remaps existed stays valid"
+    );
+
+    let mut broken = remap.clone();
+    broken.to_key = "not_a_key".into();
+    assert!(
+        Config {
+            key_remaps: vec![broken],
+            ..Config::default()
+        }
+        .validate()
+        .is_err(),
+        "an unknown key must be rejected instead of replacing the active configuration"
+    );
+    assert!(
+        Config::from_json(r#"{"key_remaps":[{"id":"x","from_key":"s","to_key":"nope"}]}"#).is_err(),
+        "a saved rule that cannot run must not load"
+    );
+}

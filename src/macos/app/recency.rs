@@ -2,6 +2,25 @@ use super::*;
 use crate::macos::platform::preferences as preference_store;
 
 impl Delegate {
+    /// Keep the shortcut tap's idea of the frontmost application current. Key
+    /// remaps leave the applications they name alone, and the tap callback runs
+    /// inside event dispatch, so it cannot ask AppKit itself.
+    pub(super) fn publish_remap_frontmost(&self, bundle_id: Option<String>) {
+        if let Some(tap) = self.ivars().shortcut_tap.borrow().as_ref() {
+            tap.set_frontmost_app(bundle_id);
+        }
+    }
+
+    /// Publish the frontmost application now, for the moments right after a tap
+    /// was installed and nothing has reported a switch yet.
+    pub(super) fn publish_current_frontmost(&self) {
+        self.publish_remap_frontmost(
+            NSWorkspace::sharedWorkspace()
+                .frontmostApplication()
+                .and_then(|app| app.bundleIdentifier().map(|id| id.to_string())),
+        );
+    }
+
     pub(super) fn track_frontmost(&self) {
         if self.ivars().demo.get() {
             return;
@@ -9,6 +28,10 @@ impl Delegate {
         let Some(app) = NSWorkspace::sharedWorkspace().frontmostApplication() else {
             return;
         };
+        // Key remaps need the real frontmost application, Winlane included
+        // while its own panel holds focus, so this runs before the filters
+        // below that skip Winlane and background applications.
+        self.publish_remap_frontmost(app.bundleIdentifier().map(|id| id.to_string()));
         let pid = app.processIdentifier();
         crate::macos::platform::recency_trace::record("frontmost", || {
             format!(

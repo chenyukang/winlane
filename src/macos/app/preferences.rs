@@ -254,6 +254,7 @@ impl Delegate {
         let bindings_changed = candidate.shortcut != previous.shortcut
             || candidate.additional_search_shortcuts != previous.additional_search_shortcuts
             || candidate.switch_shortcut != previous.switch_shortcut
+            || candidate.key_remaps != previous.key_remaps
             || candidate.app_bindings()? != previous.app_bindings()?
             || candidate.quicklink_bindings()? != previous.quicklink_bindings()?
             || candidate.command_bindings()? != previous.command_bindings()?;
@@ -308,6 +309,7 @@ impl Delegate {
             self.ivars().shortcut_tap.replace(Some(tap));
             self.ivars().shortcut_rx.replace(Some(receiver));
             self.ivars().hotkey_error.replace(None);
+            self.publish_current_frontmost();
         }
         if candidate.appearance != previous.appearance {
             preference_store::apply_appearance(&candidate, self.mtm());

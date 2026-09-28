@@ -8,6 +8,7 @@ use std::ffi::c_void;
 use std::ptr;
 use std::sync::mpsc::{self, Receiver, Sender};
 use winlane::core::config::Config;
+use winlane::core::key_remap::KeyRemapper;
 use winlane::core::shortcuts::{Action, FLAGS_CHANGED, KEY_DOWN, KEY_UP, ShortcutRouter};
 use winlane::tr;
 
@@ -30,10 +31,18 @@ unsafe extern "C" {
     fn CGEventTapIsEnabled(tap: CFMachPortRef) -> bool;
     fn CGEventGetFlags(event: EventRef) -> u64;
     fn CGEventGetIntegerValueField(event: EventRef, field: u32) -> i64;
+    // Declared with a const pointer to match the other call sites of this
+    // system function in the crate.
+    fn CGEventSetFlags(event: *const c_void, flags: u64);
+    fn CGEventSetIntegerValueField(event: EventRef, field: u32, value: i64);
 }
 
 struct TapState {
     keys: RefCell<ShortcutRouter>,
+    remaps: RefCell<KeyRemapper>,
+    /// The frontmost application, published by the delegate. The callback runs
+    /// inside event dispatch, so it must not call AppKit to ask this itself.
+    frontmost: RefCell<Option<String>>,
     actions: Sender<Action>,
     wake: WakeHandle,
     port: Cell<CFMachPortRef>,
@@ -68,6 +77,8 @@ impl ShortcutTap {
         let (actions, receiver) = mpsc::channel();
         let mut state = Box::new(TapState {
             keys: RefCell::new(keys),
+            remaps: RefCell::new(KeyRemapper::new(&config.key_remaps)),
+            frontmost: RefCell::new(None),
             actions,
             wake,
             port: Cell::new(ptr::null_mut()),
@@ -144,6 +155,14 @@ impl ShortcutTap {
         // SAFETY: This instance retains the port and is only used on the main thread.
         unsafe { CGEventTapIsEnabled(self.port.as_concrete_TypeRef()) }
     }
+
+    /// The application whose keystrokes come next. Key remaps can leave named
+    /// applications alone, so this has to follow the frontmost application;
+    /// the delegate publishes it because the tap itself must stay free of
+    /// AppKit calls.
+    pub fn set_frontmost_app(&self, bundle_id: Option<String>) {
+        *self._state.frontmost.borrow_mut() = bundle_id;
+    }
 }
 
 impl Drop for ShortcutTap {
@@ -172,6 +191,11 @@ unsafe extern "C" fn callback(
             let _ = state.actions.send(keys.cancel());
             state.wake.signal();
         }
+        // A press from before the tap stopped never reaches its release, so a
+        // rewritten key would otherwise stay stuck down.
+        if let Ok(mut remaps) = state.remaps.try_borrow_mut() {
+            remaps.reset();
+        }
         if event_type == TAP_DISABLED_TIMEOUT {
             // SAFETY: The tap retains its own port while a callback is in flight.
             unsafe { CGEventTapEnable(state.port.get(), true) };
@@ -191,6 +215,26 @@ unsafe extern "C" fn callback(
     };
     let Ok(mut keys) = state.keys.try_borrow_mut() else {
         return event;
+    };
+    // Remapping happens first so every application, including Winlane's own
+    // panel, sees the combination the rules describe. Rewriting the live event
+    // keeps the release and any auto-repeat consistent with the press.
+    let (key, flags) = match state.remaps.try_borrow_mut() {
+        Ok(mut remaps) if !remaps.is_empty() => {
+            let frontmost = state.frontmost.borrow();
+            match remaps.rewrite(event_type, key, flags, frontmost.as_deref()) {
+                Some((key, flags)) => {
+                    // SAFETY: The callback owns this event until it returns it.
+                    unsafe {
+                        CGEventSetIntegerValueField(event, 9, key);
+                        CGEventSetFlags(event.cast_const(), flags);
+                    }
+                    (key, flags)
+                }
+                None => (key, flags),
+            }
+        }
+        _ => (key, flags),
     };
     let (consume, action) = keys.handle(event_type, key, flags, repeat);
     if let Some(action) = action {

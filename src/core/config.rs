@@ -336,6 +336,10 @@ pub struct Config {
     pub app_shortcuts: Vec<AppShortcut>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub command_shortcuts: Vec<CommandShortcut>,
+    /// Key combinations Winlane rewrites for every application, the way a
+    /// keyboard remapper would.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub key_remaps: Vec<crate::core::key_remap::KeyRemap>,
     pub alias_rules: Vec<AliasRule>,
     pub snippets: Vec<crate::features::snippets::Snippet>,
     pub quicklinks: Vec<crate::features::quicklinks::Quicklink>,
@@ -368,6 +372,7 @@ impl Default for Config {
             switch_shortcut: Shortcut::switch_default(),
             app_shortcuts: Vec::new(),
             command_shortcuts: Vec::new(),
+            key_remaps: Vec::new(),
             alias_rules: Vec::new(),
             snippets: Vec::new(),
             quicklinks: Vec::new(),
@@ -412,6 +417,7 @@ impl Config {
         self.auto_appclose.validate()?;
         crate::features::snippets::validate(&self.snippets)?;
         crate::features::quicklinks::validate(&self.quicklinks)?;
+        crate::core::key_remap::validate(&self.key_remaps)?;
         self.clipboard.validate()?;
         self.files.validate()?;
         self.input_indicator.validate()?;

@@ -280,10 +280,17 @@ impl Resolved {
         if self.from_key != key {
             return false;
         }
-        if let Some(app) = frontmost_app
-            && self.except_apps.iter().any(|excluded| excluded == app)
-        {
-            return false;
+        // An unknown frontmost application counts as excluded: a rule that
+        // names terminals must never fire in one just because the tap has not
+        // been told yet which application is in front.
+        match frontmost_app {
+            Some(app) => {
+                if self.except_apps.iter().any(|excluded| excluded == app) {
+                    return false;
+                }
+            }
+            None if !self.except_apps.is_empty() => return false,
+            None => {}
         }
         let held = held_modifiers(flags);
         if self.allow_extra_modifiers {
