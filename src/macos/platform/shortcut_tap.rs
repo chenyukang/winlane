@@ -77,7 +77,13 @@ impl ShortcutTap {
         let (actions, receiver) = mpsc::channel();
         let mut state = Box::new(TapState {
             keys: RefCell::new(keys),
-            remaps: RefCell::new(KeyRemapper::new(&config.key_remaps)),
+            // The master switch simply leaves the rule list out of the tap;
+            // the rules themselves stay in the configuration.
+            remaps: RefCell::new(KeyRemapper::new(if config.key_remaps_enabled {
+                &config.key_remaps
+            } else {
+                &[]
+            })),
             frontmost: RefCell::new(None),
             actions,
             wake,

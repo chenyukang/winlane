@@ -15,7 +15,7 @@ const ROW_HEIGHT: f64 = 58.0;
 const ROW_GAP: f64 = 6.0;
 const APP_ROW: f64 = 20.0;
 /// Title, description, status line and the add button above the first row.
-const CARD_HEADER: f64 = 116.0;
+const CARD_HEADER: f64 = 140.0;
 const CARD_PADDING: f64 = 8.0;
 /// A row and one of its excluded applications travel in one button tag, which
 /// is how AppKit reports which control was used.
@@ -229,6 +229,7 @@ pub(super) struct KeyRemapsPage {
     title: Retained<NSTextField>,
     description: Retained<NSTextField>,
     status: Retained<NSTextField>,
+    enabled: Retained<NSButton>,
     add: Retained<NSButton>,
     rows: RefCell<Vec<Rc<KeyRemapRow>>>,
 }
@@ -260,13 +261,22 @@ impl KeyRemapsPage {
             mtm,
         );
         card.addSubview(&add);
-        let status = hint("", rect(40.0, CARD_HEADER - 100.0, 660.0, 18.0), mtm);
+        let enabled = checkbox(tr!("启用按键重映射", "Enable key remaps"), mtm);
+        enabled.setFrame(rect(40.0, CARD_HEADER - 106.0, 300.0, 22.0));
+        enabled.setToolTip(Some(&NSString::from_str(tr!(
+            "关掉后所有规则暂时停用，规则本身保留在列表里",
+            "Turning this off suspends every rule; the rules themselves stay in the list"
+        ))));
+        set_action(&enabled, target, sel!(settingsChanged:));
+        card.addSubview(&enabled);
+        let status = hint("", rect(40.0, CARD_HEADER - 130.0, 660.0, 18.0), mtm);
         card.addSubview(&status);
         Self {
             card,
             title,
             description,
             status,
+            enabled,
             add,
             rows: RefCell::default(),
         }
@@ -292,8 +302,10 @@ impl KeyRemapsPage {
         self.title.setFrameOrigin(NSPoint::new(40.0, height - 36.0));
         self.description
             .setFrameOrigin(NSPoint::new(40.0, height - 78.0));
+        self.enabled
+            .setFrameOrigin(NSPoint::new(40.0, height - 106.0));
         self.status
-            .setFrameOrigin(NSPoint::new(40.0, height - 100.0));
+            .setFrameOrigin(NSPoint::new(40.0, height - 130.0));
         self.add.setFrameOrigin(NSPoint::new(520.0, height - 64.0));
         let mut top = height - CARD_HEADER;
         for (index, row) in rows.iter().enumerate() {
@@ -304,6 +316,11 @@ impl KeyRemapsPage {
             top -= row_height + ROW_GAP;
         }
         self.add.setEnabled(rows.len() + 1 < MAX_REMAPS);
+        let paused = if self.enabled.state() == NSControlStateValueOn {
+            ""
+        } else {
+            tr!(" · 已停用", " · paused")
+        };
         if rows.is_empty() {
             self.status.setStringValue(&NSString::from_str(tr!(
                 "还没有规则。用“添加规则”新建，或用 scripts/migrate-karabiner.py 从 Karabiner 迁移。",
@@ -311,14 +328,20 @@ impl KeyRemapsPage {
             )));
         } else {
             self.status.setStringValue(&NSString::from_str(&trf!(
-                "共 {count} 条规则，修改后自动保存。",
-                "{count} rules; changes save automatically.",
-                count = rows.len()
+                "共 {count} 条规则，修改后自动保存。{paused}",
+                "{count} rules; changes save automatically.{paused}",
+                count = rows.len(),
+                paused = paused
             )));
         }
     }
 
     pub(super) fn fill(&self, config: &Config) {
+        self.enabled.setState(if config.key_remaps_enabled {
+            NSControlStateValueOn
+        } else {
+            NSControlStateValueOff
+        });
         for row in self.rows.borrow_mut().drain(..) {
             row.view.removeFromSuperview();
         }
@@ -333,6 +356,7 @@ impl KeyRemapsPage {
     }
 
     pub(super) fn read(&self, config: &mut Config) -> Result<(), String> {
+        config.key_remaps_enabled = self.enabled.state() == NSControlStateValueOn;
         let rows = self.rows.borrow();
         let mut remaps = Vec::with_capacity(rows.len());
         for (index, row) in rows.iter().enumerate() {
@@ -657,6 +681,16 @@ impl KeyRemapsPage {
             to_modifiers: Vec::new(),
             except_apps: Vec::new(),
         }
+    }
+
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub(super) fn set_enabled(&self, enabled: bool) {
+        self.enabled.setState(if enabled {
+            NSControlStateValueOn
+        } else {
+            NSControlStateValueOff
+        });
     }
 
     #[cfg(test)]

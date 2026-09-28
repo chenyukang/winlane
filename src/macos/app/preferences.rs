@@ -255,6 +255,7 @@ impl Delegate {
             || candidate.additional_search_shortcuts != previous.additional_search_shortcuts
             || candidate.switch_shortcut != previous.switch_shortcut
             || candidate.key_remaps != previous.key_remaps
+            || candidate.key_remaps_enabled != previous.key_remaps_enabled
             || candidate.app_bindings()? != previous.app_bindings()?
             || candidate.quicklink_bindings()? != previous.quicklink_bindings()?
             || candidate.command_bindings()? != previous.command_bindings()?;

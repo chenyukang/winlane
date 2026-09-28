@@ -4,7 +4,7 @@ Winlane already watches every keystroke to run its own shortcuts, so it can also
 
 ## Editing rules
 
-**Settings → Shortcuts → Key remaps** lists every rule with a checkbox, its two combinations and its excluded applications. Untick a rule to switch it off without losing it, **Delete** removes it, and **＋ Add Rule** appends one. Changes save automatically, and a rule that cannot be read is refused with the reason instead of replacing the active rules.
+**Settings → Shortcuts → Key remaps** lists every rule with a checkbox, its two combinations and its excluded applications. **Enable key remaps** at the top is a master switch: turning it off suspends every rule at once while leaving them in the list. Untick a rule to switch it off without losing it, **Delete** removes it, and **＋ Add Rule** appends one. Changes save automatically, and a rule that cannot be read is refused with the reason instead of replacing the active rules.
 
 A combination is written the way it reads: modifiers as `⌃⌥⇧⌘` or as names (`control`, `cmd`, `shift`, `alt`) followed by a key, for example `⌃S`, `⌘⇧K`, `f7`, `left_arrow`, `page_up`, `delete_or_backspace`. A new rule starts disabled so that adding one is always valid while it is being filled in.
 

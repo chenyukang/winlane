@@ -698,6 +698,20 @@ fn key_remaps_round_trip_and_unusable_rules_are_rejected() {
         Vec::new(),
         "a configuration saved before key remaps existed stays valid"
     );
+    assert!(
+        Config::from_json("{}").unwrap().key_remaps_enabled && Config::default().key_remaps_enabled,
+        "the master switch defaults to on, so a rule that already works keeps working"
+    );
+    let paused = Config {
+        key_remaps_enabled: false,
+        ..Config::default()
+    };
+    assert!(
+        !Config::from_json(&paused.to_json().unwrap())
+            .unwrap()
+            .key_remaps_enabled,
+        "the switch round-trips"
+    );
 
     let mut broken = remap.clone();
     broken.to_key = "not_a_key".into();

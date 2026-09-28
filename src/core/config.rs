@@ -326,6 +326,12 @@ pub struct AliasRule {
     pub title_contains: String,
 }
 
+/// Key remaps are on unless the configuration says otherwise, so a file saved
+/// before the switch existed keeps remapping.
+fn key_remaps_enabled_by_default() -> bool {
+    true
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -340,6 +346,10 @@ pub struct Config {
     /// keyboard remapper would.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub key_remaps: Vec<crate::core::key_remap::KeyRemap>,
+    /// Master switch for the rules above. It defaults to on, so a
+    /// configuration saved before the switch existed keeps remapping.
+    #[serde(default = "key_remaps_enabled_by_default")]
+    pub key_remaps_enabled: bool,
     pub alias_rules: Vec<AliasRule>,
     pub snippets: Vec<crate::features::snippets::Snippet>,
     pub quicklinks: Vec<crate::features::quicklinks::Quicklink>,
@@ -373,6 +383,7 @@ impl Default for Config {
             app_shortcuts: Vec::new(),
             command_shortcuts: Vec::new(),
             key_remaps: Vec::new(),
+            key_remaps_enabled: true,
             alias_rules: Vec::new(),
             snippets: Vec::new(),
             quicklinks: Vec::new(),

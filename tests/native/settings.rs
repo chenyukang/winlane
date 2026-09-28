@@ -598,7 +598,7 @@ fn verify_key_remaps(target: &AnyObject, mtm: MainThreadMarker) {
     layout_page(&settings, 0, mtm);
     verify_settings_bounds(&scroll_document(&settings, 0));
     let card = page.card_frame();
-    let expected = 116.0 + 8.0 * 2.0 + 2.0 * (58.0 + 6.0);
+    let expected = 140.0 + 8.0 * 2.0 + 2.0 * (58.0 + 6.0);
     assert!(
         (card.size.height - expected).abs() < 0.5,
         "the card has to grow with its rows: {card:?}"
@@ -624,6 +624,19 @@ fn verify_key_remaps(target: &AnyObject, mtm: MainThreadMarker) {
     assert_eq!(candidate.key_remaps.len(), 3);
     assert!(!candidate.key_remaps[2].enabled);
     assert!(candidate.key_remaps[2].id.starts_with("custom-"));
+
+    // The master switch suspends every rule without removing any of them.
+    assert!(settings.candidate().unwrap().key_remaps_enabled);
+    page.set_enabled(false);
+    let paused = settings.candidate().unwrap();
+    assert!(!paused.key_remaps_enabled);
+    assert_eq!(
+        paused.key_remaps.len(),
+        page.row_count(),
+        "the rules stay in the list"
+    );
+    page.set_enabled(true);
+    assert!(settings.candidate().unwrap().key_remaps_enabled);
 
     // An unusable combination must not reach the configuration.
     page.set_row_from(2, "hyper+s");
