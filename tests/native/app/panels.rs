@@ -212,6 +212,20 @@ pub(super) fn verify_display_density(mtm: MainThreadMarker) {
             heights[1] > heights[0],
             "normal rows must expand the adaptive panel"
         );
+        // The search field height is pinned per density: it is deliberately a
+        // little shorter than the control size alone would make it.
+        for (density, field_height) in [
+            (DisplayDensity::Compact, 34.0),
+            (DisplayDensity::Normal, 36.0),
+        ] {
+            state.config.borrow_mut().display_density = density;
+            delegate.filter();
+            let ui = &delegate.panels()[0];
+            assert!(
+                (ui.input.frame().size.height - field_height).abs() < 0.5,
+                "{density:?} search field is {field_height} points tall"
+            );
+        }
     }
     println!(
         "Density checks passed: live Compact/Normal changes, centered aliases/icons, scrolling, selection, row reuse and all displays."

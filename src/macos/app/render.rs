@@ -177,9 +177,11 @@ impl Delegate {
             }
             ui.panel.setFrame_display(frame, false);
         }
+        // The field is a little shorter than the control size suggests, so
+        // Normal density does not look bottom heavy next to its rows.
         let (input_height, input_font_size, input_control_size) = match density {
             DisplayDensity::Compact => (34.0, 15.0, NSControlSize::Regular),
-            DisplayDensity::Normal => (38.0, 16.0, NSControlSize::Large),
+            DisplayDensity::Normal => (36.0, 16.0, NSControlSize::Large),
         };
         if ui.input.controlSize() != input_control_size {
             ui.input.setControlSize(input_control_size);
