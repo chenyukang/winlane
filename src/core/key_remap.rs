@@ -217,8 +217,8 @@ pub fn key_code(name: &str) -> Option<i64> {
 pub fn modifier_flag(name: &str) -> Option<u64> {
     Some(match normalized(name).as_str() {
         "shift" | "left_shift" | "right_shift" => SHIFT,
-        "control" | "left_control" | "right_control" => CONTROL,
-        "option" | "left_option" | "right_option" | "alt" => OPTION,
+        "control" | "left_control" | "right_control" | "ctrl" => CONTROL,
+        "option" | "left_option" | "right_option" | "alt" | "opt" => OPTION,
         "command" | "left_command" | "right_command" | "cmd" => COMMAND,
         _ => return None,
     })
@@ -226,6 +226,98 @@ pub fn modifier_flag(name: &str) -> Option<u64> {
 
 fn normalized(name: &str) -> String {
     name.trim().to_lowercase().replace('-', "_")
+}
+
+/// The modifier order a combination is written in, so the same rule always
+/// reads the same way in the settings page and in the saved preferences.
+const MODIFIER_ORDER: [(&str, u64, char); 4] = [
+    ("control", CONTROL, '⌃'),
+    ("option", OPTION, '⌥'),
+    ("shift", SHIFT, '⇧'),
+    ("command", COMMAND, '⌘'),
+];
+
+/// Write a combination the way the settings page shows it: modifiers as their
+/// symbols followed by the key, such as `⌃S` or `⌘delete_or_backspace`.
+pub fn format_combination(key: &str, modifiers: &[String]) -> String {
+    let held = modifiers
+        .iter()
+        .filter_map(|modifier| modifier_flag(modifier))
+        .fold(0, |flags, flag| flags | flag);
+    let mut text = String::new();
+    for (_, flag, symbol) in MODIFIER_ORDER {
+        if held & flag != 0 {
+            text.push(symbol);
+        }
+    }
+    text.push_str(&display_key(key));
+    text
+}
+
+/// Read a combination written by hand. Modifiers may be their symbols or their
+/// names in any order, and either side of a modifier is accepted, so `⌃S`,
+/// `control+s` and `left_ctrl+s` all describe the same rule.
+pub fn parse_combination(text: &str) -> Result<(String, Vec<String>), String> {
+    let mut rest = text.trim();
+    let mut flags = 0;
+    loop {
+        if let Some(symbol) = rest.chars().next()
+            && let Some((_, flag, _)) = MODIFIER_ORDER
+                .iter()
+                .find(|(_, _, candidate)| *candidate == symbol)
+        {
+            flags |= flag;
+            rest = &rest[symbol.len_utf8()..];
+            continue;
+        }
+        let Some((head, tail)) = rest.split_once('+') else {
+            break;
+        };
+        let Some(flag) = modifier_flag(head.trim()) else {
+            break;
+        };
+        flags |= flag;
+        rest = tail;
+    }
+    let key = rest.trim();
+    if key_code(key).is_none() {
+        return Err(trf!(
+            "无法识别的按键：{key}（例如 s、f7、left_arrow、page_up）",
+            "Unknown key: {key} (for example s, f7, left_arrow, page_up)",
+            key = key
+        ));
+    }
+    Ok((
+        key_name(key),
+        MODIFIER_ORDER
+            .iter()
+            .filter(|(_, flag, _)| flags & flag != 0)
+            .map(|(name, _, _)| (*name).to_string())
+            .collect(),
+    ))
+}
+
+/// The canonical spelling of a key name, so `S`, `s` and `s`-with-dashes all
+/// save as the same rule.
+fn key_name(name: &str) -> String {
+    let normalized = normalized(name);
+    match normalized.as_str() {
+        "return" | "enter" => "return_or_enter".into(),
+        "space" => "spacebar".into(),
+        "backspace" | "delete" => "delete_or_backspace".into(),
+        "esc" => "escape".into(),
+        _ => normalized,
+    }
+}
+
+/// How a key is shown inside a combination: single letters read better in upper
+/// case, everything else keeps its name.
+fn display_key(name: &str) -> String {
+    let normalized = normalized(name);
+    if normalized.chars().count() == 1 {
+        return normalized.to_uppercase();
+    }
+    key_name(name)
 }
 
 /// The modifiers a keystroke is holding, ignoring caps lock, the numeric pad

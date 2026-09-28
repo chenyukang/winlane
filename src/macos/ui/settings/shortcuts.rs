@@ -1,6 +1,7 @@
 use super::*;
 
 pub(super) struct ShortcutsPage {
+    pub(super) key_remaps: key_remaps::KeyRemapsPage,
     pub(super) search_shortcut: ShortcutControls,
     pub(super) search_rows: RefCell<Vec<SearchShortcutRow>>,
     pub(super) shortcuts_document: Retained<NSView>,
@@ -72,10 +73,12 @@ impl ShortcutsPage {
 
         let command_shortcuts =
             command_shortcuts::CommandShortcutControls::new(&shortcuts, target, mtm);
+        let key_remaps = key_remaps::KeyRemapsPage::new(&shortcuts, target, mtm);
 
         search_shortcut.on_change(target, sel!(settingsChanged:));
         switch_shortcut.on_change(target, sel!(settingsChanged:));
         Self {
+            key_remaps,
             search_shortcut,
             search_rows: RefCell::default(),
             shortcuts_document: shortcuts,
@@ -102,6 +105,7 @@ impl ShortcutsPage {
             .scrollRectToVisible(self.search_header.bounds());
         self.switch_shortcut.fill(&config.switch_shortcut);
         self.command_shortcuts.fill(&config.command_shortcuts);
+        self.key_remaps.fill(config);
     }
     pub(super) fn read(&self, config: &mut Config) -> Result<(), String> {
         config.shortcut = self.search_shortcut.read()?;
@@ -113,6 +117,7 @@ impl ShortcutsPage {
             .collect::<Result<_, _>>()?;
         config.switch_shortcut = self.switch_shortcut.read()?;
         config.command_shortcuts = self.command_shortcuts.read()?;
+        self.key_remaps.read(config)?;
         Ok(())
     }
     pub(super) fn append_search_row(&self, value: &Shortcut) {
@@ -149,11 +154,13 @@ impl ShortcutsPage {
     pub(super) fn layout_search_shortcuts(&self) {
         let rows = self.search_rows.borrow();
         let search_height = 104.0 + rows.len() as f64 * 44.0;
+        // Search, switch, app and command cards, then the key remap card below.
+        let cards_above = search_height + 216.0 + self.command_shortcuts.view.frame().size.height;
         let height = self
             .shortcuts_scroll
             .contentSize()
             .height
-            .max(search_height + 224.0 + self.command_shortcuts.view.frame().size.height);
+            .max(cards_above + 8.0 + self.key_remaps.height());
         self.shortcuts_document
             .setFrameSize(NSSize::new(740.0, height));
         self.search_card
@@ -175,6 +182,8 @@ impl ShortcutsPage {
             0.0,
             height - search_height - 216.0 - self.command_shortcuts.view.frame().size.height,
         ));
+        self.key_remaps
+            .layout(height - cards_above - 8.0 - self.key_remaps.height());
         self.add_search
             .setEnabled(rows.len() + 1 < winlane::core::config::MAX_SEARCH_SHORTCUTS);
     }

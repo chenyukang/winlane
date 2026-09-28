@@ -1,5 +1,6 @@
 use winlane::core::key_remap::{
-    KeyRemap, KeyRemapper, MAX_REMAPS, key_code, modifier_flag, validate,
+    KeyRemap, KeyRemapper, MAX_REMAPS, format_combination, key_code, modifier_flag,
+    parse_combination, validate,
 };
 use winlane::core::shortcuts::{COMMAND, CONTROL, KEY_DOWN, KEY_UP, OPTION, SHIFT};
 
@@ -388,4 +389,65 @@ fn an_unknown_frontmost_application_keeps_excluded_rules_off() {
             .rewrite(KEY_DOWN, key_code("s").unwrap(), CONTROL, None)
             .is_some()
     );
+}
+
+#[test]
+fn combinations_round_trip_through_the_text_the_settings_page_shows() {
+    assert_eq!(format_combination("s", &["control".to_string()]), "⌃S");
+    assert_eq!(
+        format_combination("left_arrow", &["command".to_string(), "shift".to_string()]),
+        "⇧⌘left_arrow",
+        "modifiers always read in the same order"
+    );
+    assert_eq!(
+        format_combination("delete_or_backspace", &["option".to_string()]),
+        "⌥delete_or_backspace"
+    );
+
+    for (text, key, modifiers) in [
+        ("⌃S", "s", vec!["control"]),
+        ("control+s", "s", vec!["control"]),
+        ("left_control + S", "s", vec!["control"]),
+        ("cmd+shift+k", "k", vec!["shift", "command"]),
+        ("⌘⇧K", "k", vec!["shift", "command"]),
+        ("f7", "f7", vec![]),
+        ("F7", "f7", vec![]),
+        ("page-up", "page_up", vec![]),
+        ("space", "spacebar", vec![]),
+        ("delete", "delete_or_backspace", vec![]),
+        ("end", "end", vec![]),
+    ] {
+        assert_eq!(
+            parse_combination(text),
+            Ok((
+                key.to_string(),
+                modifiers.iter().map(|value| value.to_string()).collect()
+            )),
+            "{text}"
+        );
+    }
+
+    for broken in ["", "hyper+s", "⌃nope", "+s", "s+"] {
+        assert!(
+            parse_combination(broken).is_err(),
+            "{broken} must be rejected"
+        );
+    }
+
+    // What the page writes into the field has to parse back into the same rule.
+    for remap in [
+        rule("one", "s", &["control"], "s", &["command"]),
+        rule("two", "left_arrow", &["shift", "command"], "page_up", &[]),
+        rule("three", "delete_or_backspace", &["option"], "f7", &[]),
+    ] {
+        let from = parse_combination(&format_combination(&remap.from_key, &remap.from_modifiers));
+        let to = parse_combination(&format_combination(&remap.to_key, &remap.to_modifiers));
+        assert_eq!(
+            from,
+            Ok((remap.from_key.clone(), remap.from_modifiers.clone())),
+            "{} reads back",
+            remap.id
+        );
+        assert_eq!(to, Ok((remap.to_key.clone(), remap.to_modifiers.clone())));
+    }
 }

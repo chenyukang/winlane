@@ -158,7 +158,7 @@ Open **Settings** from the menu bar, or press **Command + ,** while using Winlan
 - **Apps:** use **App Shortcuts** to open or activate an app without the picker.
 - **Quicklinks:** select a saved link in **Settings → Quicklinks** and set its **Global shortcut**.
 - **Aliases:** in **Settings → Aliases**, assign one or two lowercase letters to an app. Add an optional window-title keyword to target a particular project or document. Custom aliases stay reserved even when their target is closed.
-- **Key remaps:** rewrite a key combination for every application, the way a keyboard remapper does. `python3 scripts/migrate-karabiner.py` converts Karabiner-Elements rules. [Key remaps and migration](docs/key-remaps.md).
+- **Key remaps:** rewrite a key combination for every application, the way a keyboard remapper does. Edit them in **Settings → Shortcuts → Key remaps**, or convert Karabiner-Elements rules with `python3 scripts/migrate-karabiner.py`. [Key remaps and migration](docs/key-remaps.md).
 
 Shortcut conflicts show the existing binding so you can choose another combination. A conflicting edit leaves your previous valid shortcut active.
 

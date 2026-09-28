@@ -4,6 +4,7 @@ mod command_shortcuts;
 mod files;
 mod input;
 mod input_rules;
+mod key_remaps;
 mod layout;
 mod navigation;
 mod pages;
@@ -372,6 +373,16 @@ impl SettingsWindow {
             ),
             false,
         );
+    }
+    pub fn add_key_remap(&self) {
+        let page = self.shortcuts();
+        page.key_remaps.add_rule();
+        page.layout_search_shortcuts();
+    }
+    pub fn remove_key_remap(&self, index: usize) {
+        let page = self.shortcuts();
+        page.key_remaps.remove_rule(index);
+        page.layout_search_shortcuts();
     }
     pub fn remove_search_shortcut(&self, index: usize) {
         let page = self.shortcuts();

@@ -319,6 +319,20 @@ define_class!(
         fn select_settings_section(&self, sender: &NSButton) {
             if let Some(settings) = self.settings_window() { settings.select_tab(sender.tag()); }
         }
+        #[unsafe(method(addKeyRemap:))]
+        fn add_key_remap(&self, _: Option<&AnyObject>) {
+            if let Some(settings) = self.settings_window() {
+                settings.add_key_remap();
+                self.autosave_settings();
+            }
+        }
+        #[unsafe(method(removeKeyRemap:))]
+        fn remove_key_remap(&self, sender: &NSButton) {
+            if let Some(settings) = self.settings_window() {
+                settings.remove_key_remap(sender.tag() as usize);
+                self.autosave_settings();
+            }
+        }
         #[unsafe(method(removeSearchShortcut:))]
         fn remove_search_shortcut(&self, sender: &NSButton) {
             if let Some(settings) = self.settings_window() {

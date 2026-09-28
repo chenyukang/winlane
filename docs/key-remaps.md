@@ -2,6 +2,12 @@
 
 Winlane already watches every keystroke to run its own shortcuts, so it can also rewrite a combination before any application sees it — the same job a keyboard remapper does. Rules stay plain: one key plus the modifiers held with it becomes another key plus its modifiers, optionally skipping named applications.
 
+## Editing rules
+
+**Settings → Shortcuts → Key remaps** lists every rule with a checkbox, its two combinations and its excluded applications. Untick a rule to switch it off without losing it, **Delete** removes it, and **＋ Add Rule** appends one. Changes save automatically, and a rule that cannot be read is refused with the reason instead of replacing the active rules.
+
+A combination is written the way it reads: modifiers as `⌃⌥⇧⌘` or as names (`control`, `cmd`, `shift`, `alt`) followed by a key, for example `⌃S`, `⌘⇧K`, `f7`, `left_arrow`, `page_up`, `delete_or_backspace`. Excluded applications are bundle identifiers separated by commas. A new rule starts disabled so that adding one is always valid while it is being filled in.
+
 ## What a rule is
 
 Rules live in Winlane's saved preferences under `key_remaps`:
@@ -33,6 +39,7 @@ The script converts every plain remap it understands and reports the rest. Layer
 - **Exclusions need to know the frontmost application.** Winlane publishes it whenever an application is activated. Until it knows, a rule that names applications stays off rather than firing where it should not.
 - **This is an event tap, not a keyboard device.** Karabiner-Elements replaces the keyboard at the HID layer; Winlane rewrites events after the system has already seen them. Remaps therefore do not apply during secure input (password fields, Terminal's Secure Keyboard Entry), and they stop while Winlane is not running or whenever macOS disables the tap.
 - **Failure is inert.** A rule that cannot be parsed is dropped, and an invalid rule is rejected before it replaces the active configuration, so a bad edit leaves the previous rules running.
+- **Winlane's own defaults are empty.** No rule ships with the app; the migration script and the settings page only ever change your saved configuration.
 
 ## Not supported
 

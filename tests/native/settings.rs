@@ -7,6 +7,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
     verify_lazy_pages(target, mtm);
     verify_card_appearances(mtm);
     input::tests::verify(target, mtm);
+    verify_key_remaps(target, mtm);
     input_rules::tests::verify(target, mtm);
     scrolling::tests::verify(target, mtm);
     files::tests::verify(target, mtm);
@@ -212,17 +213,18 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
                 .layoutSubtreeIfNeeded();
             let view = item.view(mtm).unwrap();
             verify_settings_bounds(&view);
-            if index == 2 {
+            if index == 0 || index == 2 {
                 let subviews = view.subviews();
                 let scroll = subviews.objectAtIndex(0);
                 let scroll = scroll.downcast_ref::<NSScrollView>().unwrap();
                 verify_settings_bounds(&scroll.documentView().unwrap());
                 assert!(
-                    (scroll.documentVisibleRect().origin.y
-                        + scroll.documentVisibleRect().size.height
-                        - scroll.documentView().unwrap().bounds().size.height)
-                        .abs()
-                        < 1.0,
+                    index != 2
+                        || (scroll.documentVisibleRect().origin.y
+                            + scroll.documentVisibleRect().size.height
+                            - scroll.documentView().unwrap().bounds().size.height)
+                            .abs()
+                            < 1.0,
                     "Input opens at the top of its scrollable page"
                 );
             }
@@ -443,6 +445,91 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
     }
     println!(
         "English and Chinese settings: sidebar navigation, stable window size, grouped layout bounds, configuration round trips passed."
+    );
+}
+
+/// Key remaps live on the Shortcuts page: they are the same kind of thing
+/// (a key combination) and the sidebar has no room for another entry.
+fn verify_key_remaps(target: &AnyObject, mtm: MainThreadMarker) {
+    use winlane::core::key_remap::KeyRemap;
+    let settings = SettingsWindow::new(target, mtm);
+    let save = KeyRemap {
+        id: "save".into(),
+        enabled: true,
+        from_key: "s".into(),
+        from_modifiers: vec!["control".into()],
+        allow_extra_modifiers: true,
+        to_key: "s".into(),
+        to_modifiers: vec!["left_command".into()],
+        except_apps: vec!["com.apple.Terminal".into(), "com.googlecode.iterm2".into()],
+    };
+    let end = KeyRemap {
+        id: "end-of-line".into(),
+        enabled: true,
+        from_key: "end".into(),
+        from_modifiers: Vec::new(),
+        allow_extra_modifiers: false,
+        to_key: "right_arrow".into(),
+        to_modifiers: vec!["command".into()],
+        except_apps: Vec::new(),
+    };
+    let config = Config {
+        key_remaps: vec![save.clone(), end.clone()],
+        ..Config::default()
+    };
+    settings.fill(&config);
+    let page = &settings.shortcuts().key_remaps;
+    assert_eq!(page.row_count(), 2, "one row per configured rule");
+    assert_eq!(
+        settings.candidate().unwrap().key_remaps,
+        vec![save.clone(), end.clone()],
+        "the page must read back exactly the rules it was given"
+    );
+
+    // A new rule starts disabled, so adding one cannot collide with an
+    // existing rule while it is still being edited.
+    settings.add_key_remap();
+    assert_eq!(page.row_count(), 3);
+    let candidate = settings
+        .candidate()
+        .expect("a disabled placeholder is valid");
+    assert_eq!(candidate.key_remaps.len(), 3);
+    assert!(!candidate.key_remaps[2].enabled);
+    assert!(candidate.key_remaps[2].id.starts_with("custom-"));
+
+    // An unusable combination must not reach the configuration.
+    page.set_row_from(2, "hyper+s");
+    assert!(settings.candidate().is_err());
+    page.set_row_from(2, "⌃f12");
+    page.set_row_enabled(2, true);
+    let candidate = settings.candidate().unwrap();
+    assert_eq!(candidate.key_remaps[2].from_key, "f12");
+    assert_eq!(
+        candidate.key_remaps[2].from_modifiers,
+        vec!["control".to_string()]
+    );
+
+    settings.remove_key_remap(2);
+    assert_eq!(page.row_count(), 2);
+    assert_eq!(
+        settings.candidate().unwrap().key_remaps,
+        vec![save, end],
+        "removing the row removes the rule"
+    );
+
+    // The card grows with the rows and stays inside the scroll document.
+    let card = page.card_frame();
+    let document = settings.shortcuts().shortcuts_document.bounds().size.height;
+    assert!(
+        card.origin.y >= 0.0,
+        "the remap card must not sit below the document"
+    );
+    assert!(
+        card.origin.y + card.size.height <= document + 0.5,
+        "the remap card must fit inside the scroll document"
+    );
+    println!(
+        "Key remap settings checks passed: rows follow the configuration, a new rule starts disabled, an unusable combination is refused, and the card stays inside the page."
     );
 }
 
