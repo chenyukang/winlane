@@ -448,12 +448,20 @@ impl SettingsWindow {
         let selected = self.selected_tab();
         self.ensure_page(selected);
         for button in &self.navigation {
-            button.setState(if button.tag() == selected {
+            let current = button.tag() == selected;
+            button.setState(if current {
                 NSControlStateValueOn
             } else {
                 NSControlStateValueOff
             });
             NSView::setNeedsDisplay(button, true);
+            if current {
+                // Start with the sidebar button of this page focused. AppKit
+                // otherwise focuses the first text field it finds, so opening
+                // Settings put the caret in a saved value the user never
+                // chose — the log path, for instance.
+                self.window.setInitialFirstResponder(Some(button));
+            }
         }
         if let Some(item) = self.tabs.selectedTabViewItem() {
             self.page_title.setStringValue(&item.label());

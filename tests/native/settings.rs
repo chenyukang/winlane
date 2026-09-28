@@ -212,6 +212,19 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
                 .contentView()
                 .unwrap()
                 .layoutSubtreeIfNeeded();
+            // The window starts with the sidebar button of the page it opens
+            // on, never with a text field: AppKit would otherwise focus the
+            // first one it finds and put the caret in a saved value.
+            let responder = settings.window.initialFirstResponder();
+            let tag = responder
+                .as_deref()
+                .and_then(|view| view.downcast_ref::<navigation::SettingsNavigationButton>())
+                .map(|button| button.tag());
+            assert_eq!(
+                tag,
+                Some(index as isize),
+                "page {index} must start with its sidebar button focused"
+            );
             let view = item.view(mtm).unwrap();
             verify_settings_bounds(&view);
             if index == 0 || index == 2 {
