@@ -81,7 +81,10 @@ impl Delegate {
         };
         if !paste {
             match content.write(&NSPasteboard::generalPasteboard()) {
-                Ok(()) => self.dismiss(),
+                Ok(()) => {
+                    self.remember_clipboard_use(entry.id);
+                    self.dismiss()
+                }
                 Err(error) => self.report_switch_error(&error),
             }
             return;
@@ -112,6 +115,7 @@ impl Delegate {
             },
         ) {
             Ok(timer) => {
+                self.remember_clipboard_use(entry.id);
                 self.ivars().snippet_paste_timer.replace(Some(timer));
             }
             Err(error) => self.selection_failed(&error),
@@ -126,6 +130,14 @@ impl Delegate {
             clipboard.remove(entry.id);
         }
         self.filter_preserving(Some(SelectedResult::Clipboard(entry.id)));
+    }
+
+    /// Picking an entry is the newest use of it, so it leads the next search
+    /// instead of keeping the position it was copied in.
+    fn remember_clipboard_use(&self, id: u64) {
+        if let Some(clipboard) = self.ivars().clipboard.borrow_mut().as_mut() {
+            clipboard.promote(id);
+        }
     }
 
     pub(super) fn toggle_clipboard_recording(&self) {

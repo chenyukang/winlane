@@ -286,6 +286,12 @@ impl ClipboardRuntime {
             self.persist();
         }
     }
+    /// Remember that an entry was picked, so it leads the next search.
+    pub fn promote(&mut self, id: u64) {
+        if self.history.promote(id, now()) {
+            self.persist();
+        }
+    }
     pub fn clear(&mut self) {
         self.ignore_loaded = true;
         self.generation = self.generation.wrapping_add(1);

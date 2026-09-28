@@ -104,7 +104,13 @@ pub struct Entry {
     pub text: Arc<str>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<ImageInfo>,
+    /// When the item entered the history, which is what a row shows.
     pub copied_at: u64,
+    /// When the item was last picked from the history. Ordering falls back to
+    /// `copied_at`, so files written before this field existed still load in
+    /// their saved order.
+    #[serde(default)]
+    pub used_at: u64,
     pub source: String,
 }
 impl Entry {
@@ -177,6 +183,7 @@ impl History {
                 text: Arc::from(text),
                 image: None,
                 copied_at: now,
+                used_at: 0,
                 source: source.chars().take(100).collect(),
             },
         );
@@ -215,6 +222,7 @@ impl History {
                 text: Arc::from(""),
                 image: Some(image),
                 copied_at: now,
+                used_at: 0,
                 source: source.chars().take(100).collect(),
             },
         );
@@ -250,6 +258,18 @@ impl History {
         let before = self.entries.len();
         self.entries.retain(|entry| entry.id != id);
         before != self.entries.len()
+    }
+    /// Lead the next search with an entry the user just picked. Choosing an
+    /// older item is the newest use of it, so it belongs at the front instead
+    /// of staying where it was originally copied.
+    pub fn promote(&mut self, id: u64, now: u64) -> bool {
+        let Some(index) = self.entries.iter().position(|entry| entry.id == id) else {
+            return false;
+        };
+        let mut entry = self.entries.remove(index);
+        entry.used_at = now;
+        self.entries.insert(0, entry);
+        true
     }
     pub fn matching(&self, query: &str) -> Vec<u64> {
         let query = query.trim().to_lowercase();
@@ -311,7 +331,7 @@ impl History {
         }
         history
             .entries
-            .sort_by_key(|entry| std::cmp::Reverse(entry.copied_at));
+            .sort_by_key(|entry| std::cmp::Reverse(entry.used_at.max(entry.copied_at)));
         history.prune(now, settings);
         Ok(history)
     }

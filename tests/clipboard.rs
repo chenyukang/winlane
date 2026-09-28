@@ -32,6 +32,44 @@ fn clipboard_deduplicates_exact_content_and_searches_in_copy_order() {
 }
 
 #[test]
+fn picking_an_older_entry_leads_the_next_search_and_survives_a_restart() {
+    let temp = Temp::new();
+    let settings = ClipboardSettings::default();
+    let store = temp.store(settings.clone());
+    assert!(loaded(&store).unwrap().entries.is_empty());
+
+    let mut history = History::default();
+    for (offset, text) in ["first", "second", "third"].iter().enumerate() {
+        history.record(text, "Editor", NOW + offset as u64, &settings);
+    }
+    let third = history.entries[0].id;
+    let second = history.entries[1].id;
+    let first = history.entries[2].id;
+    assert_eq!(history.matching(""), [third, second, first]);
+
+    // Picking the oldest entry is the most recent use of it, so it moves up.
+    assert!(history.promote(first, NOW + 10));
+    assert_eq!(history.matching(""), [first, third, second]);
+    assert_eq!(
+        history.get(first).unwrap().copied_at,
+        NOW,
+        "promoting must not restamp when the item was copied"
+    );
+    assert!(
+        !history.promote(9999, NOW + 11),
+        "an unknown entry must change nothing"
+    );
+
+    // The order has to survive a restart, which restores it from the saved times.
+    store.save(Some(history));
+    drop(store);
+    let store = temp.store(settings);
+    let reloaded = loaded(&store).unwrap();
+    assert_eq!(reloaded.matching(""), [first, third, second]);
+    assert_eq!(reloaded.matching("second"), [second]);
+}
+
+#[test]
 fn clipboard_enforces_time_count_and_memory_limits() {
     let mut settings = ClipboardSettings {
         max_items: 2,
