@@ -158,6 +158,7 @@ Open **Settings** from the menu bar, or press **Command + ,** while using Winlan
 - **Apps:** use **App Shortcuts** to open or activate an app without the picker.
 - **Quicklinks:** select a saved link in **Settings → Quicklinks** and set its **Global shortcut**.
 - **Aliases:** in **Settings → Aliases**, assign one or two lowercase letters to an app. Add an optional window-title keyword to target a particular project or document. Custom aliases stay reserved even when their target is closed.
+- **Key remaps:** rewrite a key combination for every application, the way a keyboard remapper does. `python3 scripts/migrate-karabiner.py` converts Karabiner-Elements rules. [Key remaps and migration](docs/key-remaps.md).
 
 Shortcut conflicts show the existing binding so you can choose another combination. A conflicting edit leaves your previous valid shortcut active.
 
@@ -191,7 +192,7 @@ The check interval is configurable and defaults to **10 seconds**. Winlane prese
 
 Winlane keeps settings, aliases, snippets, Quicklinks, and clipboard history on your Mac. Window and app searches run locally. Web searches and links open in your browser or the app you choose.
 
-- **Window access:** Accessibility permission lets Winlane read and focus windows and handle shortcuts. Winlane does not log your keystrokes or take screenshots automatically.
+- **Window access:** Accessibility permission lets Winlane read and focus windows, handle shortcuts, and rewrite keys for key remaps. Winlane does not log your keystrokes or take screenshots automatically.
 - **Clipboard history:** saved text and images are **not encrypted**. Winlane skips standard sensitive-content markers and common password managers, but cannot recognize every secret. Pause recording before copying anything you do not want retained.
 - **Input rules and projects:** remembered input sources and the recent-project cache are stored locally. Filled-in snippet arguments are not saved as form history; the pasted text remains on your clipboard.
 - **Files:** filename search uses Spotlight. The last 25 paths opened through Winlane are stored locally and can be cleared in Settings → Files. No file contents or search queries are saved.
