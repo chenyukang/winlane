@@ -75,6 +75,7 @@ pub fn verify_hidden_panels() {
     let delegate = Delegate::new(mtm);
     crate::macos::ui::settings::tests::verify_localized_settings(&delegate, mtm);
     verify_autosave(mtm);
+    settings::verify_scrolling_retry(mtm);
     super::auto_appclose::tests::verify(mtm);
     settings_focus::verify_settings_focus(mtm);
     for language in ["en", "zh"] {

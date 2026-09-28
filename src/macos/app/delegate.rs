@@ -631,6 +631,7 @@ define_class!(
         fn poll(&self, _: Option<&AnyObject>) {
             self.update_app_input_rules();
             self.release_closed_settings();
+            self.retry_scrolling_if_needed();
             self.update_scrolling_status();
             let transient_ui_open = self.ivars().files.borrow().menu_open
                 || (self.searching_bluetooth() && self.ivars().bluetooth_permission.borrow().is_some());

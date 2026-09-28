@@ -287,3 +287,74 @@ fn verify_alias_editor_lifecycle(mtm: MainThreadMarker) {
         "Alias editor checks passed: embedded in Settings, loaded on demand, released on close, drafts restored on reopen."
     );
 }
+/// A permission that was granted after startup has to bring the scroll tap
+/// back on its own; only the Retry button used to do that.
+pub(crate) fn verify_scrolling_retry(mtm: MainThreadMarker) {
+    use std::time::Instant;
+
+    let delegate = Delegate::new(mtm);
+    let state = delegate.ivars();
+    assert!(
+        state.scroll_tap.borrow().is_none(),
+        "scrolling starts disabled"
+    );
+    delegate.retry_scrolling_if_needed();
+    assert!(
+        state.scroll_tap.borrow().is_none(),
+        "a disabled setting must not install a tap"
+    );
+
+    state.config.borrow_mut().scrolling.enabled = true;
+    delegate.retry_scrolling_if_needed();
+    if accessibility::is_trusted() {
+        assert!(
+            state
+                .scroll_tap
+                .borrow()
+                .as_ref()
+                .is_some_and(crate::macos::platform::scrolling::ScrollTap::is_enabled),
+            "a permitted app installs the scroll tap again after it went missing"
+        );
+        let before = state
+            .scroll_tap
+            .borrow()
+            .as_ref()
+            .map(|tap| tap as *const _);
+        delegate.retry_scrolling_if_needed();
+        assert_eq!(
+            state
+                .scroll_tap
+                .borrow()
+                .as_ref()
+                .map(|tap| tap as *const _),
+            before,
+            "an active tap is left alone"
+        );
+    } else {
+        assert!(
+            state.scroll_error.borrow().is_some(),
+            "without permission the reason is recorded for the status line"
+        );
+    }
+
+    // The retry is throttled: the poll runs every second and a tap that cannot
+    // start must not be rebuilt on every pass.
+    let now = Instant::now();
+    assert!(
+        super::scrolling::retry_due(None, now),
+        "the first pass always tries"
+    );
+    assert!(!super::scrolling::retry_due(Some(now), now));
+    assert!(
+        super::scrolling::retry_due(Some(now), now + super::scrolling::SCROLL_RETRY_INTERVAL),
+        "and tries again after the interval"
+    );
+    println!(
+        "Scroll tap recovery checks passed: a missing tap is retried when the app is allowed again (permission {}), an active one is left alone, and attempts are throttled.",
+        if accessibility::is_trusted() {
+            "granted"
+        } else {
+            "absent, so the install path was not exercised"
+        }
+    );
+}

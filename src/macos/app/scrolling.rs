@@ -1,7 +1,41 @@
 use super::*;
 use crate::macos::platform::scrolling::ScrollTap;
+use std::time::{Duration, Instant};
+
+/// A tap that cannot start yet is retried on this interval rather than on every
+/// poll pass.
+pub(super) const SCROLL_RETRY_INTERVAL: Duration = Duration::from_secs(3);
+
+/// Whether the poll may try to install the scroll tap again.
+pub(super) fn retry_due(last_attempt: Option<Instant>, now: Instant) -> bool {
+    last_attempt.is_none_or(|at| now.duration_since(at) >= SCROLL_RETRY_INTERVAL)
+}
 
 impl Delegate {
+    /// Install the scroll tap again when it is missing. Permission is checked
+    /// while the app starts, so without this the setting stayed dead after the
+    /// user granted Accessibility access back until they pressed Retry.
+    pub(super) fn retry_scrolling_if_needed(&self) {
+        if !accessibility::is_trusted() || !self.ivars().config.borrow().scrolling.enabled {
+            return;
+        }
+        if self
+            .ivars()
+            .scroll_tap
+            .borrow()
+            .as_ref()
+            .is_some_and(ScrollTap::is_enabled)
+        {
+            return;
+        }
+        let now = Instant::now();
+        if !retry_due(self.ivars().scroll_retry_at.get(), now) {
+            return;
+        }
+        self.ivars().scroll_retry_at.set(Some(now));
+        self.ensure_scrolling();
+    }
+
     pub(super) fn ensure_scrolling(&self) {
         let settings = self.ivars().config.borrow().scrolling.clone();
         if !settings.enabled {
@@ -51,8 +85,8 @@ impl Delegate {
             tr!("已启用。", "Active.")
         } else {
             error.as_deref().unwrap_or(tr!(
-                "滚动监听已停止。检查系统授权后点击重试。",
-                "Scroll monitoring stopped. Check system permissions, then retry."
+                "滚动监听已停止。恢复系统授权后会自动重试，也可以点“重试”。",
+                "Scroll monitoring stopped. It retries by itself once system access is back, or press Retry."
             ))
         };
         settings.update_scrolling_status(text, enabled && !active);
