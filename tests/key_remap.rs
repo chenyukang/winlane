@@ -1,6 +1,6 @@
 use winlane::core::key_remap::{
-    KeyRemap, KeyRemapper, MAX_REMAPS, format_combination, key_code, modifier_flag,
-    parse_combination, validate,
+    KeyRemap, KeyRemapper, MAX_REMAPS, REMOTE_DESKTOP_APPS, TERMINAL_APPS, format_combination,
+    key_code, modifier_flag, parse_combination, validate,
 };
 use winlane::core::shortcuts::{COMMAND, CONTROL, KEY_DOWN, KEY_UP, OPTION, SHIFT};
 
@@ -450,4 +450,46 @@ fn combinations_round_trip_through_the_text_the_settings_page_shows() {
         );
         assert_eq!(to, Ok((remap.to_key.clone(), remap.to_modifiers.clone())));
     }
+}
+
+#[test]
+fn an_exclusion_ending_in_a_dot_covers_a_family_of_bundles() {
+    let mut remapper = KeyRemapper::new(&[excluding(
+        with_extra(rule("save", "s", &["control"], "s", &["command"])),
+        &["com.parallels.winapp.", "com.apple.Terminal"],
+    )]);
+    let save = key_code("s").unwrap();
+    for app in ["com.parallels.winapp.1234", "com.apple.Terminal"] {
+        assert_eq!(
+            remapper.rewrite(KEY_DOWN, save, CONTROL, Some(app)),
+            None,
+            "{app} is excluded"
+        );
+    }
+    for app in [
+        "com.parallels.winapp",
+        "com.parallels.desktop",
+        "dev.warp.Warp-Stable",
+    ] {
+        assert!(
+            remapper
+                .rewrite(KEY_DOWN, save, CONTROL, Some(app))
+                .is_some(),
+            "{app} is not excluded"
+        );
+    }
+}
+
+#[test]
+fn the_exclusion_lists_match_what_a_migrated_rule_needs() {
+    for list in [TERMINAL_APPS, REMOTE_DESKTOP_APPS] {
+        assert!(!list.is_empty());
+        let unique: std::collections::HashSet<_> = list.iter().collect();
+        assert_eq!(unique.len(), list.len(), "no duplicates");
+        for bundle_id in list {
+            assert!(!bundle_id.is_empty());
+        }
+    }
+    assert!(TERMINAL_APPS.contains(&"com.apple.Terminal"));
+    assert!(REMOTE_DESKTOP_APPS.contains(&"com.parallels.winapp."));
 }

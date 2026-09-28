@@ -384,6 +384,32 @@ impl SettingsWindow {
         page.key_remaps.remove_rule(index);
         page.layout_search_shortcuts();
     }
+    /// Add one of the usual exclusion lists, or open the application panel.
+    pub fn add_key_remap_exclusions(&self, index: usize, choice: isize) {
+        let page = self.shortcuts();
+        if choice == 0 {
+            page.key_remaps
+                .choose_application(index, &self.window, &self.message);
+            return;
+        }
+        page.key_remaps.add_exclusions(index, choice);
+        page.layout_search_shortcuts();
+    }
+    pub fn toggle_key_remap_exclusions(&self, index: usize) {
+        let page = self.shortcuts();
+        page.key_remaps.toggle_exclusions(index);
+        page.layout_search_shortcuts();
+    }
+    pub fn remove_key_remap_exclusion(&self, tag: isize) {
+        let page = self.shortcuts();
+        if page.key_remaps.remove_exclusion_for_tag(tag) {
+            page.layout_search_shortcuts();
+        }
+    }
+    /// An application picked in the panel changed the list's height.
+    pub fn relayout_key_remaps(&self) {
+        self.shortcuts().layout_search_shortcuts();
+    }
     pub fn remove_search_shortcut(&self, index: usize) {
         let page = self.shortcuts();
         if index < page.search_rows.borrow().len() {

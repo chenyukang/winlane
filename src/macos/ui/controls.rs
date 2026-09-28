@@ -173,13 +173,16 @@ pub(crate) fn editor_chrome(parent: &NSView, mtm: MainThreadMarker) {
     parent.addSubview(&heading);
 }
 
-pub(crate) fn row_divider(parent: &NSView, y: f64, mtm: MainThreadMarker) {
+/// A separator line across a settings row. It is returned so a row whose
+/// height changes can move it back to its own top edge.
+pub(crate) fn row_divider(parent: &NSView, y: f64, mtm: MainThreadMarker) -> Retained<NSBox> {
     let line = NSBox::initWithFrame(
         NSBox::alloc(mtm),
         rect(20.0, y, parent.bounds().size.width - 40.0, 1.0),
     );
     line.setBoxType(NSBoxType::Separator);
     parent.addSubview(&line);
+    line
 }
 
 pub(crate) fn rect(x: f64, y: f64, w: f64, h: f64) -> NSRect {

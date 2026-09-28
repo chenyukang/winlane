@@ -6,7 +6,9 @@ Winlane already watches every keystroke to run its own shortcuts, so it can also
 
 **Settings → Shortcuts → Key remaps** lists every rule with a checkbox, its two combinations and its excluded applications. Untick a rule to switch it off without losing it, **Delete** removes it, and **＋ Add Rule** appends one. Changes save automatically, and a rule that cannot be read is refused with the reason instead of replacing the active rules.
 
-A combination is written the way it reads: modifiers as `⌃⌥⇧⌘` or as names (`control`, `cmd`, `shift`, `alt`) followed by a key, for example `⌃S`, `⌘⇧K`, `f7`, `left_arrow`, `page_up`, `delete_or_backspace`. Excluded applications are bundle identifiers separated by commas. A new rule starts disabled so that adding one is always valid while it is being filled in.
+A combination is written the way it reads: modifiers as `⌃⌥⇧⌘` or as names (`control`, `cmd`, `shift`, `alt`) followed by a key, for example `⌃S`, `⌘⇧K`, `f7`, `left_arrow`, `page_up`, `delete_or_backspace`. A new rule starts disabled so that adding one is always valid while it is being filled in.
+
+**Excluded applications** are edited as applications, not as identifiers: the rule's list expands to show each one with its icon and name, **＋ Add App…** opens the same application panel the input rules use, and **Exclude terminals** or **Exclude remote desktops** adds the lists a migrated Karabiner rule usually carries. An entry that ends with a dot covers every bundle under that prefix, which is how a family such as `com.parallels.winapp.` is written.
 
 ## What a rule is
 
@@ -21,7 +23,7 @@ Rules live in Winlane's saved preferences under `key_remaps`:
 | `allow_extra_modifiers` | Also fire when other modifiers are held. Off means the listed modifiers have to be the whole set, so a rule for a bare key does not steal `Shift` plus that key. |
 | `to_key` | The key to send instead. |
 | `to_modifiers` | The complete modifier set the event carries: the modifiers held on the way in are replaced, not merged. |
-| `except_apps` | Bundle identifiers to leave alone, such as `com.apple.Terminal`. |
+| `except_apps` | Bundle identifiers to leave alone, such as `com.apple.Terminal`; one ending in a dot covers that prefix. |
 
 A rule is applied on the press and the release is rewritten the same way, so the combination arrives as a whole even if a modifier is released first. Auto-repeat follows the press as well.
 

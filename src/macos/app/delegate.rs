@@ -326,6 +326,39 @@ define_class!(
                 self.autosave_settings();
             }
         }
+        #[unsafe(method(addKeyRemapExclusions:))]
+        fn add_key_remap_exclusions(&self, sender: &NSPopUpButton) {
+            // The popup is used as a menu: it names the choices, then returns
+            // to its first item.
+            let choice = sender.indexOfSelectedItem();
+            let row = sender.tag() as usize;
+            sender.selectItemAtIndex(0);
+            if let Some(settings) = self.settings_window() {
+                settings.add_key_remap_exclusions(row, choice);
+                self.autosave_settings();
+            }
+        }
+        #[unsafe(method(toggleKeyRemapExclusions:))]
+        fn toggle_key_remap_exclusions(&self, sender: &NSButton) {
+            if let Some(settings) = self.settings_window() {
+                settings.toggle_key_remap_exclusions(sender.tag() as usize);
+                self.autosave_settings();
+            }
+        }
+        #[unsafe(method(removeKeyRemapExclusion:))]
+        fn remove_key_remap_exclusion(&self, sender: &NSButton) {
+            if let Some(settings) = self.settings_window() {
+                settings.remove_key_remap_exclusion(sender.tag());
+                self.autosave_settings();
+            }
+        }
+        #[unsafe(method(remapExclusionsChanged:))]
+        fn remap_exclusions_changed(&self, _: Option<&AnyObject>) {
+            if let Some(settings) = self.settings_window() {
+                settings.relayout_key_remaps();
+                self.autosave_settings();
+            }
+        }
         #[unsafe(method(removeKeyRemap:))]
         fn remove_key_remap(&self, sender: &NSButton) {
             if let Some(settings) = self.settings_window() {

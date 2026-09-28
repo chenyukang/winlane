@@ -20,6 +20,46 @@ use std::collections::HashMap;
 /// written set needs.
 pub const MAX_REMAPS: usize = 200;
 
+/// Terminals send Control combinations to the shell, so a rule that turns
+/// `Ctrl+W` into `Cmd+W` closes the window instead of deleting a word.
+pub const TERMINAL_APPS: &[&str] = &[
+    "co.zeit.hyper",
+    "co.zeit.hyperterm",
+    "com.apple.Terminal",
+    "com.googlecode.iterm2",
+    "io.alacritty",
+    "net.kovidgoyal.kitty",
+    "org.macports.X11",
+];
+
+/// Remote desktops and virtual machines forward the original keystroke to
+/// another system, which is where it was meant to be handled.
+pub const REMOTE_DESKTOP_APPS: &[&str] = &[
+    "com.2X.Client.Mac",
+    "com.citrix.XenAppViewer",
+    "com.itap-mobile.qmote",
+    "com.microsoft.rdc",
+    "com.microsoft.rdc.mac",
+    "com.microsoft.rdc.macos",
+    "com.microsoft.rdc.osx.beta",
+    "com.nulana.remotixmac",
+    "com.p5sys.jump.mac.viewer",
+    "com.p5sys.jump.mac.viewer.web",
+    "com.parallels.desktop",
+    "com.parallels.desktop.console",
+    "com.parallels.vm",
+    "com.parallels.winapp.",
+    "com.teamviewer.TeamViewer",
+    "com.thinomenon.RemoteDesktopConnection",
+    "com.vmware.fusion",
+    "com.vmware.horizon",
+    "com.vmware.proxyApp.",
+    "com.vmware.view",
+    "net.sf.cord",
+    "org.virtualbox.app.VirtualBoxVM",
+    "tv.parsec.www",
+];
+
 /// One rule: pressing `from_key` with `from_modifiers` sends `to_key` with
 /// `to_modifiers` instead, everywhere except in `except_apps`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -335,6 +375,17 @@ const LEFT_HAND_BITS: &[(u64, u64)] = &[
     (OPTION, 0x0000_0020),
 ];
 
+/// Whether an application matches one exclusion entry. An entry that ends with
+/// a dot covers everything under that prefix, which is how a family of bundles
+/// such as `com.parallels.winapp.` is written in a migrated configuration.
+fn excluded_app(app: &str, excluded: &str) -> bool {
+    if let Some(prefix) = excluded.strip_suffix('.') {
+        app.starts_with(prefix) && app.as_bytes().get(prefix.len()) == Some(&b'.')
+    } else {
+        app == excluded
+    }
+}
+
 /// A rule with its names resolved once, so matching a keystroke stays a few
 /// integer comparisons.
 struct Resolved {
@@ -377,7 +428,11 @@ impl Resolved {
         // been told yet which application is in front.
         match frontmost_app {
             Some(app) => {
-                if self.except_apps.iter().any(|excluded| excluded == app) {
+                if self
+                    .except_apps
+                    .iter()
+                    .any(|excluded| excluded_app(app, excluded))
+                {
                     return false;
                 }
             }

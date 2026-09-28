@@ -8,6 +8,7 @@ pub fn verify_localized_settings(target: &AnyObject, mtm: MainThreadMarker) {
     verify_card_appearances(mtm);
     input::tests::verify(target, mtm);
     verify_key_remaps(target, mtm);
+    verify_key_remap_exclusions(target, mtm);
     input_rules::tests::verify(target, mtm);
     scrolling::tests::verify(target, mtm);
     files::tests::verify(target, mtm);
@@ -472,6 +473,96 @@ fn scroll_document(settings: &SettingsWindow, index: isize) -> Retained<NSView> 
         .unwrap()
         .documentView()
         .unwrap()
+}
+
+/// Excluded applications are edited as applications: a list with a picker and
+/// the usual Karabiner lists, rather than typed bundle identifiers.
+fn verify_key_remap_exclusions(target: &AnyObject, mtm: MainThreadMarker) {
+    use winlane::core::key_remap::KeyRemap;
+    let settings = SettingsWindow::new(target, mtm);
+    let save = KeyRemap {
+        id: "save".into(),
+        enabled: true,
+        from_key: "s".into(),
+        from_modifiers: vec!["control".into()],
+        allow_extra_modifiers: true,
+        to_key: "s".into(),
+        to_modifiers: vec!["left_command".into()],
+        except_apps: vec!["com.apple.Terminal".into(), "com.googlecode.iterm2".into()],
+    };
+    let config = Config {
+        key_remaps: vec![save],
+        ..Config::default()
+    };
+    settings.fill(&config);
+    let page = &settings.shortcuts().key_remaps;
+    assert_eq!(
+        page.row_exclusions(0),
+        vec![
+            "com.apple.Terminal".to_string(),
+            "com.googlecode.iterm2".to_string()
+        ]
+    );
+    assert_eq!(
+        settings.candidate().unwrap().key_remaps[0].except_apps,
+        vec![
+            "com.apple.Terminal".to_string(),
+            "com.googlecode.iterm2".to_string()
+        ]
+    );
+
+    // Expanding a rule shows its list and grows the card; the rows below have
+    // to stay clear of what appeared.
+    let collapsed = page.card_frame().size.height;
+    settings.toggle_key_remap_exclusions(0);
+    assert!(
+        page.card_frame().size.height > collapsed,
+        "an expanded list has to add height"
+    );
+    layout_page(&settings, 0, mtm);
+    verify_settings_bounds(&scroll_document(&settings, 0));
+
+    // Removing one application and adding a whole list both reach the model.
+    assert!(page.remove_row_exclusion(0, 0));
+    assert_eq!(
+        page.row_exclusions(0),
+        vec!["com.googlecode.iterm2".to_string()]
+    );
+    assert!(
+        !page.remove_row_exclusion(0, 9),
+        "an unknown index changes nothing"
+    );
+    settings.add_key_remap_exclusions(0, 1);
+    assert!(
+        page.row_exclusions(0)
+            .contains(&"com.apple.Terminal".to_string()),
+        "the terminal list comes back"
+    );
+    assert!(
+        page.row_exclusions(0)
+            .contains(&"net.kovidgoyal.kitty".to_string()),
+        "the whole terminal list is added"
+    );
+    assert_eq!(
+        settings
+            .candidate()
+            .expect("a rule whose exclusions changed still saves")
+            .key_remaps[0]
+            .except_apps,
+        page.row_exclusions(0),
+        "the list is what is saved"
+    );
+
+    settings.toggle_key_remap_exclusions(0);
+    assert!(
+        (page.card_frame().size.height - collapsed).abs() < 0.5,
+        "collapsing restores the height"
+    );
+    layout_page(&settings, 0, mtm);
+    verify_settings_bounds(&scroll_document(&settings, 0));
+    println!(
+        "Key remap exclusion checks passed: applications are listed instead of typed, expanding and collapsing resizes the card, and adding or removing an application reaches the saved rules."
+    );
 }
 
 fn verify_key_remaps(target: &AnyObject, mtm: MainThreadMarker) {
