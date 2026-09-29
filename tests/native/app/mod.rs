@@ -117,6 +117,7 @@ pub fn verify_hidden_panels() {
     crate::macos::platform::system_commands::tests::verify_prepared_commands(mtm);
     crate::macos::platform::menu_bar::tests::verify_reveal_positions();
     verify_typo_search(mtm);
+    window_search::verify_window_app_recovery(mtm);
     verify_shortcut_recency(mtm);
     verify_external_focus_history(mtm);
     verify_switch_delay(mtm);

@@ -500,3 +500,78 @@ pub(super) fn verify_switch_alias_prefix(mtm: MainThreadMarker) {
     );
     assert!(delegate.panels().iter().all(|ui| !ui.panel.isVisible()));
 }
+
+/// A window row can outlive the process it was built from. Picking it has to
+/// find the app again — and start it when nothing is running — instead of
+/// asking for a refresh.
+pub(super) fn verify_window_app_recovery(mtm: MainThreadMarker) {
+    let delegate = Delegate::new(mtm);
+    let state = delegate.ivars();
+    let window = WindowInfo {
+        id: 7,
+        pid: -77,
+        app: "Example".into(),
+        title: "Example".into(),
+        minimized: false,
+    };
+
+    // A process the scan never saw names no app.
+    assert!(delegate.window_bundle_id(&window).is_none());
+    assert!(delegate.application_for_window(&window).is_none());
+
+    // The scan records the bundle identifier, so the row still names its app.
+    state.identities.borrow_mut().insert(
+        -77,
+        AppIdentity {
+            id: "com.apple.TextEdit".into(),
+            english_name: "TextEdit".into(),
+        },
+    );
+    assert_eq!(
+        delegate.window_bundle_id(&window).as_deref(),
+        Some("com.apple.TextEdit")
+    );
+    let target = delegate
+        .application_for_window(&window)
+        .expect("an installed app is found again");
+    assert_eq!(target.bundle_id, "com.apple.TextEdit");
+    assert!(target.path.ends_with(".app"), "{}", target.path);
+
+    // An app that is gone from the disk cannot be started, so the row says so
+    // rather than launching something else.
+    let gone = WindowInfo {
+        pid: -78,
+        ..window.clone()
+    };
+    state.identities.borrow_mut().insert(
+        -78,
+        AppIdentity {
+            id: "app.windowlane.not-installed".into(),
+            english_name: "Gone".into(),
+        },
+    );
+    assert!(delegate.application_for_window(&gone).is_none());
+
+    state.windows.replace(vec![gone.clone()]);
+    state.mode.set(Some(PanelMode::Switch));
+    state
+        .switch_selection
+        .replace(Some(SwitchSelection::new(0)));
+    delegate.sync_displays();
+    delegate.filter();
+    delegate.prepare_switch_selection();
+    delegate.shortcut_action(Action {
+        session: state.session.get(),
+        kind: ActionKind::Accept,
+    });
+    assert!(
+        delegate
+            .panels()
+            .iter()
+            .all(|ui| ui.footer.stringValue().to_string().contains("已卸载")),
+        "a window whose app is gone has to report that"
+    );
+    println!(
+        "Window app recovery checks passed: a row keeps its app's identity, an installed app is found again, and an app that is gone is reported instead of starting something else."
+    );
+}

@@ -91,13 +91,21 @@ impl Delegate {
             ));
             return;
         }
-        let Some(target_app) =
-            NSRunningApplication::runningApplicationWithProcessIdentifier(window.pid)
-        else {
-            self.selection_failed(tr!(
-                "应用已退出，请按 ⌘R 更新窗口列表。",
-                "The app has quit. Press ⌘R to refresh windows."
-            ));
+        // The row can outlive the process it was built from: the app may have
+        // quit, or restarted with a new process identifier. Both are the same
+        // app, and picking its window means "show me that app", so find it
+        // again, and start it when nothing is running.
+        let target_app = NSRunningApplication::runningApplicationWithProcessIdentifier(window.pid)
+            .or_else(|| self.running_application_for_window(&window));
+        let Some(target_app) = target_app else {
+            if let Some(application) = self.application_for_window(&window) {
+                self.launch_application(&application, LaunchOrigin::Search);
+            } else {
+                self.selection_failed(tr!(
+                    "应用已退出并已卸载，请按 ⌘R 更新窗口列表。",
+                    "The app has quit and is no longer installed. Press ⌘R to refresh windows."
+                ));
+            }
             return;
         };
         target_app.unhide();
@@ -155,6 +163,40 @@ impl Delegate {
             preferences.insert(query, window.id);
         }
         self.end_session();
+    }
+
+    /// The bundle identifier the last scan recorded for a window's app. The
+    /// window list and these identities come from the same scan, so a row still
+    /// knows which app it belonged to after that app quits.
+    pub(super) fn window_bundle_id(&self, window: &WindowInfo) -> Option<String> {
+        self.ivars()
+            .identities
+            .borrow()
+            .get(&window.pid)
+            .map(|identity| identity.id.trim().to_string())
+            .filter(|id| !id.is_empty())
+    }
+
+    /// A running instance of the window's app, for when the process identifier
+    /// the row was built from is gone but the app is running under a new one.
+    pub(super) fn running_application_for_window(
+        &self,
+        window: &WindowInfo,
+    ) -> Option<Retained<NSRunningApplication>> {
+        let bundle_id = self.window_bundle_id(window)?;
+        NSRunningApplication::runningApplicationsWithBundleIdentifier(&NSString::from_str(
+            &bundle_id,
+        ))
+        .iter()
+        .find(|app| !app.isTerminated())
+    }
+
+    /// The installed app a window row belongs to, so it can be started again.
+    pub(super) fn application_for_window(&self, window: &WindowInfo) -> Option<ApplicationTarget> {
+        let bundle_id = self.window_bundle_id(window)?;
+        let url = NSWorkspace::sharedWorkspace()
+            .URLForApplicationWithBundleIdentifier(&NSString::from_str(&bundle_id))?;
+        crate::macos::platform::applications::target_at_url(&url).ok()
     }
 
     pub(super) fn selection_failed(&self, text: &str) {
