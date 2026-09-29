@@ -638,6 +638,65 @@ fn verify_key_remaps(target: &AnyObject, mtm: MainThreadMarker) {
     assert!(!candidate.key_remaps[2].enabled);
     assert!(candidate.key_remaps[2].id.starts_with("custom-"));
 
+    // Saving has to reuse the rows. Rebuilding them threw away the field the
+    // user was editing and paid for every control again on every save.
+    let before: Vec<usize> = (0..page.row_count())
+        .map(|index| page.row_view_ptr(index))
+        .collect();
+    let unchanged = settings.candidate().expect("the page is valid here");
+    settings.fill(&unchanged);
+    assert_eq!(
+        (0..page.row_count())
+            .map(|index| page.row_view_ptr(index))
+            .collect::<Vec<_>>(),
+        before,
+        "an unchanged save keeps the same rows"
+    );
+
+    // A rule that did change is updated in place, and putting the saved value
+    // back reuses the same row again.
+    let mut changed = unchanged.clone();
+    changed.key_remaps[0].except_apps = vec!["dev.warp.Warp-Stable".to_string()];
+    settings.fill(&changed);
+    assert_eq!(
+        page.row_view_ptr(0),
+        before[0],
+        "the row object survives an edit"
+    );
+    assert_eq!(
+        page.row_exclusions(0),
+        vec!["dev.warp.Warp-Stable".to_string()],
+        "and shows the new list"
+    );
+    settings.fill(&unchanged);
+    assert_eq!(
+        page.row_view_ptr(0),
+        before[0],
+        "restoring the saved value keeps the row as well"
+    );
+    assert_eq!(
+        page.row_exclusions(0),
+        unchanged.key_remaps[0].except_apps,
+        "with the saved list back"
+    );
+
+    // A collapsed rule does not build a row per excluded application; opening
+    // it adds exactly one view each.
+    let excluded = page.row_exclusions(0).len();
+    let collapsed = page.row_subview_count(0);
+    settings.toggle_key_remap_exclusions(0);
+    assert_eq!(
+        page.row_subview_count(0),
+        collapsed + excluded,
+        "expanding builds one view per excluded application"
+    );
+    settings.toggle_key_remap_exclusions(0);
+    assert_eq!(
+        page.row_subview_count(0),
+        collapsed,
+        "collapsing drops them again"
+    );
+
     // The master switch suspends every rule without removing any of them.
     assert!(settings.candidate().unwrap().key_remaps_enabled);
     page.set_enabled(false);

@@ -47,7 +47,7 @@ struct KeyRemapRow {
     /// What the row was filled with, so an untouched rule keeps the exact
     /// spelling it was saved with instead of being rewritten by a round trip
     /// through the text fields.
-    original: KeyRemap,
+    original: RefCell<KeyRemap>,
 }
 
 impl KeyRemapRow {
@@ -97,6 +97,35 @@ impl KeyRemapRow {
         self.exclusions.borrow().clone()
     }
 
+    /// Refresh a row from a saved rule instead of building a new one. Reusing
+    /// the views keeps a save from destroying the field the user is editing and
+    /// from paying for every control again.
+    fn update(&self, remap: &KeyRemap) {
+        let from = format_combination(&remap.from_key, &remap.from_modifiers);
+        if self.from.stringValue().to_string() != from {
+            self.from.setStringValue(&NSString::from_str(&from));
+        }
+        let to = format_combination(&remap.to_key, &remap.to_modifiers);
+        if self.to.stringValue().to_string() != to {
+            self.to.setStringValue(&NSString::from_str(&to));
+        }
+        self.enabled.setState(if remap.enabled {
+            NSControlStateValueOn
+        } else {
+            NSControlStateValueOff
+        });
+        self.extra.setState(if remap.allow_extra_modifiers {
+            NSControlStateValueOn
+        } else {
+            NSControlStateValueOff
+        });
+        if self.exclusions() != remap.except_apps {
+            *self.exclusions.borrow_mut() = remap.except_apps.clone();
+        }
+        *self.original.borrow_mut() = remap.clone();
+        self.refresh_exclusions();
+    }
+
     fn add_exclusions(&self, bundle_ids: &[&str]) {
         {
             let mut exclusions = self.exclusions.borrow_mut();
@@ -139,8 +168,10 @@ impl KeyRemapRow {
             entry.view.removeFromSuperview();
         }
         let bundle_ids = self.exclusions.borrow().clone();
-        let mut entries = Vec::with_capacity(bundle_ids.len());
-        for bundle_id in &bundle_ids {
+        // Collapsed rules show only the count: building a row per excluded app
+        // for a rule that is not open is the most expensive thing this page did.
+        let mut entries = Vec::new();
+        for bundle_id in bundle_ids.iter().filter(|_| self.expanded.get()) {
             let (name, icon, path) = excluded_application(bundle_id);
             let view =
                 NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 380.0, APP_ROW - 2.0));
@@ -342,16 +373,24 @@ impl KeyRemapsPage {
         } else {
             NSControlStateValueOff
         });
-        for row in self.rows.borrow_mut().drain(..) {
-            row.view.removeFromSuperview();
+        // Keep the rows that are still there and only add, update or drop the
+        // difference: this runs after every settings save, and rebuilding every
+        // control would throw away the field the user is typing in.
+        while self.rows.borrow().len() > config.key_remaps.len() {
+            let last = self.rows.borrow_mut().pop();
+            if let Some(row) = last {
+                row.view.removeFromSuperview();
+            }
         }
-        for remap in &config.key_remaps {
-            let row = self.append_row(remap);
-            row.enabled.setState(if remap.enabled {
-                NSControlStateValueOn
-            } else {
-                NSControlStateValueOff
-            });
+        for (index, remap) in config.key_remaps.iter().enumerate() {
+            let existing = self.rows.borrow().get(index).cloned();
+            match existing {
+                Some(row) if *row.original.borrow() == *remap => {}
+                Some(row) => row.update(remap),
+                None => {
+                    self.append_row(remap);
+                }
+            }
         }
     }
 
@@ -363,16 +402,18 @@ impl KeyRemapsPage {
             let position = index + 1;
             let from = row.from.stringValue().to_string();
             let to_text = row.to.stringValue().to_string();
-            let untouched =
-                format_combination(&row.original.from_key, &row.original.from_modifiers) == from
-                    && format_combination(&row.original.to_key, &row.original.to_modifiers)
-                        == to_text
-                    && row.original.except_apps == row.exclusions();
+            let untouched = format_combination(
+                &row.original.borrow().from_key,
+                &row.original.borrow().from_modifiers,
+            ) == from
+                && format_combination(
+                    &row.original.borrow().to_key,
+                    &row.original.borrow().to_modifiers,
+                ) == to_text
+                && row.original.borrow().except_apps == row.exclusions();
             let (from_key, from_modifiers) = if untouched {
-                (
-                    row.original.from_key.clone(),
-                    row.original.from_modifiers.clone(),
-                )
+                let original = row.original.borrow();
+                (original.from_key.clone(), original.from_modifiers.clone())
             } else {
                 parse_combination(&from).map_err(|error| {
                     trf!(
@@ -384,10 +425,8 @@ impl KeyRemapsPage {
                 })?
             };
             let (to_key, to_modifiers) = if untouched {
-                (
-                    row.original.to_key.clone(),
-                    row.original.to_modifiers.clone(),
-                )
+                let original = row.original.borrow();
+                (original.to_key.clone(), original.to_modifiers.clone())
             } else {
                 parse_combination(&to_text).map_err(|error| {
                     trf!(
@@ -399,7 +438,7 @@ impl KeyRemapsPage {
                 })?
             };
             remaps.push(KeyRemap {
-                id: row.original.id.clone(),
+                id: row.original.borrow().id.clone(),
                 enabled: row.enabled.state() == NSControlStateValueOn,
                 allow_extra_modifiers: row.extra.state() == NSControlStateValueOn,
                 from_key,
@@ -420,6 +459,13 @@ impl KeyRemapsPage {
         let divider = row_divider(&view, ROW_HEIGHT - 1.0, mtm);
 
         let enabled = checkbox("", mtm);
+        // A row is built from a rule, so it starts out matching it; the caller
+        // only updates rows that already exist.
+        enabled.setState(if remap.enabled {
+            NSControlStateValueOn
+        } else {
+            NSControlStateValueOff
+        });
         set_action(&enabled, &target, sel!(settingsChanged:));
         enabled.setToolTip(Some(&NSString::from_str(tr!(
             "启用这条规则",
@@ -531,7 +577,7 @@ impl KeyRemapsPage {
             exclusions: RefCell::default(),
             entries: RefCell::default(),
             expanded: Cell::new(false),
-            original: remap.clone(),
+            original: RefCell::new(remap.clone()),
         });
         if remap.except_apps.is_empty() {
             row.refresh_exclusions();
@@ -697,6 +743,26 @@ impl KeyRemapsPage {
     #[allow(dead_code)]
     pub(super) fn card_frame(&self) -> NSRect {
         self.card.frame()
+    }
+
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub(super) fn row_view_ptr(&self, index: usize) -> usize {
+        self.rows
+            .borrow()
+            .get(index)
+            .map(|row| std::rc::Rc::as_ptr(row) as usize)
+            .unwrap_or_default()
+    }
+
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub(super) fn row_subview_count(&self, index: usize) -> usize {
+        self.rows
+            .borrow()
+            .get(index)
+            .map(|row| row.view.subviews().len())
+            .unwrap_or_default()
     }
 
     #[cfg(test)]
