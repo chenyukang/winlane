@@ -18,11 +18,17 @@ struct RuleRow {
     remove: Retained<NSButton>,
     source: SourcePicker,
     restore: Retained<NSPopUpButton>,
+    /// The rule the row currently shows, so an unchanged save can leave it be.
+    filled: RefCell<Option<AppRule>>,
 }
 
 struct SourcePicker {
     control: Retained<NSPopUpButton>,
     values: RefCell<Vec<SourceRule>>,
+    /// The `(id, name)` pairs the popup's items were built from, so an
+    /// unchanged list does not remove and re-add every item. This runs for
+    /// every rule on every settings save.
+    applied: RefCell<Vec<(String, String)>>,
     inherit: bool,
 }
 
@@ -33,10 +39,22 @@ impl SourcePicker {
         Self {
             control,
             values: RefCell::default(),
+            applied: RefCell::default(),
             inherit,
         }
     }
     fn fill(&self, selected: SourceRule, sources: &[InputSource]) {
+        let signature: Vec<(String, String)> = sources
+            .iter()
+            .map(|source| (source.id.clone(), source.name.clone()))
+            .collect();
+        if !self.values.borrow().is_empty()
+            && same_source(&self.read(), &selected)
+            && *self.applied.borrow() == signature
+        {
+            return;
+        }
+        *self.applied.borrow_mut() = signature;
         let mut values = Vec::new();
         self.control.removeAllItems();
         if self.inherit {
@@ -248,19 +266,25 @@ impl InputRulesPage {
         self.source.fill(settings.default_source.clone(), &sources);
         self.restore
             .selectItemAtIndex(isize::from(settings.restore == RestoreStrategy::LastUsed));
-        for row in self.rows.borrow_mut().drain(..) {
-            row.view.removeFromSuperview();
-            row.navigation.removeFromSuperview();
+        // Reuse the rows that are still there. This runs after every settings
+        // save, and rebuilding them closed the row the user was working in.
+        while self.rows.borrow().len() > settings.apps.len() {
+            let last = self.rows.borrow_mut().pop();
+            if let Some(row) = last {
+                row.view.removeFromSuperview();
+                row.navigation.removeFromSuperview();
+            }
         }
-        for rule in &settings.apps {
-            let row = self.append_row();
-            Self::set_application(&row, rule.application.clone());
-            row.source.fill(rule.source.clone(), &sources);
-            row.restore.selectItemAtIndex(match rule.restore {
-                None => 0,
-                Some(RestoreStrategy::Default) => 1,
-                Some(RestoreStrategy::LastUsed) => 2,
-            });
+        for (index, rule) in settings.apps.iter().enumerate() {
+            let existing = self.rows.borrow().get(index).cloned();
+            match existing {
+                Some(row) if row.filled.borrow().as_ref() == Some(rule) => {}
+                Some(row) => self.update_row(&row, rule, &sources),
+                None => {
+                    let row = self.append_row();
+                    self.update_row(&row, rule, &sources);
+                }
+            }
         }
         self.selected.set(0);
         self.layout();
@@ -271,6 +295,18 @@ impl InputRulesPage {
             1.0,
         ));
     }
+    /// Show a rule in an existing row.
+    fn update_row(&self, row: &RuleRow, rule: &AppRule, sources: &[InputSource]) {
+        Self::set_application(row, rule.application.clone());
+        row.source.fill(rule.source.clone(), sources);
+        row.restore.selectItemAtIndex(match rule.restore {
+            None => 0,
+            Some(RestoreStrategy::Default) => 1,
+            Some(RestoreStrategy::LastUsed) => 2,
+        });
+        *row.filled.borrow_mut() = Some(rule.clone());
+    }
+
     pub(super) fn refresh_sources(&self) {
         let sources = self.sources();
         self.source.fill(self.source.read(), &sources);
@@ -357,6 +393,7 @@ impl InputRulesPage {
         set_action(&restore, &target, sel!(settingsChanged:));
         view.addSubview(&restore);
         let row = Rc::new(RuleRow {
+            filled: RefCell::default(),
             view,
             navigation,
             choose,

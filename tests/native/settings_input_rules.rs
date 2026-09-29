@@ -31,6 +31,45 @@ pub(crate) fn verify(target: &AnyObject, mtm: MainThreadMarker) {
     ] {
         assert_eq!(control.action(), Some(sel!(settingsChanged:)));
     }
+    // Saving reuses the rows instead of rebuilding them: filling runs after
+    // every settings save, and rebuilding closed the row being worked in.
+    let row_pointers = |page: &InputRulesPage| -> Vec<usize> {
+        (0..page.rows.borrow().len())
+            .map(|index| std::rc::Rc::as_ptr(&page.rows.borrow()[index]) as usize)
+            .collect()
+    };
+    let before = row_pointers(page);
+    settings.fill(&config);
+    assert_eq!(
+        row_pointers(page),
+        before,
+        "an unchanged save keeps the same rows"
+    );
+    let mut changed = config.clone();
+    changed.input_rules.apps[1].restore = Some(RestoreStrategy::Default);
+    settings.fill(&changed);
+    assert_eq!(
+        row_pointers(page)[1],
+        before[1],
+        "a changed rule is updated in place"
+    );
+    assert_eq!(
+        page.rows.borrow()[1].restore.indexOfSelectedItem(),
+        1,
+        "and shows the new value"
+    );
+    settings.fill(&config);
+    assert_eq!(
+        row_pointers(page)[1],
+        before[1],
+        "restoring the saved value keeps the row as well"
+    );
+    assert_eq!(
+        page.rows.borrow()[1].restore.indexOfSelectedItem(),
+        2,
+        "with the saved value back"
+    );
+
     let rows = page.rows.borrow().clone();
     assert!(!page.global_view.isHidden());
     assert!(rows.iter().all(|row| row.view.isHidden()));
