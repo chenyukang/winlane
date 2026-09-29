@@ -12,6 +12,22 @@ Winlane is a native macOS launcher that lives in the menu bar. Hold **Command** 
 | --- | --- |
 | ![Winlane search in light mode](docs/images/window-search-light.png) | ![Winlane search in dark mode](docs/images/window-search-dark.png) |
 
+### One app instead of several apps
+
+Winlane started as a replacement for the utilities that had piled up on one Mac. If you use any of these, Winlane covers the part of them that matters day to day:
+
+| Instead of | Winlane |
+| --- | --- |
+| **Contexts** | Window switching with aliases, minimized windows, and a panel per display. |
+| **Raycast** | Searching apps, files, clipboard history, snippets, Quicklinks, recent VS Code projects, Chrome history, and emoji. |
+| **Caffeine** | `keep-awake`, for 30 or 60 minutes or until you turn it off. |
+| **Scroll Reverser** | **Settings → Mouse Scrolling**, with mouse and trackpad directions set separately. |
+| **ShowyEdge** | The input-source indicator, in the shape and color you pick. |
+| **InputSourcePro** | **Settings → Input Rules**, a default or last-used input source per app. |
+| **Karabiner-Elements** | **Settings → Shortcuts → Key remaps**, for plain key remaps; layers and chords are not supported. |
+
+Each of them was a login item, a permission prompt, or a background daemon of its own; Winlane replaces them with one app and one Accessibility permission. The long version is in [Winlane: my Mac toolbox](https://catcoding.me/p/winlane/) (Chinese).
+
 [Install](#install) · [Get started](#get-started) · [Everyday tools](#everyday-tools) · [Customize](#customize) · [Privacy](#privacy-and-permissions)
 
 ## Install
