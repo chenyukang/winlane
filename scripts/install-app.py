@@ -133,7 +133,42 @@ def executable_hash(bundle):
         return digest.hexdigest()
 
 
-def install(source, destination, timeout=10, dry_run=False):
+BACKUP_PREFIX = ".winlane-update-"
+# An install running at the same time is young; only older staging directories
+# are pruned so a concurrent run cannot have its files taken away.
+BACKUP_GRACE_SECONDS = 3600
+
+
+def prune_backups(destination, work, keep=1, now=None):
+    """Remove staging directories left by earlier installs.
+
+    Every install keeps the application it replaced next to the destination as
+    recovery material, and without this they accumulate one copy of Winlane per
+    install. The newest `keep` are left in place; older ones are removed, except
+    during the grace period so a concurrent install keeps its own files.
+    """
+    now = time.time() if now is None else now
+    candidates = [
+        path
+        for path in destination.parent.glob(f"{BACKUP_PREFIX}*")
+        if path.is_dir() and path != work
+    ]
+    candidates.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    removed = []
+    for path in candidates[keep:]:
+        try:
+            if now - path.stat().st_mtime < BACKUP_GRACE_SECONDS:
+                continue
+            shutil.rmtree(path)
+            removed.append(path)
+        except OSError:
+            # Pruning is housekeeping: a directory that cannot be removed must
+            # never fail the installation.
+            continue
+    return removed
+
+
+def install(source, destination, timeout=10, dry_run=False, keep_backups=1):
     source = source.expanduser().resolve()
     destination = destination.expanduser().absolute()
     if destination.is_symlink():
@@ -215,6 +250,8 @@ def install(source, destination, timeout=10, dry_run=False):
         # Keep the only backup if recovery cannot complete, as well as successful backups.
         if not backup.exists() and not keep_work:
             shutil.rmtree(work)
+        for removed in prune_backups(destination, work, keep_backups):
+            print(f"Removed an earlier backup: {removed}", flush=True)
 
 
 def main():
@@ -223,13 +260,17 @@ def main():
     parser.add_argument("--destination", type=Path, default=DEFAULT_DESTINATION)
     parser.add_argument("--timeout", type=float, default=10, help="Quit/start timeout in seconds (default: 10)")
     parser.add_argument("--dry-run", action="store_true", help="Verify the build, identity and running copies without installing")
+    parser.add_argument("--keep-backups", type=int, default=1, metavar="N",
+                        help="How many earlier app backups to keep beside the destination (default: 1)")
     args = parser.parse_args()
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         parser.error("--timeout must be a positive finite number")
+    if args.keep_backups < 0:
+        parser.error("--keep-backups must not be negative")
     if sys.platform != "darwin":
         parser.error("Installing Winlane requires macOS")
     try:
-        install(args.bundle, args.destination, args.timeout, args.dry_run)
+        install(args.bundle, args.destination, args.timeout, args.dry_run, args.keep_backups)
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
         print(f"Installation stopped: {error}", file=sys.stderr)
         return 1

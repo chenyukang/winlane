@@ -1,11 +1,13 @@
 import contextlib
 import importlib.util
 import io
+import os
 from pathlib import Path
 import plistlib
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -60,6 +62,47 @@ class InstallAppTests(unittest.TestCase):
         self.launch.assert_called_once()
         self.assertNotIn("sensitive-setting-value-123", self.output.getvalue())
         self.assertIn('"preferences": "unchanged"', self.output.getvalue())
+
+    def test_installing_removes_older_backups_and_keeps_the_newest(self):
+        stale = []
+        for index in range(3):
+            path = self.destination.parent / f"{installer.BACKUP_PREFIX}old{index}"
+            (path / "previous/Winlane.app").mkdir(parents=True)
+            stale.append(path)
+        # Past the grace period, so they are housekeeping and not work in progress.
+        old = time.time() - installer.BACKUP_GRACE_SECONDS * 2
+        for offset, path in enumerate(stale):
+            os.utime(path, (old + offset, old + offset))
+
+        installer.install(self.source, self.destination)
+
+        remaining = sorted(
+            path.name
+            for path in self.destination.parent.glob(f"{installer.BACKUP_PREFIX}*")
+        )
+        self.assertEqual(len(remaining), 2, remaining)
+        self.assertIn(stale[-1].name, remaining, "the newest earlier backup stays")
+        self.assertNotIn(stale[0].name, remaining)
+        self.assertNotIn(stale[1].name, remaining)
+        fresh = [
+            path
+            for path in self.destination.parent.glob(f"{installer.BACKUP_PREFIX}*")
+            if path.name != stale[-1].name
+        ]
+        self.assertEqual(len(fresh), 1, "this install keeps exactly one new backup")
+        self.assertEqual(
+            self.binary(fresh[0] / "previous/Winlane.app"),
+            "old",
+            "and it holds the app this install replaced",
+        )
+
+    def test_a_recent_staging_directory_is_left_alone(self):
+        running = self.destination.parent / f"{installer.BACKUP_PREFIX}running"
+        (running / "previous/Winlane.app").mkdir(parents=True)
+
+        installer.install(self.source, self.destination, keep_backups=0)
+
+        self.assertTrue(running.exists(), "a directory from a recent install must not be removed")
 
     def test_dry_run_changes_neither_files_nor_processes(self):
         installer.install(self.source, self.destination, dry_run=True)
