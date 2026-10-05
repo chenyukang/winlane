@@ -128,8 +128,8 @@ pub fn verify_editor(target: &AnyObject, mtm: MainThreadMarker) {
         Template::parse("Hi {argument name=\"Name\"}! {clipboard} {argument name=\"Name\"}")
             .unwrap(),
         "copied text".into(),
-        Box::new(move |text| {
-            output.replace(Some(text));
+        Box::new(move |text, trailing| {
+            output.replace(Some((text, trailing)));
             Ok(())
         }),
         mtm,
@@ -143,15 +143,20 @@ pub fn verify_editor(target: &AnyObject, mtm: MainThreadMarker) {
     form.update();
     assert!(form.ivars().confirm.get().unwrap().isEnabled());
     assert_eq!(
-        form.value().unwrap(),
+        form.value().unwrap().0,
         "Hi Ada {date}! copied text Ada {date}"
+    );
+    assert_eq!(
+        form.value().unwrap().1,
+        0,
+        "without a marker the caret stays at the end"
     );
     crate::macos::ui::settings::tests::verify_escape_close(form.window());
     form.cancel(sel!(cancelSnippet:), None);
     assert!(result.borrow().is_none(), "cancel must not paste");
     form.paste(sel!(pasteSnippet:), None);
     assert_eq!(
-        result.borrow().as_deref(),
+        result.borrow().as_ref().map(|(text, _)| text.as_str()),
         Some("Hi Ada {date}! copied text Ada {date}")
     );
     crate::macos::ui::settings::tests::verify_escape_close(host);
@@ -192,7 +197,7 @@ fn verify_typed_arguments(mtm: MainThreadMarker) {
         "Typed fields",
         template,
         String::new(),
-        Box::new(|_| panic!("no real paste in native tests")),
+        Box::new(|_, _| panic!("no real paste in native tests")),
         mtm,
     );
     assert!(!form.ivars().confirm.get().unwrap().isEnabled());
@@ -231,7 +236,7 @@ fn verify_typed_arguments(mtm: MainThreadMarker) {
     }
     form.choice_changed(sel!(snippetArgumentChanged:), None);
     assert!(form.ivars().confirm.get().unwrap().isEnabled());
-    assert_eq!(form.value().unwrap(), "first\nsecond / Formal / ");
+    assert_eq!(form.value().unwrap().0, "first\nsecond / Formal / ");
     let tokens: Vec<_> = (0..8)
         .map(|index| format!("{{argument name=\"Field {index}\" type=\"multiline\"}}"))
         .collect();
@@ -239,7 +244,7 @@ fn verify_typed_arguments(mtm: MainThreadMarker) {
         "Large form",
         Template::parse(&tokens.join("\n")).unwrap(),
         String::new(),
-        Box::new(|_| unreachable!()),
+        Box::new(|_, _| unreachable!()),
         mtm,
     );
     assert_eq!(

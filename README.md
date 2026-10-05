@@ -130,7 +130,7 @@ Already using Raycast? Export your Quicklinks there, then choose **Import Raycas
 
 Create snippets in **Settings → Snippets**, then run **`snippet`** to find and paste one into the app you were using before Winlane opened.
 
-Use **Insert Placeholder** to add clipboard text, dates, or custom fields. Fields can be single-line text, multiline text, or dropdowns, with defaults and required values. For example:
+Use **Insert Placeholder** to add clipboard text, dates, custom fields, or `{cursor}`, which chooses where the caret lands after pasting. Fields can be single-line text, multiline text, or dropdowns, with defaults and required values. For example:
 
 ```text
 Hi {argument name="Name"},

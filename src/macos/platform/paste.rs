@@ -16,15 +16,26 @@ unsafe extern "C" {
     fn CGEventPostToPid(pid: i32, event: CFTypeRef);
 }
 
+/// Where the caret belongs after the paste: how many characters at the end of
+/// the text come after it, from a snippet's `{cursor}`.
+pub const CARET_AT_END: usize = 0;
+/// A paste needs a moment before the caret can be moved inside it.
+const CARET_DELAY_MS: u128 = 60;
+/// Text this long after the cursor is left at the end instead; sending
+/// hundreds of key events would be worse than ignoring the marker.
+const CARET_STEP_LIMIT: usize = 400;
+
 pub fn start(
     target: Retained<NSRunningApplication>,
     text: String,
+    trailing: usize,
     mtm: MainThreadMarker,
     report: impl Fn(String) + 'static,
 ) -> Result<Retained<NSTimer>, String> {
     start_content(
         target,
         crate::macos::platform::clipboard::PasteContent::Text(text),
+        trailing,
         mtm,
         report,
     )
@@ -33,6 +44,7 @@ pub fn start(
 pub fn start_content(
     target: Retained<NSRunningApplication>,
     content: crate::macos::platform::clipboard::PasteContent,
+    trailing: usize,
     mtm: MainThreadMarker,
     report: impl Fn(String) + 'static,
 ) -> Result<Retained<NSTimer>, String> {
@@ -67,6 +79,22 @@ pub fn start_content(
     };
     let down = event(true)?;
     let up = event(false)?;
+    // The caret moves with the same mechanism the paste uses, prepared now so
+    // nothing is allocated while the target app is being driven.
+    let arrow = |down| {
+        let ptr = unsafe { CGEventCreateKeyboardEvent(std::ptr::null(), 123, down) };
+        if ptr.is_null() {
+            return Err(tr!(
+                "无法创建移动光标的事件。",
+                "Could not prepare the caret event."
+            )
+            .to_string());
+        }
+        Ok(unsafe { CFType::wrap_under_create_rule(ptr) })
+    };
+    let arrow_down = arrow(true)?;
+    let arrow_up = arrow(false)?;
+    let trailing = trailing.min(CARET_STEP_LIMIT);
     let pid = target.processIdentifier();
     let started = Instant::now();
     let ready_since = Cell::new(None::<Instant>);
@@ -76,8 +104,23 @@ pub fn start_content(
     ) {
         return Err(tr!("无法聚焦目标应用。", "Could not focus the target app.").into());
     }
+    let pasted_at = Cell::new(None::<Instant>);
     let callback = RcBlock::new(move |timer: std::ptr::NonNull<NSTimer>| {
         let timer = unsafe { timer.as_ref() };
+        // The paste has been sent: the caret can only move once the app has
+        // applied it, so the keys follow after a short pause.
+        if let Some(at) = pasted_at.get() {
+            if at.elapsed().as_millis() >= CARET_DELAY_MS {
+                for _ in 0..trailing {
+                    unsafe {
+                        CGEventPostToPid(pid, arrow_down.as_CFTypeRef());
+                        CGEventPostToPid(pid, arrow_up.as_CFTypeRef());
+                    }
+                }
+                timer.invalidate();
+            }
+            return;
+        }
         let front = NSWorkspace::sharedWorkspace()
             .frontmostApplication()
             .map(|app| app.processIdentifier());
@@ -116,12 +159,13 @@ pub fn start_content(
         {
             return;
         }
-        timer.invalidate();
         let pasteboard = NSPasteboard::generalPasteboard();
         let Some(value) = content.borrow_mut().take() else {
+            timer.invalidate();
             return;
         };
         if let Err(error) = value.write(&pasteboard) {
+            timer.invalidate();
             report(error);
             return;
         }
@@ -129,6 +173,11 @@ pub fn start_content(
         unsafe {
             CGEventPostToPid(pid, down.as_CFTypeRef());
             CGEventPostToPid(pid, up.as_CFTypeRef());
+        }
+        if trailing == 0 {
+            timer.invalidate();
+        } else {
+            pasted_at.set(Some(Instant::now()));
         }
         let _ = mtm;
     });

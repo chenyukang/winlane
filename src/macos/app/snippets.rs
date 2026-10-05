@@ -99,12 +99,12 @@ impl Delegate {
             previous.window().close();
         }
         if template.arguments.is_empty() {
-            let result = crate::macos::platform::template_context::render(
+            let result = crate::macos::platform::template_context::render_with_caret(
                 &template,
                 &clipboard,
                 &HashMap::new(),
             )
-            .and_then(|text| self.paste_text(target, text));
+            .and_then(|(text, trailing)| self.paste_text(target, text, trailing));
             if let Err(error) = result {
                 self.selection_failed(&error);
             }
@@ -114,11 +114,11 @@ impl Delegate {
                 &snippet.name,
                 template,
                 clipboard,
-                Box::new(move |text| {
+                Box::new(move |text, trailing| {
                     let Some(delegate) = weak.load() else {
                         return Err("Winlane closed".into());
                     };
-                    delegate.paste_text(target.clone(), text)
+                    delegate.paste_text(target.clone(), text, trailing)
                 }),
                 self.mtm(),
             );
@@ -131,16 +131,23 @@ impl Delegate {
         &self,
         target: Retained<NSRunningApplication>,
         text: String,
+        trailing: usize,
     ) -> Result<(), String> {
         if let Some(timer) = self.ivars().snippet_paste_timer.take() {
             timer.invalidate();
         }
         let weak = Weak::new(self);
-        let timer = crate::macos::platform::paste::start(target, text, self.mtm(), move |error| {
-            if let Some(delegate) = weak.load() {
-                delegate.selection_failed(&error);
-            }
-        })?;
+        let timer = crate::macos::platform::paste::start(
+            target,
+            text,
+            trailing,
+            self.mtm(),
+            move |error| {
+                if let Some(delegate) = weak.load() {
+                    delegate.selection_failed(&error);
+                }
+            },
+        )?;
         self.ivars().snippet_paste_timer.replace(Some(timer));
         Ok(())
     }

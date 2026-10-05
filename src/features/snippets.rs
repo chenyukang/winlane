@@ -322,6 +322,9 @@ pub fn inserting(
 enum Part {
     Literal(String),
     Clipboard,
+    /// Where the caret should land after the snippet is pasted. It renders
+    /// nothing; the paste moves the caret back by the text that follows.
+    Cursor,
     Date {
         kind: String,
         format: Option<String>,
@@ -358,7 +361,13 @@ impl Template {
                     .unwrap_or(after.len());
                 let recognized = matches!(
                     &after[..kind_end],
-                    "clipboard" | "date" | "time" | "datetime" | "timestamp" | "argument"
+                    "clipboard"
+                        | "cursor"
+                        | "date"
+                        | "time"
+                        | "datetime"
+                        | "timestamp"
+                        | "argument"
                 );
                 if recognized {
                     let end = placeholder_end(after).ok_or_else(invalid_placeholder)?;
@@ -372,6 +381,20 @@ impl Template {
                         let (kind, attrs) = attributes(token)?;
                         let part = match kind {
                             "clipboard" if attrs.is_empty() => Part::Clipboard,
+                            "cursor" if attrs.is_empty() => {
+                                if template
+                                    .parts
+                                    .iter()
+                                    .any(|part| matches!(part, Part::Cursor))
+                                {
+                                    return Err(tr!(
+                                        "片段只能有一个 {cursor}。",
+                                        "A snippet can contain only one {cursor}."
+                                    )
+                                    .into());
+                                }
+                                Part::Cursor
+                            }
                             "date" | "time" | "datetime"
                                 if attrs.keys().all(|key| *key == "format") =>
                             {
@@ -442,7 +465,21 @@ impl Template {
         values: &HashMap<String, String>,
         date: impl FnMut(&str, Option<&str>) -> String,
     ) -> Result<String, String> {
-        self.render_inner(clipboard, values, date, false)
+        self.render_with_caret(clipboard, values, date)
+            .map(|rendered| rendered.0)
+    }
+
+    /// The rendered text and how many characters before the end the caret
+    /// belongs, for a snippet that asks for one with `{cursor}`.
+    pub fn render_with_caret(
+        &self,
+        clipboard: &str,
+        values: &HashMap<String, String>,
+        date: impl FnMut(&str, Option<&str>) -> String,
+    ) -> Result<(String, Option<usize>), String> {
+        let (text, caret, _) = self.render_inner(clipboard, values, date, false)?;
+        let trailing = caret.map(|before| text.chars().count().saturating_sub(before));
+        Ok((text, trailing))
     }
 
     pub fn render_preview(
@@ -451,7 +488,7 @@ impl Template {
         values: &HashMap<String, String>,
         date: impl FnMut(&str, Option<&str>) -> String,
     ) -> Result<String, String> {
-        self.render_inner(clipboard, values, date, true)
+        Ok(self.render_inner(clipboard, values, date, true)?.0)
     }
 
     fn render_inner(
@@ -460,10 +497,16 @@ impl Template {
         values: &HashMap<String, String>,
         mut date: impl FnMut(&str, Option<&str>) -> String,
         preview: bool,
-    ) -> Result<String, String> {
+    ) -> Result<(String, Option<usize>, bool), String> {
         let mut output = String::new();
+        let mut caret = None;
         for part in &self.parts {
+            if matches!(part, Part::Cursor) {
+                caret = Some(output.chars().count());
+                continue;
+            }
             let value = match part {
+                Part::Cursor => unreachable!("handled above"),
                 Part::Literal(text) => std::borrow::Cow::Borrowed(text.as_str()),
                 Part::Clipboard => std::borrow::Cow::Borrowed(clipboard),
                 Part::Date { kind, format } => {
@@ -490,7 +533,7 @@ impl Template {
             }
             output.push_str(&value);
         }
-        Ok(output)
+        Ok((output, caret, caret.is_some()))
     }
 }
 
@@ -833,5 +876,45 @@ mod tests {
         let conflict = r#"{argument name="Name" default="Ada"}"#;
         assert!(inserting(original, 0, 0, conflict).is_err());
         assert!(inserting(&"a".repeat(MAX_BODY_BYTES), 0, 0, "{date}").is_err());
+    }
+
+    #[test]
+    fn a_snippet_can_choose_where_the_caret_lands() {
+        // The marker renders nothing: it only says where the caret belongs.
+        let template = Template::parse("---\n{cursor}\n- {date format=\"yyyy-MM-dd\"}").unwrap();
+        let (text, trailing) = template
+            .render_with_caret("", &HashMap::new(), |_, _| "2026-09-29".into())
+            .unwrap();
+        assert_eq!(text, "---\n\n- 2026-09-29");
+        assert_eq!(
+            trailing,
+            Some("\n- 2026-09-29".chars().count()),
+            "the caret ends up on the second line"
+        );
+
+        // A snippet without the marker still leaves the caret at the end.
+        let plain = Template::parse("hello").unwrap();
+        assert_eq!(
+            plain
+                .render_with_caret("", &HashMap::new(), |_, _| String::new())
+                .unwrap()
+                .1,
+            None
+        );
+
+        // The count is taken after expansion, so a longer value before the
+        // marker cannot move it.
+        for value in ["2026", "1999-01-02"] {
+            let template = Template::parse("{date format=\"x\"}{cursor}!").unwrap();
+            let (text, trailing) = template
+                .render_with_caret("", &HashMap::new(), |_, _| value.to_string())
+                .unwrap();
+            assert_eq!(text, format!("{value}!"));
+            assert_eq!(trailing, Some(1));
+        }
+
+        // One caret per snippet, and no attributes on it.
+        assert!(Template::parse("{cursor}{cursor}").is_err());
+        assert!(Template::parse("{cursor name=\"x\"}").is_err());
     }
 }

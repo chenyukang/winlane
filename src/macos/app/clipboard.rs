@@ -107,6 +107,7 @@ impl Delegate {
         match crate::macos::platform::paste::start_content(
             target,
             content,
+            crate::macos::platform::paste::CARET_AT_END,
             self.mtm(),
             move |error| {
                 if let Some(delegate) = weak.load() {

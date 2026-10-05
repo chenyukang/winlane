@@ -26,6 +26,7 @@ You can also type placeholders directly:
 | `{datetime}` | Current date and time |
 | `{date format="yyyy-MM-dd"}` | Custom date format; `time` and `datetime` also accept `format` |
 | `{timestamp}` | Unix timestamp in seconds |
+| `{cursor}` | Where the caret lands after pasting; renders nothing |
 | `{argument name="Name"}` | A required input field |
 | `{argument name="Tone" default="friendly"}` | A field with a default value |
 | `{argument name="Notes" type="multiline"}` | A required multiline field |
@@ -43,6 +44,16 @@ Here are the notes from {date format="yyyy-MM-dd"}:
 
 Thanks, {argument name="Name"}!
 ```
+
+`{cursor}` marks where the caret belongs after pasting, so a snippet can leave you on an empty line instead of at its end:
+
+```text
+---
+{cursor}
+- {date format="yyyy-MM-dd"}
+```
+
+Everything after the marker is still pasted; the caret moves back over it. A snippet can contain one `{cursor}`, and text longer than 400 characters after the marker leaves the caret at the end instead.
 
 Existing placeholders continue to work: fields without a default are required, and fields with a default are optional unless `required="true"` is specified. The form starts with defaults filled in; you can clear an optional field. Required fields and dropdown values are checked before pasting. Quote and backslash characters inside attributes can be escaped as `\"` and `\\`; `\n` inserts a newline in multiline defaults and separates dropdown options.
 

@@ -46,7 +46,11 @@ impl Delegate {
         };
         self.cancel_routing();
         self.end_session();
-        if let Err(error) = self.paste_text(target, emoji.text.into()) {
+        if let Err(error) = self.paste_text(
+            target,
+            emoji.text.into(),
+            crate::macos::platform::paste::CARET_AT_END,
+        ) {
             self.selection_failed(&error);
         }
     }

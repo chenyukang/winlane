@@ -97,6 +97,7 @@ define_class!(
             self.ivars().insertion.set(NSTextInputClient::selectedRange(&*ui.body));
             match index {
                 1 => self.insert_token("{clipboard}"),
+                4 => self.insert_token("{cursor}"),
                 2 | 3 => {
                     let arguments = Template::parse(&ui.body.string().to_string()).map(|template| template.arguments).unwrap_or_default();
                     self.set_building(true);
@@ -203,6 +204,7 @@ impl SnippetEditor {
             tr!("剪贴板", "Clipboard"),
             tr!("日期与时间…", "Date & Time…"),
             tr!("自定义输入字段…", "Custom Input Field…"),
+            tr!("光标位置", "Cursor Position"),
         ] {
             placeholder.addItemWithTitle(&NSString::from_str(title));
         }
@@ -211,7 +213,7 @@ impl SnippetEditor {
             placeholder.setAction(Some(sel!(insertPlaceholder:)));
         }
         root.addSubview(&placeholder);
-        root.addSubview(&hint(tr!("动态值在使用时展开。同名输入字段只需填写一次。\n输入 \\{date} 可保留字面量 {date}。", "Dynamic values expand when used. Repeated fields share one value.\nUse \\{date} to insert the literal text {date}."), rect(236.0, 165.0, 488.0, 43.0), mtm));
+        root.addSubview(&hint(tr!("动态值在使用时展开。同名输入字段只需填写一次。\n用 {cursor} 指定粘贴后光标的位置。\n输入 \\{date} 可保留字面量 {date}。", "Dynamic values expand when used. Repeated fields share one value.\n{cursor} marks where the caret lands after pasting.\nUse \\{date} to insert the literal text {date}."), rect(236.0, 165.0, 488.0, 43.0), mtm));
         root.addSubview(&label(
             tr!("预览", "Preview"),
             13.0,
@@ -481,7 +483,7 @@ impl ArgumentControl {
     }
 }
 
-type Paste = Box<dyn Fn(String) -> Result<(), String>>;
+type Paste = Box<dyn Fn(String, usize) -> Result<(), String>>;
 pub(crate) struct ArgumentsState {
     window: OnceCell<Retained<NSWindow>>,
     fields: RefCell<Vec<ArgumentControl>>,
@@ -515,7 +517,10 @@ define_class!(
         fn choice_changed(&self, _: Option<&AnyObject>) { self.update(); }
         #[unsafe(method(pasteSnippet:))]
         fn paste(&self, _: Option<&AnyObject>) {
-            match self.value().and_then(|value| (self.ivars().paste)(value)) {
+            match self
+                .value()
+                .and_then(|(text, trailing)| (self.ivars().paste)(text, trailing))
+            {
                 Ok(()) => self.window().close(),
                 Err(error) => self.ivars().message.get().unwrap().setStringValue(&NSString::from_str(&error)),
             }
@@ -714,8 +719,8 @@ impl SnippetArguments {
             .map(|(arg, field)| (arg.name.clone(), field.value()))
             .collect()
     }
-    fn value(&self) -> Result<String, String> {
-        render(
+    fn value(&self) -> Result<(String, usize), String> {
+        crate::macos::platform::template_context::render_with_caret(
             &self.ivars().template,
             &self.ivars().clipboard,
             &self.values(),
