@@ -206,12 +206,20 @@ pub fn verify_rebuilt_identity_lookup() {
     // rebuilt. Model that: the same window, a different AX identity, and the
     // handle the row was built from no longer answering reads.
     let rebuilt_id = window.id ^ (1 << 62);
-    let dead = Element::from_remote_id(window.pid, u64::MAX).expect("a handle is always created");
-    assert_eq!(
-        dead.attribute_once("AXRole"),
-        Err(AX_INVALID_UI_ELEMENT),
-        "the model handle must be invalid"
-    );
+    // macOS answers a bogus remote token with "invalid element" for some tokens
+    // and "cannot complete" for others, depending on the app, so try a few and
+    // only model the rebuild when a handle really reads as invalid.
+    let dead = [u64::MAX, 7, 0x1092, 1u64 << 40, 4242]
+        .into_iter()
+        .filter_map(|token| Element::from_remote_id(window.pid, token))
+        .find(|element| element.attribute_once("AXRole") == Err(AX_INVALID_UI_ELEMENT));
+    let Some(dead) = dead else {
+        println!(
+            "Rebuilt-identity check skipped: {} never reports an invalid handle for a bogus token.",
+            window.app
+        );
+        return;
+    };
     remember_window(
         window.pid,
         server_id,

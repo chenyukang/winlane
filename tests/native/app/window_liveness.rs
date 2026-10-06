@@ -135,9 +135,13 @@ pub(super) fn verify_missing_window_row_is_dropped(mtm: MainThreadMarker) {
     state.mode.set(Some(PanelMode::Switch));
     delegate.filter();
     let window = state.windows.borrow()[0].clone();
-    state
-        .window_server_ids
-        .replace(HashMap::from([(1, 101), (2, 102), (3, 103)]));
+    // Window numbers are small, so these can never exist in the WindowServer
+    // inventory; a real number here would make the check depend on the machine.
+    state.window_server_ids.replace(HashMap::from([
+        (1, u32::MAX - 1),
+        (2, u32::MAX - 2),
+        (3, u32::MAX - 3),
+    ]));
     // The fixture's negative process identifiers cannot be running or
     // installed, which is exactly the stale-row case.
     assert!(

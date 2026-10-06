@@ -17,11 +17,9 @@ impl Delegate {
         if state.mode.get().is_none() {
             return;
         }
-        let now = std::time::Instant::now();
-        if !liveness_due(state.window_check_at.get(), now) {
+        if !liveness_due(state.window_check_at.get(), std::time::Instant::now()) {
             return;
         }
-        state.window_check_at.set(Some(now));
         self.check_window_liveness();
     }
 
@@ -30,6 +28,10 @@ impl Delegate {
         if state.demo.get() || state.window_server_ids.borrow().is_empty() {
             return;
         }
+        // Every check counts against the interval, so a scan, an app quitting,
+        // or another app coming forward right before the panel opens does not
+        // make the periodic check run again on its own.
+        state.window_check_at.set(Some(std::time::Instant::now()));
         if state.window_check_receiver.borrow().is_some() {
             state.window_check_again.set(true);
             return;

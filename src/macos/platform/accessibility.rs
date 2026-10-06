@@ -869,8 +869,9 @@ fn find_fresh_window(pid: i32, id: u64) -> Result<Element, String> {
     Ok(Element(windows[index].0.clone()))
 }
 
-/// Whether a window Winlane listed is still there. Used after a failed switch
-/// so a row that outlived its window can be dropped instead of reported again.
+/// Whether a window Winlane listed is still there, by identity. Native checks
+/// use it to show that every row they list stays selectable.
+#[cfg(test)]
 pub fn window_is_open(pid: i32, id: u64) -> bool {
     find_window(pid, id).is_ok()
 }

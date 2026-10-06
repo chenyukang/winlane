@@ -6,19 +6,23 @@ impl Delegate {
     /// stale row be dropped and explained, instead of failing with a message
     /// that asks for a manual refresh.
     pub(super) fn discard_missing_window(&self, window: &WindowInfo) -> bool {
-        // Only windows whose WindowServer surface Winlane recorded can be
-        // declared closed. Without it the lookup falls back to the AX-derived
-        // identity alone, which an app may replace at any time; a live row must
-        // never be dropped because an accessibility object was rebuilt.
-        if !self
+        // The WindowServer decides, not accessibility: an app may be slow to
+        // answer, and a rebuilt accessibility object changes a live window's
+        // identity. A window without a recorded surface cannot be confirmed
+        // closed, so its row is kept and the failure is reported instead.
+        let Some(server_id) = self
             .ivars()
             .window_server_ids
             .borrow()
-            .contains_key(&window.id)
-        {
+            .get(&window.id)
+            .copied()
+        else {
             return false;
-        }
-        if accessibility::window_is_open(window.pid, window.id) {
+        };
+        let Some(inventory) = crate::macos::platform::window_server::Inventory::try_read() else {
+            return false;
+        };
+        if inventory.contains(server_id) {
             return false;
         }
         crate::macos::platform::logging::record(
