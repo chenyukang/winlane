@@ -1,7 +1,30 @@
 use super::*;
 use crate::macos::platform::window_server::Inventory;
 
+/// How often a panel that stays open re-checks the WindowServer inventory. The
+/// list is also checked when an app quits, a window is destroyed, and another
+/// app comes forward; this covers a panel that is already in front of the user.
+pub(super) const LIVENESS_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3);
+
+pub(super) fn liveness_due(last: Option<std::time::Instant>, now: std::time::Instant) -> bool {
+    last.is_none_or(|last| now.duration_since(last) >= LIVENESS_INTERVAL)
+}
+
 impl Delegate {
+    /// Keep a visible list honest while a window closes behind it.
+    pub(super) fn tick_window_liveness(&self) {
+        let state = self.ivars();
+        if state.mode.get().is_none() {
+            return;
+        }
+        let now = std::time::Instant::now();
+        if !liveness_due(state.window_check_at.get(), now) {
+            return;
+        }
+        state.window_check_at.set(Some(now));
+        self.check_window_liveness();
+    }
+
     pub(super) fn check_window_liveness(&self) {
         let state = self.ivars();
         if state.demo.get() || state.window_server_ids.borrow().is_empty() {

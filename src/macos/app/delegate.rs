@@ -643,6 +643,7 @@ define_class!(
             { self.end_session(); }
             self.check_shortcuts();
             self.poll_window_liveness();
+            self.tick_window_liveness();
             self.drain_shortcut_actions();
             self.poll_focus();
             self.poll_auto_appclose();

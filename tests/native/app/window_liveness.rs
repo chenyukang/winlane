@@ -125,3 +125,76 @@ pub(super) fn verify_window_liveness(mtm: MainThreadMarker) {
         assert!(state.window_check_receiver.borrow().is_none());
     }
 }
+
+/// A row can outlive its window when the list was built before the close and
+/// the background inventory check has not caught up. Selecting it must drop it
+/// instead of asking for a manual refresh.
+pub(super) fn verify_missing_window_row_is_dropped(mtm: MainThreadMarker) {
+    let delegate = responsive_fixture(mtm);
+    let state = delegate.ivars();
+    state.mode.set(Some(PanelMode::Switch));
+    delegate.filter();
+    let window = state.windows.borrow()[0].clone();
+    state
+        .window_server_ids
+        .replace(HashMap::from([(1, 101), (2, 102), (3, 103)]));
+    // The fixture's negative process identifiers cannot be running or
+    // installed, which is exactly the stale-row case.
+    assert!(
+        !crate::macos::platform::accessibility::window_is_open(window.pid, window.id),
+        "a window of a nonexistent process must not report as open"
+    );
+    assert!(
+        delegate.discard_missing_window(&window),
+        "a window that is gone must be dropped"
+    );
+    assert!(
+        state.windows.borrow().iter().all(|w| w.id != window.id),
+        "the stale row must leave the list without a manual refresh"
+    );
+    assert!(
+        !state.window_server_ids.borrow().contains_key(&window.id),
+        "its server identity must be forgotten too"
+    );
+    assert_eq!(delegate.match_count(), 2);
+    assert_eq!(delegate.selected_window().unwrap().id, 2);
+}
+
+/// A list that stays in front of the user is re-checked on a slow interval, so
+/// a window that closes behind it disappears without a manual refresh.
+pub(super) fn verify_open_panel_rechecks_window_liveness(mtm: MainThreadMarker) {
+    let delegate = responsive_fixture(mtm);
+    let state = delegate.ivars();
+    state.demo.set(false);
+    state
+        .window_server_ids
+        .replace(HashMap::from([(1, 101), (2, 102)]));
+    state.window_check_receiver.take();
+    state.window_check_at.take();
+    state.mode.set(None);
+    delegate.tick_window_liveness();
+    assert!(
+        state.window_check_receiver.borrow().is_none(),
+        "a hidden list must not start inventory checks"
+    );
+    state.mode.set(Some(PanelMode::Search));
+    delegate.tick_window_liveness();
+    let receiver = state.window_check_receiver.borrow();
+    assert!(
+        receiver.is_some(),
+        "an open list must re-check the windows it shows"
+    );
+    drop(receiver);
+    state.window_check_receiver.take();
+    let now = std::time::Instant::now();
+    assert!(
+        !crate::macos::app::window_liveness::liveness_due(Some(now), now),
+        "checks are spaced out"
+    );
+    assert!(crate::macos::app::window_liveness::liveness_due(None, now));
+    assert!(crate::macos::app::window_liveness::liveness_due(
+        Some(now),
+        now + crate::macos::app::window_liveness::LIVENESS_INTERVAL
+    ));
+    state.window_check_at.take();
+}

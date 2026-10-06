@@ -63,6 +63,8 @@ Minimized windows are listed too, marked **· Minimized**: selecting one restore
 
 On multiple displays, the picker appears on every screen with a shared selection by default. In **Settings → Appearance → Display**, choose **Active display** to show search and window switching panels only on the screen under the pointer when they open. If the pointer is outside all screens, Winlane uses the focused window of the foreground app, then the main display. The panel stays on its chosen screen until reopened or that screen disconnects.
 
+The list keeps itself current: another app coming forward, an app quitting, and a destroyed window all remove closed rows, and an open panel re-checks every few seconds. If you select a window that closed before a refresh landed, its row is removed and Winlane says so instead of asking you to refresh by hand.
+
 The short letter labels beside windows are their **aliases**. For example, hold Command, type `g`, then release Command to switch to the window labeled `g`. Winlane assigns aliases automatically; you can set your own in Settings.
 
 A quick **Command + Tab** switches back without showing the panel. Holding the shortcut shows it after a short delay, adjustable in **Settings → Windows**. Search opens without that delay.

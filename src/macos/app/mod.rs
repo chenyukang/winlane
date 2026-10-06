@@ -285,6 +285,7 @@ struct AppState {
     /// When the scroll tap was last retried, so a tap that cannot start yet is
     /// not attempted on every poll pass.
     scroll_retry_at: Cell<Option<std::time::Instant>>,
+    window_check_at: Cell<Option<std::time::Instant>>,
     shortcut_rx: RefCell<Option<Receiver<Action>>>,
     last_shortcut_check: Cell<Option<Instant>>,
     wake: OnceCell<MainWake>,

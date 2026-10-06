@@ -1,6 +1,40 @@
 use super::*;
 
 impl Delegate {
+    /// A row can outlive its window between a scan and a selection, before the
+    /// background inventory check catches up. Confirming that here lets the
+    /// stale row be dropped and explained, instead of failing with a message
+    /// that asks for a manual refresh.
+    pub(super) fn discard_missing_window(&self, window: &WindowInfo) -> bool {
+        // Only windows whose WindowServer surface Winlane recorded can be
+        // declared closed. Without it the lookup falls back to the AX-derived
+        // identity alone, which an app may replace at any time; a live row must
+        // never be dropped because an accessibility object was rebuilt.
+        if !self
+            .ivars()
+            .window_server_ids
+            .borrow()
+            .contains_key(&window.id)
+        {
+            return false;
+        }
+        if accessibility::window_is_open(window.pid, window.id) {
+            return false;
+        }
+        crate::macos::platform::logging::record(
+            crate::macos::platform::logging::Level::Debug,
+            "switch",
+            "stale-window-dropped",
+            || format!("id={}", window.id),
+        );
+        self.remove_closed_windows(&[window.id]);
+        self.selection_failed(tr!(
+            "该窗口已关闭，已从列表中移除。",
+            "That window has closed and has been removed from the list."
+        ));
+        true
+    }
+
     pub(super) fn activate_selected(&self) {
         if self.searching_emoji() {
             self.use_emoji();
@@ -119,6 +153,9 @@ impl Delegate {
                 window.id,
                 self.ivars().wake.get().unwrap().handle(),
             ) {
+                if self.discard_missing_window(&window) {
+                    return;
+                }
                 // Apps without a bundle URL cannot go through LaunchServices.
                 // Restore directly and fall back to plain activation.
                 if accessibility::raise_window(window.pid, window.id).is_err()
@@ -130,6 +167,9 @@ impl Delegate {
             }
         } else {
             if let Err(error) = accessibility::raise_window(window.pid, window.id) {
+                if self.discard_missing_window(&window) {
+                    return;
+                }
                 // A single-window app can still be switched to when AX cannot
                 // target its window. Do not use this fallback
                 // for multi-window apps, where it could select the wrong one.
