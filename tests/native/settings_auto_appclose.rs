@@ -44,10 +44,16 @@ pub fn verify(target: &AnyObject, mtm: MainThreadMarker) {
     assert_eq!(row.remove.action(), Some(sel!(removeAppCloseRule:)));
     assert_eq!(row.limit.action(), Some(sel!(settingsChanged:)));
     assert!(row.limit.cell().unwrap().sendsActionOnEndEditing());
-    for invalid in ["0", "101", "-1", "3.5", "bad", ""] {
+    for invalid in ["0", "101", "-1", "3.5", "bad"] {
         row.limit.setStringValue(&NSString::from_str(invalid));
         assert!(settings.candidate().is_err());
     }
+    // An empty field means no limit, not an error.
+    row.limit.setStringValue(&NSString::from_str(""));
+    assert_eq!(
+        settings.candidate().unwrap().auto_appclose.rules[0].max_windows,
+        None
+    );
     row.limit.setStringValue(ns_string!("3"));
     assert_eq!(row.idle.action(), Some(sel!(settingsChanged:)));
     assert!(row.idle.cell().unwrap().sendsActionOnEndEditing());
@@ -63,12 +69,11 @@ pub fn verify(target: &AnyObject, mtm: MainThreadMarker) {
     row.limit.setStringValue(&NSString::from_str(""));
     config.auto_appclose.rules[0].max_windows = None;
     assert_eq!(settings.candidate().unwrap(), config);
-    // With neither limit the rule would do nothing.
+    // With neither limit the rule is kept as an inert draft rather than
+    // rejected: this is what a freshly added rule looks like.
     row.idle.setStringValue(&NSString::from_str(""));
-    assert!(
-        settings.candidate().is_err(),
-        "a rule needs at least one limit"
-    );
+    config.auto_appclose.rules[0].max_idle_minutes = None;
+    assert_eq!(settings.candidate().unwrap(), config);
     row.idle.setStringValue(ns_string!("240"));
     config.auto_appclose.rules[0].max_idle_minutes = Some(240);
     assert_eq!(settings.candidate().unwrap(), config);
@@ -83,6 +88,10 @@ pub fn verify(target: &AnyObject, mtm: MainThreadMarker) {
     );
     let draft = page.append();
     page.layout();
+    assert!(
+        draft.limit.stringValue().is_empty() && draft.idle.stringValue().is_empty(),
+        "a new rule must start without any limit"
+    );
     assert_eq!(
         settings.candidate().unwrap(),
         config,
@@ -105,6 +114,18 @@ pub fn verify_autosave(settings: &SettingsWindow, saved: impl Fn() -> Config) {
     let send = |control: &NSControl| unsafe {
         assert!(control.sendAction_to(control.action(), control.target().as_deref()));
     };
+    assert!(
+        row.limit.stringValue().is_empty() && row.idle.stringValue().is_empty(),
+        "a new rule starts without any limit"
+    );
+    // Saving before a limit is picked keeps the rule as an inert draft instead
+    // of rejecting it, so the app the user chose is not thrown away.
+    send(&row.idle);
+    let draft = saved();
+    assert_eq!(draft.auto_appclose.rules.len(), 1);
+    assert_eq!(draft.auto_appclose.rules[0].max_windows, None);
+    assert_eq!(draft.auto_appclose.rules[0].max_idle_minutes, None);
+    row.limit.setStringValue(ns_string!("3"));
     page.interval.setStringValue(ns_string!("30"));
     send(&page.interval);
     assert_eq!(saved().auto_appclose.interval_secs, 30);

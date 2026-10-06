@@ -203,7 +203,13 @@ impl AutoAppClosePage {
         let limit =
             NSTextField::initWithFrame(NSTextField::alloc(mtm), rect(308.0, 12.0, 116.0, 30.0));
         limit.setFont(Some(&NSFont::systemFontOfSize(14.0)));
-        limit.setStringValue(ns_string!("3"));
+        // A new rule starts without limits: the user picks what it should do
+        // instead of inheriting a window cap nobody asked for.
+        limit.setPlaceholderString(Some(&NSString::from_str(tr!("不限制", "No limit"))));
+        limit.setToolTip(Some(&NSString::from_str(tr!(
+            "超过该数量时关闭最久未使用的窗口；留空表示不限制窗口数。",
+            "Close the least recently used windows above this number. Leave empty for no window limit."
+        ))));
         limit.setAlignment(NSTextAlignment::Center);
         limit.setAccessibilityLabel(Some(&NSString::from_str(tr!("保留窗口数", "Keep windows"))));
         limit.cell().unwrap().setSendsActionOnEndEditing(true);
@@ -213,7 +219,7 @@ impl AutoAppClosePage {
             NSTextField::initWithFrame(NSTextField::alloc(mtm), rect(432.0, 12.0, 116.0, 30.0));
         idle.setFont(Some(&NSFont::systemFontOfSize(14.0)));
         idle.setAlignment(NSTextAlignment::Center);
-        idle.setPlaceholderString(Some(&NSString::from_str(tr!("不做限制", "No limit"))));
+        idle.setPlaceholderString(Some(&NSString::from_str(tr!("不限制", "No limit"))));
         idle.setAccessibilityLabel(Some(&NSString::from_str(tr!(
             "闲置多少分钟后关闭（留空则不限）",
             "Close after this many idle minutes, empty for no limit"

@@ -177,11 +177,23 @@ fn validates_limits_duplicates_and_self_appclose() {
         s.rules[0].max_windows = Some(limit);
         assert!(s.validate().is_ok());
     }
-    // Either limit may stand alone, but a rule with neither would do nothing.
+    // Either limit may stand alone, and a rule with neither is the empty new
+    // rule the settings page starts from: valid, kept, and inert.
     s.rules[0].max_windows = None;
-    assert!(s.validate().is_err());
+    assert!(s.validate().is_ok());
+    assert!(!s.rules[0].limits_anything());
+    let mut draft = Planner::default();
+    let windows = snapshot(&[1, 2, 3, 4]);
+    draft.observe(&windows, 0);
+    assert!(
+        draft
+            .candidate(&s, &windows, &[1, 2, 3, 4], 60 * 60_000)
+            .is_none(),
+        "a rule with no limits must not close anything"
+    );
     s.rules[0].max_idle_minutes = Some(240);
     assert!(s.validate().is_ok());
+    assert!(s.rules[0].limits_anything());
     s.rules[0].max_idle_minutes = Some(0);
     assert!(s.validate().is_err());
     s.rules[0].max_idle_minutes = Some(MAX_IDLE_MINUTES + 1);
@@ -438,6 +450,24 @@ fn idle_settings_survive_a_round_trip_and_a_rule_without_limits_is_rejected() {
     assert_eq!(loaded, config);
     assert_eq!(loaded.auto_appclose.rules[0].max_windows, None);
     assert_eq!(loaded.auto_appclose.rules[0].max_idle_minutes, Some(240));
+    // A rule stored with neither limit keeps its app and stays inert.
+    let empty = serde_json::json!({
+        "auto_appclose": {
+            "enabled": true,
+            "interval_secs": 10,
+            "rules": [{
+                "application": {"bundle_id": "test.editor", "name": "Editor", "path": "/Applications/Editor.app"},
+                "max_windows": null,
+                "max_idle_minutes": null
+            }]
+        }
+    });
+    let loaded = Config::from_json(&empty.to_string()).unwrap();
+    assert!(!loaded.auto_appclose.rules[0].limits_anything());
+    assert_eq!(
+        Config::from_json(&loaded.to_json().unwrap()).unwrap(),
+        loaded
+    );
     // A rule written before idle limits existed still loads and still limits windows.
     let legacy = serde_json::json!({
         "auto_appclose": {

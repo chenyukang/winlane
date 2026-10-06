@@ -35,6 +35,7 @@ pub fn scan(rules: &[Rule], pending: &[Target]) -> Scan {
         .collect();
     let apps = rules
         .iter()
+        .filter(|rule| rule.limits_anything())
         .filter_map(|rule| {
             snapshot(rule, &inventory)
                 .map_err(|error| {

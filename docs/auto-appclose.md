@@ -4,11 +4,11 @@ Auto AppClose closes windows you no longer need for selected apps. A rule can ca
 
 1. Open **Settings → Auto AppClose**.
 2. Choose **Add App…** and select an application.
-3. Set **Keep windows** to a number from 1 to 100, and/or **Idle (minutes)** to how long a window may go unused, 1 to 10080 (one week). Leave a field empty to leave that limit out. For example, keep Visual Studio Code to 3 windows, or close Finder windows four hours after you last used them with an idle time of 240.
+3. Set **Keep windows** to a number from 1 to 100, and/or **Idle (minutes)** to how long a window may go unused, 1 to 10080 (one week). A new rule starts with both fields empty; leave a field empty to leave that limit out. For example, keep Visual Studio Code to 3 windows, or close Finder windows four hours after you last used them with an idle time of 240.
 4. Set **Check interval** in seconds (1–3600). The default is **10 seconds**; the new-window grace period is always twice that interval.
 5. Turn on **Enable Auto AppClose**. Settings save automatically.
 
-Every rule needs at least one of the two limits; a row with both fields empty is not saved. The switch controls all rules. Turning it off cancels pending actions and preserves your app list and limits. A close request already delivered to an app can still finish. Remove a row to stop managing that app.
+A new rule starts with both limits empty, and either one may be filled in later. A rule with both empty is kept as a draft but never checks or closes anything, so an app you added by mistake is harmless. The switch controls all rules. Turning it off cancels pending actions and preserves your app list and limits. A close request already delivered to an app can still finish. Remove a row to stop managing that app.
 
 ## Which windows close
 

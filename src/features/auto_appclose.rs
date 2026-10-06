@@ -37,6 +37,14 @@ pub struct Rule {
     pub max_idle_minutes: Option<u16>,
 }
 
+impl Rule {
+    /// Whether the rule asks for anything. A rule with both limits empty is a
+    /// draft that is kept in the settings but never checks or closes a window.
+    pub fn limits_anything(&self) -> bool {
+        self.max_windows.is_some() || self.max_idle_minutes.is_some()
+    }
+}
+
 impl Settings {
     pub fn interval(&self) -> std::time::Duration {
         std::time::Duration::from_secs(u64::from(self.interval_secs))
@@ -64,13 +72,6 @@ impl Settings {
         let mut apps = HashSet::new();
         for rule in &self.rules {
             rule.application.validate()?;
-            if rule.max_windows.is_none() && rule.max_idle_minutes.is_none() {
-                return Err(tr!(
-                    "每条规则至少设置一个上限：保留窗口数或闲置时间。",
-                    "Each rule needs at least one limit: windows to keep, or idle time."
-                )
-                .into());
-            }
             if rule
                 .max_windows
                 .is_some_and(|max| !(1..=100).contains(&max))
@@ -202,7 +203,7 @@ impl Planner {
         }
         let ranks: HashMap<_, _> = recent.iter().enumerate().map(|(i, id)| (*id, i)).collect();
         for rule in &settings.rules {
-            if self.pending.contains_key(&rule.application.bundle_id) {
+            if !rule.limits_anything() || self.pending.contains_key(&rule.application.bundle_id) {
                 continue;
             }
             let Some(snapshot) = snapshots
