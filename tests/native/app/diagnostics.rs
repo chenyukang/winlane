@@ -31,7 +31,7 @@ pub(crate) fn inspect_window_discovery(bundle: &str) {
     }
     for round in 0..12 {
         let start = Instant::now();
-        let (windows, _) = accessibility::list_windows(&apps, true);
+        let (windows, server_ids) = accessibility::list_windows(&apps, true);
         println!(
             "scan round={} windows={} elapsed_ms={:.1} ids={:?}",
             round + 1,
@@ -39,6 +39,16 @@ pub(crate) fn inspect_window_discovery(bundle: &str) {
             start.elapsed().as_secs_f64() * 1000.0,
             windows.iter().map(|window| window.id).collect::<Vec<_>>()
         );
+        for window in &windows {
+            println!(
+                "  listed id={} server={:?} app={} minimized={} resolvable={}",
+                window.id,
+                server_ids.get(&window.id),
+                window.app,
+                window.minimized,
+                accessibility::window_is_open(window.pid, window.id)
+            );
+        }
         if let Ok(minimum) = std::env::var("WINLANE_EXPECT_WINDOWS") {
             let minimum: usize = minimum
                 .parse()

@@ -748,27 +748,12 @@ fn find_window(pid: i32, id: u64) -> Result<Element, String> {
     {
         return Ok(window);
     }
-    let application = Element::application(pid).ok_or(tr!(
-        "应用已退出，请刷新窗口列表。",
-        "The app has quit. Refresh the window list."
-    ))?;
-    let windows = all_windows(&application, pid, &Inventory::read(), true);
-    let mut matches = windows.iter().filter(|window| window.id(pid) == id);
-    if let Some(window) = matches.next() {
-        if matches.any(|other| other.0 != window.0) {
-            return Err(tr!(
-                "无法确定目标窗口，请刷新窗口列表。",
-                "Could not identify the window. Refresh the window list."
-            )
-            .to_owned());
-        }
-        return Ok(Element(window.0.clone()));
-    }
-    Err(tr!(
-        "窗口已关闭，请刷新窗口列表。",
-        "The window has closed. Refresh the window list."
-    )
-    .to_owned())
+    // The retained handle is gone, so rediscover the window by identity rather
+    // than by its AX identity alone: an app can rebuild its accessibility
+    // objects (WeChat's Chromium UI does this), which changes the AX-derived
+    // ID while the window itself stays. `find_fresh_window` also accepts the
+    // WindowServer identity and refuses to guess between two matches.
+    find_fresh_window(pid, id)
 }
 
 /// Turn a common Accessibility error into a message with a next step. The raw
@@ -882,6 +867,12 @@ fn find_fresh_window(pid: i32, id: u64) -> Result<Element, String> {
         .to_owned(),
     })?;
     Ok(Element(windows[index].0.clone()))
+}
+
+/// Whether a window Winlane listed is still there. Used after a failed switch
+/// so a row that outlived its window can be dropped instead of reported again.
+pub fn window_is_open(pid: i32, id: u64) -> bool {
+    find_window(pid, id).is_ok()
 }
 
 pub fn set_minimized(pid: i32, id: u64, minimized: bool) -> Result<(), String> {

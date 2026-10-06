@@ -47,6 +47,7 @@ use responsiveness::{
 };
 use settings::verify_autosave;
 use snippet_search::verify_snippet_search;
+use window_liveness::verify_missing_window_row_is_dropped;
 use window_search::{
     verify_alias_does_not_block_title_search, verify_app_name_search,
     verify_distinct_window_aliases, verify_editor_window_titles, verify_switch_alias_prefix,
@@ -138,6 +139,9 @@ pub fn verify_hidden_panels() {
     verify_usage_hint_visibility(mtm);
     verify_app_name_search(mtm);
     verify_editor_window_titles(mtm);
+    verify_missing_window_row_is_dropped(mtm);
+
+    accessibility::tests::verify_rebuilt_identity_lookup();
     delegate.ivars().demo.set(true);
     delegate.ivars().windows.replace(demo_windows());
     delegate.ivars().mode.set(Some(PanelMode::Search));

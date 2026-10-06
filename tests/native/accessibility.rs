@@ -169,3 +169,69 @@ pub fn verify_fresh_window_lookup() {
         "Fresh-window lookup passed: WindowServer-id recovery plus duplicate, ambiguous and closed windows."
     );
 }
+
+/// An app can rebuild its accessibility objects (WeChat's Chromium UI does),
+/// which invalidates the handle a row was built from and changes the AX-derived
+/// identity while the window itself stays. Selecting that row must find the
+/// window again through its WindowServer identity instead of reporting it
+/// closed, and must still refuse to guess when nothing matches.
+pub fn verify_rebuilt_identity_lookup() {
+    assert!(
+        is_trusted(),
+        "the rebuilt-identity check requires accessibility access"
+    );
+    let apps: Vec<(i32, String)> = objc2_app_kit::NSWorkspace::sharedWorkspace()
+        .runningApplications()
+        .iter()
+        .filter(|app| {
+            app.activationPolicy() == objc2_app_kit::NSApplicationActivationPolicy::Regular
+        })
+        .map(|app| {
+            (
+                app.processIdentifier(),
+                app.localizedName().unwrap().to_string(),
+            )
+        })
+        .collect();
+    let (windows, server_ids) = list_windows(&apps, true);
+    let Some(window) = windows
+        .iter()
+        .find(|window| server_ids.contains_key(&window.id))
+    else {
+        println!("Rebuilt-identity check skipped: no listed window has a WindowServer identity.");
+        return;
+    };
+    let server_id = server_ids[&window.id];
+    // Stale rows keep the AX identity of the accessibility object that was
+    // rebuilt. Model that: the same window, a different AX identity, and the
+    // handle the row was built from no longer answering reads.
+    let rebuilt_id = window.id ^ (1 << 62);
+    let dead = Element::from_remote_id(window.pid, u64::MAX).expect("a handle is always created");
+    assert_eq!(
+        dead.attribute_once("AXRole"),
+        Err(AX_INVALID_UI_ELEMENT),
+        "the model handle must be invalid"
+    );
+    remember_window(
+        window.pid,
+        server_id,
+        &WindowInfo {
+            id: rebuilt_id,
+            ..window.clone()
+        },
+        &dead,
+    );
+    assert!(
+        window_is_open(window.pid, rebuilt_id),
+        "a rebuilt accessibility object must not look like a closed window"
+    );
+    assert!(
+        !window_is_open(window.pid, rebuilt_id ^ (1 << 61)),
+        "a window nothing matches must still be reported closed"
+    );
+    if let Some(entries) = remembered_windows().lock().unwrap().get_mut(&window.pid) {
+        entries.remove(&server_id);
+    }
+    remote_scans().lock().unwrap().remove(&window.pid);
+    println!("Rebuilt-identity lookup passed: WindowServer identity recovers the window.");
+}
