@@ -233,7 +233,7 @@ Custom scrolling starts disabled. Quit other scroll modifiers before enabling it
 
 ### Auto AppClose
 
-In **Settings → Auto AppClose**, add an app and choose how many windows to keep. For example, set Visual Studio Code to **3** to close its least recently used windows when more than three are open. A single **Enable Auto AppClose** switch controls all rules and starts off; turning it off keeps your rules.
+In **Settings → Auto AppClose**, add an app and set a limit: **Keep windows** to cap how many it holds, **Idle (minutes)** to close a window that has gone unused for that long, or both. Visual Studio Code set to **3** keeps its three most recent windows, and Finder set to an idle time of **240** closes its windows four hours after you last used them. A single **Enable Auto AppClose** switch controls all rules and starts off; turning it off keeps your rules.
 
 The check interval is configurable and defaults to **10 seconds**. Winlane preserves the active window and gives newly discovered windows a grace period of **twice the interval**. It uses each app's normal close button and pauses automatic closing for that app if a window remains open or needs a save decision. [Auto AppClose behavior and logs](docs/auto-appclose.md).
 
