@@ -1,5 +1,5 @@
 use super::*;
-use winlane::features::auto_appclose::{Rule, Snapshot, Window};
+use winlane::features::auto_appclose::{Reason, Rule, Snapshot, Window};
 
 pub fn verify(mtm: MainThreadMarker) {
     let rule = Rule {
@@ -8,7 +8,8 @@ pub fn verify(mtm: MainThreadMarker) {
             path: "/Applications/Editor.app".into(),
             name: "Editor".into(),
         },
-        max_windows: 3,
+        max_windows: Some(3),
+        max_idle_minutes: None,
     };
     let target = Target {
         bundle_id: rule.application.bundle_id.clone(),
@@ -18,7 +19,9 @@ pub fn verify(mtm: MainThreadMarker) {
             server_id: Some(u32::MAX),
             protected: false,
         },
-        max_windows: 3,
+        reason: Reason::WindowLimit,
+        max_windows: Some(3),
+        max_idle_minutes: None,
     };
     let settings = Settings {
         enabled: true,
@@ -41,6 +44,33 @@ pub fn verify(mtm: MainThreadMarker) {
     assert!(
         token.load(Ordering::Acquire),
         "MRU changes cancel an obsolete close plan"
+    );
+    // The same visit resets the idle clock Auto AppClose uses, so an idle rule
+    // never counts from before the last time a window was used.
+    {
+        let mut state = app.auto_appclose.borrow_mut();
+        state.planner.observe(
+            &[Snapshot {
+                bundle_id: "test.appclose.editor".into(),
+                windows: vec![Window {
+                    id: 42,
+                    pid: 1,
+                    server_id: Some(1),
+                    protected: false,
+                }],
+                focused: None,
+            }],
+            0,
+        );
+        assert_eq!(state.planner.idle_ms(42, 60_000), 60_000);
+        // Put the tracking clock half a minute behind, so a real visit is
+        // distinguishable from a window observed only once.
+        state.started = Some(Instant::now() - Duration::from_secs(30));
+    }
+    delegate.remember_window(42);
+    assert!(
+        app.auto_appclose.borrow().planner.idle_ms(42, 60_000) < 60_000,
+        "recording a visit must mark the window active"
     );
     assert_eq!(
         appclose::close(&target, &rule, &token),
@@ -93,6 +123,7 @@ pub fn verify(mtm: MainThreadMarker) {
             apps: vec![Snapshot {
                 bundle_id: target.bundle_id.clone(),
                 windows: vec![target.window],
+                focused: None,
             }],
             closed: vec![],
         })

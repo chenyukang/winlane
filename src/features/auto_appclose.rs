@@ -1,4 +1,4 @@
-use crate::{core::config::ApplicationTarget, tr};
+use crate::{core::config::ApplicationTarget, tr, trf};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -20,10 +20,21 @@ impl Default for Settings {
     }
 }
 
+/// The longest idle time a rule accepts, one week. Idle closing works in
+/// minutes because hours and days are the usual choices.
+pub const MAX_IDLE_MINUTES: u16 = 10_080;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rule {
     pub application: ApplicationTarget,
-    pub max_windows: u16,
+    /// Close the least recently used windows while an app keeps more than this
+    /// many. `None` leaves the number of windows alone.
+    #[serde(default)]
+    pub max_windows: Option<u16>,
+    /// Close a window that has not been used for this long. `None` never closes
+    /// a window for being idle.
+    #[serde(default)]
+    pub max_idle_minutes: Option<u16>,
 }
 
 impl Settings {
@@ -53,12 +64,31 @@ impl Settings {
         let mut apps = HashSet::new();
         for rule in &self.rules {
             rule.application.validate()?;
-            if !(1..=100).contains(&rule.max_windows) {
+            if rule.max_windows.is_none() && rule.max_idle_minutes.is_none() {
                 return Err(tr!(
-                    "保留窗口数应为 1–100 的整数。",
-                    "Keep between 1 and 100 windows."
+                    "每条规则至少设置一个上限：保留窗口数或闲置时间。",
+                    "Each rule needs at least one limit: windows to keep, or idle time."
                 )
                 .into());
+            }
+            if rule
+                .max_windows
+                .is_some_and(|max| !(1..=100).contains(&max))
+            {
+                return Err(tr!(
+                    "保留窗口数应为 1–100 的整数，留空表示不限制。",
+                    "Keep between 1 and 100 windows, or leave it empty for no limit."
+                )
+                .into());
+            }
+            if rule
+                .max_idle_minutes
+                .is_some_and(|minutes| !(1..=MAX_IDLE_MINUTES).contains(&minutes))
+            {
+                return Err(trf!(
+                    "闲置时间应为 1–{MAX_IDLE_MINUTES} 分钟的整数，留空表示不按闲置关闭。",
+                    "Idle time must be an integer from 1 to {MAX_IDLE_MINUTES} minutes, or empty to never close for being idle."
+                ));
             }
             if rule.application.bundle_id == "app.windowlane.desktop" {
                 return Err(tr!(
@@ -91,30 +121,72 @@ pub struct Window {
 pub struct Snapshot {
     pub bundle_id: String,
     pub windows: Vec<Window>,
+    /// The window the user is looking at, when this app is frontmost. It counts
+    /// as used right now, which no close may overtake.
+    pub focused: Option<u64>,
+}
+
+/// Which limit asked for a close, for the log and for re-validation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reason {
+    WindowLimit,
+    Idle,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Target {
     pub bundle_id: String,
     pub window: Window,
-    pub max_windows: u16,
+    pub reason: Reason,
+    pub max_windows: Option<u16>,
+    pub max_idle_minutes: Option<u16>,
 }
 
 #[derive(Default)]
 pub struct Planner {
+    /// When each live window was first seen, for the new-window grace period.
     seen: HashMap<u64, u64>,
+    /// When each live window was last used.
+    active: HashMap<u64, u64>,
     pending: HashMap<String, Target>,
 }
 
 impl Planner {
+    /// A window Winlane records as recently used, from the shared recent-window
+    /// history. Focus changes that happen between scans still reset the clock.
+    pub fn mark_active(&mut self, id: u64, now_ms: u64) {
+        self.active.insert(id, now_ms);
+    }
+
+    /// How long a window has gone unused, counting from when it was first seen
+    /// for windows Winlane has never watched being used.
+    pub fn idle_ms(&self, id: u64, now_ms: u64) -> u64 {
+        let since = self
+            .active
+            .get(&id)
+            .or_else(|| self.seen.get(&id))
+            .copied()
+            .unwrap_or(now_ms);
+        now_ms.saturating_sub(since)
+    }
+
     pub fn observe(&mut self, snapshots: &[Snapshot], now_ms: u64) {
         let live: HashSet<_> = snapshots
             .iter()
             .flat_map(|s| s.windows.iter().map(|w| w.id))
             .collect();
         self.seen.retain(|id, _| live.contains(id));
-        for id in live {
-            self.seen.entry(id).or_insert(now_ms);
+        self.active.retain(|id, _| live.contains(id));
+        for snapshot in snapshots {
+            for window in &snapshot.windows {
+                self.seen.entry(window.id).or_insert(now_ms);
+                // A window that was already open when Winlane started counts
+                // from the first scan that saw it, never from the epoch.
+                self.active.entry(window.id).or_insert(now_ms);
+                if snapshot.focused == Some(window.id) {
+                    self.active.insert(window.id, now_ms);
+                }
+            }
         }
     }
 
@@ -139,31 +211,45 @@ impl Planner {
             else {
                 continue;
             };
-            if snapshot.windows.len() <= usize::from(rule.max_windows) {
-                continue;
-            }
-            let oldest = snapshot
-                .windows
-                .iter()
-                .filter(|w| {
-                    !w.protected
-                        && w.server_id.is_some()
-                        && self.seen.get(&w.id).is_some_and(|first| {
-                            now_ms.saturating_sub(*first) >= settings.grace_period_ms()
-                        })
-                })
-                .max_by_key(|w| {
+            let eligible = |window: &&Window| {
+                !window.protected
+                    && window.server_id.is_some()
+                    && self.seen.get(&window.id).is_some_and(|first| {
+                        now_ms.saturating_sub(*first) >= settings.grace_period_ms()
+                    })
+            };
+            let target = |reason, window: &Window| Target {
+                bundle_id: snapshot.bundle_id.clone(),
+                window: window.clone(),
+                reason,
+                max_windows: rule.max_windows,
+                max_idle_minutes: rule.max_idle_minutes,
+            };
+            if rule
+                .max_windows
+                .is_some_and(|max| snapshot.windows.len() > usize::from(max))
+                && let Some(window) = snapshot.windows.iter().filter(eligible).max_by_key(|w| {
                     (
                         ranks.get(&w.id).copied().unwrap_or(usize::MAX),
                         std::cmp::Reverse(w.id),
                     )
-                });
-            if let Some(window) = oldest {
-                return Some(Target {
-                    bundle_id: snapshot.bundle_id.clone(),
-                    window: window.clone(),
-                    max_windows: rule.max_windows,
-                });
+                })
+            {
+                return Some(target(Reason::WindowLimit, window));
+            }
+            if let Some(minutes) = rule.max_idle_minutes {
+                let limit_ms = u64::from(minutes) * 60_000;
+                // Close the window that has gone unused the longest, so a rule
+                // never accidentally closes the one the user just left.
+                if let Some(window) = snapshot
+                    .windows
+                    .iter()
+                    .filter(eligible)
+                    .filter(|w| self.idle_ms(w.id, now_ms) >= limit_ms)
+                    .max_by_key(|w| (self.idle_ms(w.id, now_ms), std::cmp::Reverse(w.id)))
+                {
+                    return Some(target(Reason::Idle, window));
+                }
             }
         }
         None

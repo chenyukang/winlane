@@ -249,6 +249,8 @@ impl Delegate {
     #[track_caller]
     pub(super) fn remember_window(&self, id: u64) {
         self.ivars().auto_appclose.borrow().cancel();
+        // Auto AppClose counts idle time from the last visit to a window.
+        self.ivars().auto_appclose.borrow_mut().mark_active(id);
         let caller = std::panic::Location::caller();
         crate::macos::platform::recency_trace::record("visit", || {
             format!(

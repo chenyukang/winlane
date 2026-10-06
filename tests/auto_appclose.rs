@@ -1,5 +1,7 @@
 use winlane::core::config::{ApplicationTarget, Config};
-use winlane::features::auto_appclose::{Planner, Rule, Settings, Snapshot, Window};
+use winlane::features::auto_appclose::{
+    MAX_IDLE_MINUTES, Planner, Reason, Rule, Settings, Snapshot, Window,
+};
 
 fn rule(bundle: &str, max_windows: u16) -> Rule {
     Rule {
@@ -8,7 +10,16 @@ fn rule(bundle: &str, max_windows: u16) -> Rule {
             name: "Editor".into(),
             path: "/Applications/Editor.app".into(),
         },
-        max_windows,
+        max_windows: Some(max_windows),
+        max_idle_minutes: None,
+    }
+}
+
+fn idle_rule(bundle: &str, max_idle_minutes: u16) -> Rule {
+    Rule {
+        max_windows: None,
+        max_idle_minutes: Some(max_idle_minutes),
+        ..rule(bundle, 1)
     }
 }
 fn settings() -> Settings {
@@ -19,6 +30,10 @@ fn settings() -> Settings {
     }
 }
 fn snapshot(ids: &[u64]) -> Vec<Snapshot> {
+    snapshot_with_focus(ids, None)
+}
+
+fn snapshot_with_focus(ids: &[u64], focused: Option<u64>) -> Vec<Snapshot> {
     vec![Snapshot {
         bundle_id: "test.editor".into(),
         windows: ids
@@ -30,6 +45,7 @@ fn snapshot(ids: &[u64]) -> Vec<Snapshot> {
                 protected: false,
             })
             .collect(),
+        focused,
     }]
 }
 
@@ -46,7 +62,7 @@ fn defaults_are_off_and_rules_survive_disabling_and_restart() {
     config.auto_appclose.enabled = false;
     let loaded = Config::from_json(&config.to_json().unwrap()).unwrap();
     assert_eq!(loaded, config);
-    assert_eq!(loaded.auto_appclose.rules[0].max_windows, 3);
+    assert_eq!(loaded.auto_appclose.rules[0].max_windows, Some(3));
     assert_eq!(loaded.auto_appclose.interval_secs, 10);
 }
 
@@ -154,13 +170,28 @@ fn new_window_protection_is_exactly_twice_the_configured_interval() {
 fn validates_limits_duplicates_and_self_appclose() {
     let mut s = settings();
     for limit in [0, 101, u16::MAX] {
-        s.rules[0].max_windows = limit;
+        s.rules[0].max_windows = Some(limit);
         assert!(s.validate().is_err());
     }
     for limit in [1, 3, 100] {
-        s.rules[0].max_windows = limit;
+        s.rules[0].max_windows = Some(limit);
         assert!(s.validate().is_ok());
     }
+    // Either limit may stand alone, but a rule with neither would do nothing.
+    s.rules[0].max_windows = None;
+    assert!(s.validate().is_err());
+    s.rules[0].max_idle_minutes = Some(240);
+    assert!(s.validate().is_ok());
+    s.rules[0].max_idle_minutes = Some(0);
+    assert!(s.validate().is_err());
+    s.rules[0].max_idle_minutes = Some(MAX_IDLE_MINUTES + 1);
+    assert!(s.validate().is_err());
+    for minutes in [1, 240, MAX_IDLE_MINUTES] {
+        s.rules[0].max_idle_minutes = Some(minutes);
+        assert!(s.validate().is_ok());
+    }
+    s.rules[0].max_idle_minutes = None;
+    s.rules[0].max_windows = Some(3);
     s.rules.push(s.rules[0].clone());
     assert!(s.validate().is_err());
     s.rules = vec![rule("app.windowlane.desktop", 3)];
@@ -283,4 +314,149 @@ fn same_bundle_across_processes_counts_as_one_rule_and_latest_recency_wins() {
             .id,
         3
     );
+}
+
+#[test]
+fn closes_a_window_only_after_it_has_been_idle_for_the_configured_time() {
+    let mut planner = Planner::default();
+    let windows = snapshot(&[1, 2]);
+    let start = 0;
+    planner.observe(&windows, start);
+    let settings = Settings {
+        enabled: true,
+        rules: vec![idle_rule("test.editor", 60)],
+        ..Settings::default()
+    };
+    // Both windows were open when tracking started, so both count from then,
+    // not from the epoch, and neither is closed before its hour is up.
+    assert!(
+        planner
+            .candidate(&settings, &windows, &[1, 2], 59 * 60_000)
+            .is_none()
+    );
+    let target = planner
+        .candidate(&settings, &windows, &[1, 2], 60 * 60_000)
+        .unwrap();
+    assert_eq!(target.reason, Reason::Idle);
+    assert_eq!(
+        target.window.id, 1,
+        "the window unused longest closes first"
+    );
+    assert_eq!(target.max_windows, None);
+    assert_eq!(target.max_idle_minutes, Some(60));
+}
+
+#[test]
+fn using_a_window_restarts_its_idle_clock_and_protects_the_focused_one() {
+    let mut planner = Planner::default();
+    let windows = snapshot(&[1, 2]);
+    let settings = Settings {
+        enabled: true,
+        rules: vec![idle_rule("test.editor", 60)],
+        ..Settings::default()
+    };
+    planner.observe(&windows, 0);
+    // Window 1 was used half an hour in, so it is not idle yet at the hour.
+    planner.mark_active(1, 30 * 60_000);
+    let target = planner
+        .candidate(&settings, &windows, &[1, 2], 60 * 60_000)
+        .unwrap();
+    assert_eq!(target.window.id, 2);
+    // A window the scan reports as focused counts as used right now.
+    let focused = snapshot_with_focus(&[1, 2], Some(2));
+    planner.observe(&focused, 90 * 60_000);
+    assert_eq!(planner.idle_ms(2, 90 * 60_000), 0);
+    assert_eq!(planner.idle_ms(1, 90 * 60_000), 60 * 60_000);
+    let target = planner
+        .candidate(&settings, &focused, &[1, 2], 90 * 60_000)
+        .unwrap();
+    assert_eq!(target.window.id, 1, "the focused window never closes first");
+    // The window that was just used is protected from the close itself too.
+    let mut protected = focused.clone();
+    protected[0].windows[0].protected = true;
+    assert!(
+        planner
+            .candidate(&settings, &protected, &[2, 1], 91 * 60_000)
+            .is_none()
+    );
+}
+
+#[test]
+fn a_rule_can_limit_windows_and_idle_time_together() {
+    let mut planner = Planner::default();
+    let windows = snapshot(&[1, 2, 3, 4]);
+    planner.observe(&windows, 0);
+    let settings = Settings {
+        enabled: true,
+        rules: vec![Rule {
+            max_windows: Some(3),
+            max_idle_minutes: Some(30),
+            ..rule("test.editor", 3)
+        }],
+        ..Settings::default()
+    };
+    // Above the window limit, the least recently used window closes first.
+    let target = planner
+        .candidate(&settings, &windows, &[1, 2, 3, 4], 20_000)
+        .unwrap();
+    assert_eq!(target.reason, Reason::WindowLimit);
+    assert_eq!(target.window.id, 4);
+    // At the limit, only a window past its idle time is left to close, and the
+    // one that has gone unused the longest goes first.
+    let at_limit = snapshot(&[1, 2, 3]);
+    planner.observe(&at_limit, 30 * 60_000);
+    planner.mark_active(1, 30 * 60_000);
+    planner.mark_active(2, 30 * 60_000);
+    let target = planner
+        .candidate(&settings, &at_limit, &[1, 2, 3], 61 * 60_000)
+        .unwrap();
+    assert_eq!(target.reason, Reason::Idle);
+    assert_eq!(target.window.id, 3);
+    assert_eq!(planner.idle_ms(3, 61 * 60_000), 61 * 60_000);
+    assert_eq!(planner.idle_ms(1, 61 * 60_000), 31 * 60_000);
+    // An idle rule still respects the grace period for new windows.
+    let mut fresh = Planner::default();
+    fresh.observe(&snapshot(&[9]), 31 * 60_000);
+    assert!(
+        fresh
+            .candidate(&settings, &snapshot(&[9]), &[9], 31 * 60_000)
+            .is_none()
+    );
+}
+
+#[test]
+fn idle_settings_survive_a_round_trip_and_a_rule_without_limits_is_rejected() {
+    let config = Config {
+        auto_appclose: Settings {
+            enabled: true,
+            rules: vec![idle_rule("test.editor", 240)],
+            ..Settings::default()
+        },
+        ..Config::default()
+    };
+    let loaded = Config::from_json(&config.to_json().unwrap()).unwrap();
+    assert_eq!(loaded, config);
+    assert_eq!(loaded.auto_appclose.rules[0].max_windows, None);
+    assert_eq!(loaded.auto_appclose.rules[0].max_idle_minutes, Some(240));
+    // A rule written before idle limits existed still loads and still limits windows.
+    let legacy = serde_json::json!({
+        "auto_appclose": {
+            "enabled": true,
+            "interval_secs": 10,
+            "rules": [{
+                "application": {"bundle_id": "test.editor", "name": "Editor", "path": "/Applications/Editor.app"},
+                "max_windows": 2
+            }]
+        }
+    });
+    let loaded = Config::from_json(&legacy.to_string()).unwrap();
+    assert_eq!(loaded.auto_appclose.rules[0].max_windows, Some(2));
+    assert_eq!(loaded.auto_appclose.rules[0].max_idle_minutes, None);
+    // Limits outside the accepted range are rejected, not clamped.
+    for bad in [0, MAX_IDLE_MINUTES + 1, u16::MAX] {
+        let mut config = config.clone();
+        config.auto_appclose.rules[0].max_idle_minutes = Some(bad);
+        assert!(config.validate().is_err());
+        assert!(Config::from_json(&serde_json::to_string(&config).unwrap()).is_err());
+    }
 }

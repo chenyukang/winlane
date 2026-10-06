@@ -4,11 +4,21 @@ use objc2_foundation::{NSArray, NSURL, ns_string};
 use std::rc::Rc;
 use winlane::{core::config::ApplicationTarget, features::auto_appclose::Rule};
 
+fn optional_limit(field: &NSTextField, message: &str) -> Result<Option<u16>, String> {
+    let text = field.stringValue().to_string();
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    text.parse().map(Some).map_err(|_| message.to_owned())
+}
+
 struct Row {
     view: Retained<NSView>,
     application: RefCell<Option<ApplicationTarget>>,
     choose: Retained<NSButton>,
     limit: Retained<NSTextField>,
+    idle: Retained<NSTextField>,
     remove: Retained<NSButton>,
 }
 
@@ -29,7 +39,7 @@ impl AutoAppClosePage {
         enabled.setFrame(rect(4.0, 533.0, 730.0, 28.0));
         set_action(&enabled, target, sel!(toggleAutoAppClose:));
         host.addSubview(&enabled);
-        host.addSubview(&hint(tr!("超过上限时，关闭最久未使用的窗口。保留当前窗口和刚打开的窗口，遇到保存提示时暂停自动关闭该应用的窗口。", "Close the least recently used windows above each limit. Keep the active and newly opened windows; pause an app when a close needs your attention."), rect(4.0, 480.0, 730.0, 44.0), mtm));
+        host.addSubview(&hint(tr!("超过保留数时关闭最久未使用的窗口；闲置超过设定时间的窗口也会关闭。始终保留当前窗口，遇到保存提示时暂停该应用。", "Close the least recently used windows above each limit, and windows idle longer than their time. The active window is kept; a save prompt pauses that app."), rect(4.0, 480.0, 730.0, 44.0), mtm));
         host.addSubview(&label(
             tr!("检查间隔", "Check interval"),
             13.0,
@@ -58,13 +68,19 @@ impl AutoAppClosePage {
         host.addSubview(&label(
             tr!("应用", "Application"),
             13.0,
-            rect(10.0, 409.0, 410.0, 24.0),
+            rect(10.0, 409.0, 296.0, 24.0),
             mtm,
         ));
         host.addSubview(&label(
             tr!("保留窗口数", "Keep windows"),
             13.0,
-            rect(444.0, 409.0, 156.0, 24.0),
+            rect(308.0, 409.0, 116.0, 24.0),
+            mtm,
+        ));
+        host.addSubview(&label(
+            tr!("闲置（分钟）", "Idle (minutes)"),
+            13.0,
+            rect(432.0, 409.0, 116.0, 24.0),
             mtm,
         ));
         let scroll =
@@ -114,8 +130,11 @@ impl AutoAppClosePage {
         for rule in &config.auto_appclose.rules {
             let row = self.append();
             Self::set_application(&row, rule.application.clone());
-            row.limit
-                .setStringValue(&NSString::from_str(&rule.max_windows.to_string()));
+            row.limit.setStringValue(&NSString::from_str(
+                &rule
+                    .max_windows
+                    .map_or(String::new(), |max| max.to_string()),
+            ));
         }
         self.layout();
     }
@@ -138,13 +157,19 @@ impl AutoAppClosePage {
             if let Some(application) = row.application.borrow().clone() {
                 rules.push(Rule {
                     application,
-                    max_windows: row.limit.stringValue().to_string().trim().parse().map_err(
-                        |_| {
-                            tr!(
-                                "保留窗口数应为 1–100 的整数。",
-                                "Keep between 1 and 100 windows."
-                            )
-                        },
+                    max_windows: optional_limit(
+                        &row.limit,
+                        tr!(
+                            "保留窗口数应为 1–100 的整数，留空表示不限制。",
+                            "Keep between 1 and 100 windows, or leave it empty for no limit."
+                        ),
+                    )?,
+                    max_idle_minutes: optional_limit(
+                        &row.idle,
+                        tr!(
+                            "闲置时间应为 1–10080 分钟的整数，留空表示不按闲置关闭。",
+                            "Idle time must be an integer from 1 to 10080 minutes, or empty to never close for being idle."
+                        ),
                     )?,
                 });
             }
@@ -170,13 +195,13 @@ impl AutoAppClosePage {
             tr!("选择应用…", "Choose App…"),
             &target,
             sel!(chooseAppCloseApp:),
-            rect(4.0, 12.0, 416.0, 30.0),
+            rect(4.0, 12.0, 296.0, 30.0),
             mtm,
         );
         choose.setAlignment(NSTextAlignment::Left);
         view.addSubview(&choose);
         let limit =
-            NSTextField::initWithFrame(NSTextField::alloc(mtm), rect(450.0, 12.0, 116.0, 30.0));
+            NSTextField::initWithFrame(NSTextField::alloc(mtm), rect(308.0, 12.0, 116.0, 30.0));
         limit.setFont(Some(&NSFont::systemFontOfSize(14.0)));
         limit.setStringValue(ns_string!("3"));
         limit.setAlignment(NSTextAlignment::Center);
@@ -184,6 +209,22 @@ impl AutoAppClosePage {
         limit.cell().unwrap().setSendsActionOnEndEditing(true);
         set_action(&limit, &target, sel!(settingsChanged:));
         view.addSubview(&limit);
+        let idle =
+            NSTextField::initWithFrame(NSTextField::alloc(mtm), rect(432.0, 12.0, 116.0, 30.0));
+        idle.setFont(Some(&NSFont::systemFontOfSize(14.0)));
+        idle.setAlignment(NSTextAlignment::Center);
+        idle.setPlaceholderString(Some(&NSString::from_str(tr!("不做限制", "No limit"))));
+        idle.setAccessibilityLabel(Some(&NSString::from_str(tr!(
+            "闲置多少分钟后关闭（留空则不限）",
+            "Close after this many idle minutes, empty for no limit"
+        ))));
+        idle.setToolTip(Some(&NSString::from_str(tr!(
+            "窗口超过该时间未被使用就关闭；留空表示不按闲置关闭。",
+            "Close a window this long after it was last used. Leave empty to never close for being idle."
+        ))));
+        idle.cell().unwrap().setSendsActionOnEndEditing(true);
+        set_action(&idle, &target, sel!(settingsChanged:));
+        view.addSubview(&idle);
         let remove = button(
             tr!("移除", "Remove"),
             &target,
@@ -197,6 +238,7 @@ impl AutoAppClosePage {
             application: RefCell::default(),
             choose,
             limit,
+            idle,
             remove,
         });
         self.document.addSubview(&row.view);

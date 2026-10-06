@@ -14,7 +14,8 @@ pub fn verify(target: &AnyObject, mtm: MainThreadMarker) {
     let mut config = Config::default();
     config.auto_appclose.rules.push(Rule {
         application: application(),
-        max_windows: 3,
+        max_windows: Some(3),
+        max_idle_minutes: None,
     });
     settings.fill(&config);
     assert_eq!(settings.candidate().unwrap(), config);
@@ -48,6 +49,31 @@ pub fn verify(target: &AnyObject, mtm: MainThreadMarker) {
         assert!(settings.candidate().is_err());
     }
     row.limit.setStringValue(ns_string!("3"));
+    assert_eq!(row.idle.action(), Some(sel!(settingsChanged:)));
+    assert!(row.idle.cell().unwrap().sendsActionOnEndEditing());
+    for invalid in ["0", "10081", "-1", "1.5", "bad"] {
+        row.idle.setStringValue(&NSString::from_str(invalid));
+        assert!(settings.candidate().is_err());
+    }
+    row.idle.setStringValue(ns_string!("240"));
+    config.auto_appclose.rules[0].max_idle_minutes = Some(240);
+    assert_eq!(settings.candidate().unwrap(), config);
+    // An idle limit works on its own: leaving the window count empty is the
+    // "close Finder windows idle for 4 hours" rule.
+    row.limit.setStringValue(&NSString::from_str(""));
+    config.auto_appclose.rules[0].max_windows = None;
+    assert_eq!(settings.candidate().unwrap(), config);
+    // With neither limit the rule would do nothing.
+    row.idle.setStringValue(&NSString::from_str(""));
+    assert!(
+        settings.candidate().is_err(),
+        "a rule needs at least one limit"
+    );
+    row.idle.setStringValue(ns_string!("240"));
+    config.auto_appclose.rules[0].max_idle_minutes = Some(240);
+    assert_eq!(settings.candidate().unwrap(), config);
+    row.limit.setStringValue(ns_string!("3"));
+    config.auto_appclose.rules[0].max_windows = Some(3);
     page.enabled.setState(NSControlStateValueOff);
     config.auto_appclose.enabled = false;
     assert_eq!(
@@ -89,7 +115,7 @@ pub fn verify_autosave(settings: &SettingsWindow, saved: impl Fn() -> Config) {
     assert_eq!(saved(), valid_interval);
     page.interval.setStringValue(ns_string!("30"));
     send(&row.limit);
-    assert_eq!(saved().auto_appclose.rules[0].max_windows, 3);
+    assert_eq!(saved().auto_appclose.rules[0].max_windows, Some(3));
     page.enabled.setState(NSControlStateValueOn);
     send(&page.enabled);
     assert!(saved().auto_appclose.enabled);
@@ -109,11 +135,32 @@ pub fn verify_autosave(settings: &SettingsWindow, saved: impl Fn() -> Config) {
     page.interval.setStringValue(ns_string!("30"));
     row.limit.setStringValue(ns_string!("5"));
     send(&row.limit);
-    assert_eq!(saved().auto_appclose.rules[0].max_windows, 5);
+    assert_eq!(saved().auto_appclose.rules[0].max_windows, Some(5));
+    // An idle-only rule saves and restores without a window limit.
+    row.limit.setStringValue(ns_string!(""));
+    row.idle.setStringValue(ns_string!("120"));
+    send(&row.idle);
+    assert_eq!(saved().auto_appclose.rules[0].max_windows, None);
+    assert_eq!(saved().auto_appclose.rules[0].max_idle_minutes, Some(120));
+    let idle_only = saved();
+    row.idle.setStringValue(ns_string!("10081"));
+    send(&row.idle);
+    assert_eq!(saved(), idle_only, "an out-of-range idle time is not saved");
+    row.idle.setStringValue(ns_string!("120"));
+    send(&row.idle);
+    page.enabled.setState(NSControlStateValueOn);
+    send(&page.enabled);
+    assert!(saved().auto_appclose.enabled);
+    assert_eq!(saved().auto_appclose.rules[0].max_idle_minutes, Some(120));
     page.enabled.setState(NSControlStateValueOff);
     send(&page.enabled);
     assert!(!saved().auto_appclose.enabled);
-    assert_eq!(saved().auto_appclose.rules[0].max_windows, 5);
+    // Both limits can be set on one row.
+    row.limit.setStringValue(ns_string!("5"));
+    send(&row.limit);
+    assert_eq!(saved().auto_appclose.rules[0].max_windows, Some(5));
+    assert_eq!(saved().auto_appclose.rules[0].max_idle_minutes, Some(120));
+    assert_eq!(saved().auto_appclose.rules[0].max_windows, Some(5));
     send(&row.remove);
     assert!(saved().auto_appclose.rules.is_empty());
     page.interval.setStringValue(ns_string!("10"));

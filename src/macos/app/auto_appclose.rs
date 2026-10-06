@@ -35,6 +35,15 @@ impl State {
             token.store(true, Ordering::Release);
         }
     }
+    /// Record a window the user just used, so an idle rule counts from here.
+    pub(super) fn mark_active(&mut self, id: u64) {
+        let now = Instant::now();
+        let now_ms = now
+            .duration_since(*self.started.get_or_insert(now))
+            .as_millis() as u64;
+        self.planner.mark_active(id, now_ms);
+    }
+
     pub(super) fn configure(&mut self, settings: &Settings) {
         if &self.settings == settings {
             return;

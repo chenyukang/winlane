@@ -56,6 +56,7 @@ fn snapshot(rule: &Rule, inventory: &Inventory) -> Result<Snapshot, String> {
         .map(|app| app.processIdentifier());
     let mut windows = Vec::new();
     let mut seen = HashSet::new();
+    let mut focused_window = None;
     for app in apps {
         let pid = app.processIdentifier();
         let application = Element::application(pid).ok_or("app unavailable")?;
@@ -74,6 +75,7 @@ fn snapshot(rule: &Rule, inventory: &Inventory) -> Result<Snapshot, String> {
         }) {
             return Err("modal window active".into());
         }
+        focused_window = focused.as_ref().map(|window| window.id(pid));
         // Unlike display-only discovery, an incomplete AX read must never trigger automatic window closing.
         let published = application
             .windows(false)
@@ -112,6 +114,8 @@ fn snapshot(rule: &Rule, inventory: &Inventory) -> Result<Snapshot, String> {
     Ok(Snapshot {
         bundle_id: rule.application.bundle_id.clone(),
         windows,
+        // Only a frontmost app has a window the user is using right now.
+        focused: focused_window,
     })
 }
 
@@ -122,13 +126,19 @@ pub fn close(target: &Target, rule: &Rule, cancelled: &AtomicBool) -> CloseResul
         }
         let inventory = Inventory::try_read().ok_or("window inventory unavailable")?;
         let current = snapshot(rule, &inventory)?;
-        if current.windows.len() <= usize::from(rule.max_windows)
-            || !current.windows.iter().any(|w| {
-                w.id == target.window.id
-                    && w.pid == target.window.pid
-                    && w.server_id == target.window.server_id
-                    && !w.protected
+        // A window-limit rule re-checks the count: the app may have closed
+        // enough windows since the scan. An idle rule re-checks that the window
+        // is still there, still unmodified, and still not the one in use.
+        if rule
+            .max_windows
+            .is_some_and(|max| current.windows.len() <= usize::from(max))
+            || current.windows.iter().all(|w| {
+                w.id != target.window.id
+                    || w.pid != target.window.pid
+                    || w.server_id != target.window.server_id
+                    || w.protected
             })
+            || current.focused == Some(target.window.id)
         {
             return Ok(false);
         }
@@ -190,11 +200,13 @@ pub fn close(target: &Target, rule: &Rule, cancelled: &AtomicBool) -> CloseResul
 
 pub fn details(target: &Target) -> String {
     format!(
-        "bundle={} app_pid={} window={} server_id={:?} limit={}",
+        "bundle={} app_pid={} window={} server_id={:?} reason={:?} keep={:?} idle_minutes={:?}",
         target.bundle_id,
         target.window.pid,
         target.window.id,
         target.window.server_id,
-        target.max_windows
+        target.reason,
+        target.max_windows,
+        target.max_idle_minutes
     )
 }
