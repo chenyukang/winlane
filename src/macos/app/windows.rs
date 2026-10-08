@@ -40,61 +40,7 @@ impl Delegate {
     }
 
     pub(super) fn activate_selected(&self) {
-        if self.searching_emoji() {
-            self.use_emoji();
-            return;
-        }
-        if self.searching_files() {
-            self.open_selected_file(false);
-            return;
-        }
-        if self.searching_keep_awake() {
-            self.apply_keep_awake();
-            return;
-        }
-        if self.searching_bluetooth() {
-            self.toggle_selected_bluetooth();
-            return;
-        }
-        if let Some(scope) = self
-            .selected_command()
-            .and_then(super::commands::command_scope)
-        {
-            self.enter_scoped_search(scope);
-            return;
-        }
-        if self.searching_open_url() {
-            self.submit_open_url(false);
-            return;
-        }
-        if self.searching_meeting() {
-            self.submit_meeting();
-            return;
-        }
-        if self.searching_git_branch() {
-            self.submit_git_branch();
-            return;
-        }
-        if self.searching_projects() {
-            self.open_selected_project();
-            return;
-        }
-        if self.editing_quicklink() {
-            self.submit_quicklink_input();
-            return;
-        }
-        if self.searching_quicklinks() && self.match_count() == 0 {
-            return;
-        }
-        if self.searching_clipboard() {
-            self.use_clipboard(true);
-            return;
-        }
-        if self.searching_snippets() && self.match_count() == 0 {
-            return;
-        }
-        if let Some(link) = self.selected_quicklink() {
-            self.use_quicklink(&link);
+        if self.use_mode_selection() {
             return;
         }
         if let Some(tap) = self.ivars().shortcut_tap.borrow().as_ref() {
@@ -120,6 +66,76 @@ impl Delegate {
             ));
             return;
         };
+        self.activate_window(&window);
+    }
+
+    /// The modes where Enter belongs to a page of their own — emoji, files,
+    /// keep-awake, Bluetooth, a scoped search, the clipboard — instead of the
+    /// window list. Returns whether the key was handled here.
+    fn use_mode_selection(&self) -> bool {
+        if self.searching_emoji() {
+            self.use_emoji();
+            return true;
+        }
+        if self.searching_files() {
+            self.open_selected_file(false);
+            return true;
+        }
+        if self.searching_keep_awake() {
+            self.apply_keep_awake();
+            return true;
+        }
+        if self.searching_bluetooth() {
+            self.toggle_selected_bluetooth();
+            return true;
+        }
+        if let Some(scope) = self
+            .selected_command()
+            .and_then(super::commands::command_scope)
+        {
+            self.enter_scoped_search(scope);
+            return true;
+        }
+        if self.searching_open_url() {
+            self.submit_open_url(false);
+            return true;
+        }
+        if self.searching_meeting() {
+            self.submit_meeting();
+            return true;
+        }
+        if self.searching_git_branch() {
+            self.submit_git_branch();
+            return true;
+        }
+        if self.searching_projects() {
+            self.open_selected_project();
+            return true;
+        }
+        if self.editing_quicklink() {
+            self.submit_quicklink_input();
+            return true;
+        }
+        if self.searching_quicklinks() && self.match_count() == 0 {
+            return true;
+        }
+        if self.searching_clipboard() {
+            self.use_clipboard(true);
+            return true;
+        }
+        if self.searching_snippets() && self.match_count() == 0 {
+            return true;
+        }
+        if let Some(link) = self.selected_quicklink() {
+            self.use_quicklink(&link);
+            return true;
+        }
+        false
+    }
+
+    /// Switch to a window. The row can outlive the process it was built from,
+    /// so the app is found again, and started when nothing is running.
+    fn activate_window(&self, window: &WindowInfo) {
         if self.ivars().demo.get() {
             self.selection_failed(&trf!(
                 "演示选择：{} · {}（未切换真实窗口）",
@@ -134,9 +150,9 @@ impl Delegate {
         // app, and picking its window means "show me that app", so find it
         // again, and start it when nothing is running.
         let target_app = NSRunningApplication::runningApplicationWithProcessIdentifier(window.pid)
-            .or_else(|| self.running_application_for_window(&window));
+            .or_else(|| self.running_application_for_window(window));
         let Some(target_app) = target_app else {
-            if let Some(application) = self.application_for_window(&window) {
+            if let Some(application) = self.application_for_window(window) {
                 self.launch_application(&application, LaunchOrigin::Search);
             } else {
                 self.selection_failed(tr!(
@@ -157,7 +173,7 @@ impl Delegate {
                 window.id,
                 self.ivars().wake.get().unwrap().handle(),
             ) {
-                if self.discard_missing_window(&window) {
+                if self.discard_missing_window(window) {
                     return;
                 }
                 // Apps without a bundle URL cannot go through LaunchServices.
@@ -171,7 +187,7 @@ impl Delegate {
             }
         } else {
             if let Err(error) = accessibility::raise_window(window.pid, window.id) {
-                if self.discard_missing_window(&window) {
+                if self.discard_missing_window(window) {
                     return;
                 }
                 // A single-window app can still be switched to when AX cannot
