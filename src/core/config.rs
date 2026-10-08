@@ -435,6 +435,35 @@ impl Config {
         self.time_indicator.validate()?;
         self.input_rules.validate()?;
         self.scrolling.validate()?;
+        self.validate_alias_rules()?;
+        if self.background_opacity > 100 {
+            return Err(tr!(
+                "背景不透明度必须在 0–100% 之间。",
+                "Background opacity must be between 0 and 100%."
+            )
+            .into());
+        }
+        if self.switch_delay_ms > 1000 {
+            return Err(tr!(
+                "显示延迟应在 0–1000 毫秒之间。",
+                "Display delay must be between 0 and 1000 ms."
+            )
+            .into());
+        }
+        if self.additional_search_shortcuts.len() >= MAX_SEARCH_SHORTCUTS {
+            return Err(tr!(
+                "最多设置 8 个搜索快捷键。",
+                "You can configure up to 8 search shortcuts."
+            )
+            .into());
+        }
+        self.validate_shortcut_conflicts()?;
+        self.validate_excluded_apps()
+    }
+
+    /// Every alias rule binds one or two lowercase letters to exactly one app
+    /// (with optional title keywords) or one command.
+    fn validate_alias_rules(&self) -> Result<(), String> {
         if self.alias_rules.len() > 64 {
             return Err(tr!(
                 "最多设置 64 条 alias 规则。",
@@ -508,27 +537,12 @@ impl Config {
                 }
             }
         }
-        if self.background_opacity > 100 {
-            return Err(tr!(
-                "背景不透明度必须在 0–100% 之间。",
-                "Background opacity must be between 0 and 100%."
-            )
-            .into());
-        }
-        if self.switch_delay_ms > 1000 {
-            return Err(tr!(
-                "显示延迟应在 0–1000 毫秒之间。",
-                "Display delay must be between 0 and 1000 ms."
-            )
-            .into());
-        }
-        if self.additional_search_shortcuts.len() >= MAX_SEARCH_SHORTCUTS {
-            return Err(tr!(
-                "最多设置 8 个搜索快捷键。",
-                "You can configure up to 8 search shortcuts."
-            )
-            .into());
-        }
+        Ok(())
+    }
+
+    /// No two shortcuts may resolve to the same key combination, across the
+    /// switch shortcut, search modes, app shortcuts, quicklinks, and commands.
+    fn validate_shortcut_conflicts(&self) -> Result<(), String> {
         let searches = self.search_bindings()?;
         let switch = self.switch_shortcut.binding()?;
         if self.switch_shortcut.key == "Space" {
@@ -626,6 +640,11 @@ impl Config {
             )?;
             commands.push(item.command);
         }
+        Ok(())
+    }
+
+    /// Excluded applications are matched by name, so the list stays bounded.
+    fn validate_excluded_apps(&self) -> Result<(), String> {
         if self.excluded_apps.len() > 100
             || self
                 .excluded_apps
