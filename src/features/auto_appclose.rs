@@ -20,6 +20,10 @@ impl Default for Settings {
     }
 }
 
+/// The idle time offered when a rule is suggested, for example for an app that
+/// is keeping the Mac awake.
+pub const SUGGESTED_IDLE_MINUTES: u16 = 60;
+
 /// The longest idle time a rule accepts, one week. Idle closing works in
 /// minutes because hours and days are the usual choices.
 pub const MAX_IDLE_MINUTES: u16 = 10_080;

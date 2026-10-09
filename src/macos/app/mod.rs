@@ -28,6 +28,7 @@ mod search;
 mod session;
 mod settings_focus;
 mod shortcuts;
+mod sleep_blockers;
 mod snippets;
 mod time_indicator;
 mod views;
@@ -213,6 +214,7 @@ type OpenUrlDeepReceiver = Receiver<OpenUrlDeepResult>;
 struct AppState {
     emoji_matches: RefCell<Vec<winlane::features::emoji::Emoji>>,
     auto_appclose: RefCell<auto_appclose::State>,
+    sleep_blockers: RefCell<sleep_blockers::Blockers>,
     files: RefCell<files::State>,
     keep_awake: RefCell<crate::macos::platform::keep_awake::KeepAwake>,
     keep_awake_matches: RefCell<Vec<winlane::features::keep_awake::Choice>>,

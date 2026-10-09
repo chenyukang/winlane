@@ -1,4 +1,14 @@
-use winlane::features::sleep_blockers::{Blocker, parse};
+use winlane::core::config::ApplicationTarget;
+use winlane::features::auto_appclose::Rule;
+use winlane::features::sleep_blockers::{Blocker, idle_rules_for, parse};
+
+fn target(bundle_id: &str, name: &str) -> ApplicationTarget {
+    ApplicationTarget {
+        bundle_id: bundle_id.into(),
+        name: name.into(),
+        path: format!("/Applications/{name}.app"),
+    }
+}
 
 /// Trimmed from a real `pmset -g assertions` run while WeChat was holding a
 /// video wake lock and the display was keeping the system awake.
@@ -106,4 +116,23 @@ fn unreadable_or_unrelated_input_yields_nothing_instead_of_guesses() {
     ] {
         assert!(parse(input).is_empty(), "{input:?} must not parse");
     }
+}
+
+#[test]
+fn a_blocking_app_is_offered_an_idle_rule_once_and_only_if_it_has_none() {
+    let wechat = target("com.tencent.xinWeChat", "WeChat");
+    let editor = target("com.example.Editor", "Editor");
+    let existing = vec![Rule {
+        application: editor.clone(),
+        max_windows: Some(3),
+        max_idle_minutes: None,
+    }];
+    let rules = idle_rules_for(&[wechat.clone(), editor], &existing, 60);
+    assert_eq!(rules.len(), 1, "only the app without a rule is offered one");
+    assert_eq!(rules[0].application, wechat);
+    assert_eq!(rules[0].max_windows, None, "the offer does not cap windows");
+    assert_eq!(rules[0].max_idle_minutes, Some(60));
+    // Offering again after the rule exists adds nothing.
+    let existing = vec![rules[0].clone()];
+    assert!(idle_rules_for(&[wechat], &existing, 60).is_empty());
 }

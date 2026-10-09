@@ -50,6 +50,27 @@ impl Blocker {
     }
 }
 
+/// The idle rules that would close these apps' windows after `minutes` of
+/// idle time, skipping apps that already have an Auto AppClose rule.
+pub fn idle_rules_for(
+    apps: &[crate::core::config::ApplicationTarget],
+    existing: &[crate::features::auto_appclose::Rule],
+    minutes: u16,
+) -> Vec<crate::features::auto_appclose::Rule> {
+    apps.iter()
+        .filter(|app| {
+            !existing
+                .iter()
+                .any(|rule| rule.application.bundle_id == app.bundle_id)
+        })
+        .map(|app| crate::features::auto_appclose::Rule {
+            application: app.clone(),
+            max_windows: None,
+            max_idle_minutes: Some(minutes),
+        })
+        .collect()
+}
+
 /// Every assertion in the output, in the order the power manager printed them.
 pub fn parse(assertions: &str) -> Vec<Blocker> {
     let mut blockers = Vec::new();

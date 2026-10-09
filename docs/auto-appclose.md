@@ -10,6 +10,8 @@ Auto AppClose closes windows you no longer need for selected apps. A rule can ca
 
 A new rule starts with both limits empty, and either one may be filled in later. A rule with both empty is kept as a draft but never checks or closes anything, so an app you added by mistake is harmless. The switch controls all rules. Turning it off cancels pending actions and preserves your app list and limits. A close request already delivered to an app can still finish. Remove a row to stop managing that app.
 
+Winlane can also suggest a rule. When an application is holding the Mac awake, Winlane offers to add an **Idle (minutes)** limit of 60 for it and turns Auto AppClose on; see [Keep Awake](keep-awake.md#which-apps-keep-the-mac-awake).
+
 ## Which windows close
 
 Winlane checks configured apps in the background at your chosen interval, every ten seconds by default. Changes take effect without restarting Winlane. It uses the same recent-window history as the switcher, independent of your display sorting preference. It closes one window at a time, starting with the least recently used eligible window, and waits for that window to disappear before closing another in the same app.

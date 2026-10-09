@@ -205,6 +205,12 @@ impl Delegate {
                 )
                 .into()
             };
+            let blockers = app.sleep_blockers.borrow();
+            let status = match blockers.hint() {
+                Some(hint) => format!("{status} {hint}"),
+                None => status,
+            };
+            drop(blockers);
             settings.update_appclose_status(&status);
         }
         drop(state);

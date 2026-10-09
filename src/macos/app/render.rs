@@ -868,11 +868,17 @@ impl Delegate {
                 }
             })
         } else if in_keep_awake {
-            state
+            let status = state
                 .keep_awake_error
                 .borrow()
                 .clone()
-                .unwrap_or_else(|| state.keep_awake.borrow().status())
+                .unwrap_or_else(|| state.keep_awake.borrow().status());
+            // Name other apps that keep the Mac awake, so "why does it not
+            // sleep" is answered where the question is asked.
+            match state.sleep_blockers.borrow().hint() {
+                Some(hint) => format!("{status} · {hint}"),
+                None => status,
+            }
         } else if in_bluetooth {
             bluetooth_error.clone().unwrap_or_else(|| {
                 if state.bluetooth_permission.borrow().is_some() {
