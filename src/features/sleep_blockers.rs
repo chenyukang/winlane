@@ -110,7 +110,3 @@ fn parse_duration(token: &str) -> Option<u64> {
     }
     Some(hours * 3600 + minutes * 60 + seconds)
 }
-
-#[cfg(test)]
-#[path = "../../tests/sleep_blockers.rs"]
-mod tests;

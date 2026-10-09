@@ -21,6 +21,7 @@ pub(crate) mod quicklinks;
 pub(crate) mod recency_trace;
 pub(crate) mod scrolling;
 pub(crate) mod shortcut_tap;
+pub(crate) mod sleep_blockers;
 pub(crate) mod system_commands;
 pub(crate) mod template_context;
 pub(crate) mod updater;
