@@ -1,7 +1,30 @@
 use super::*;
 use winlane::features::input_indicator::{DisplayTarget, Position, Size};
 
+/// Fake display IDs that no display on this machine uses.
+///
+/// The main display is decided from the real screen, so a fixture that borrowed
+/// a real ID changed meaning as soon as the display setup changed: on a Mac
+/// whose screens are 1 and 2, `MainDisplay` matched the fixture's second screen
+/// instead of the display the code under test meant.
+fn fake_display_ids(mtm: MainThreadMarker) -> (u32, u32) {
+    let taken: std::collections::HashSet<u32> = crate::macos::ui::input_indicator::screens(mtm)
+        .iter()
+        .map(|screen| screen.id)
+        .collect();
+    let mut main = 900_000;
+    while taken.contains(&main) {
+        main += 1;
+    }
+    let mut secondary = main + 1;
+    while taken.contains(&secondary) {
+        secondary += 1;
+    }
+    (main, secondary)
+}
+
 pub(crate) fn verify(mtm: MainThreadMarker) {
+    let (main_id, secondary_id) = fake_display_ids(mtm);
     let source_before =
         crate::macos::platform::input_source::Source::current(mtm).and_then(|s| s.id());
     let frontmost_before = NSWorkspace::sharedWorkspace()
@@ -10,7 +33,7 @@ pub(crate) fn verify(mtm: MainThreadMarker) {
     let mut indicator = Indicator::default();
     let displays = [
         Screen {
-            id: 1,
+            id: main_id,
             frame: Rect {
                 x: 0.0,
                 y: 0.0,
@@ -25,7 +48,7 @@ pub(crate) fn verify(mtm: MainThreadMarker) {
             },
         },
         Screen {
-            id: 2,
+            id: secondary_id,
             frame: Rect {
                 x: -1920.0,
                 y: -200.0,
@@ -153,20 +176,20 @@ pub(crate) fn verify(mtm: MainThreadMarker) {
     settings.display_target = DisplayTarget::MainDisplay;
     indicator.configure(&settings, Some(&english), &displays, mtm);
     assert_eq!(indicator.surfaces.len(), 1);
-    assert_eq!(indicator.surfaces[0].id, 1);
+    assert_eq!(indicator.surfaces[0].id, main_id);
     settings.display_target = DisplayTarget::AllDisplays;
     indicator.configure(&settings, Some(&english), &displays[1..], mtm);
     assert_eq!(indicator.surfaces.len(), 1);
-    assert_eq!(indicator.surfaces[0].id, 2);
+    assert_eq!(indicator.surfaces[0].id, secondary_id);
     assert!(!panel.isVisible());
     let mirrored = [
         Screen {
-            id: 1,
+            id: main_id,
             frame: displays[0].frame,
             safe_area: displays[0].safe_area,
         },
         Screen {
-            id: 2,
+            id: secondary_id,
             frame: displays[0].frame,
             safe_area: displays[0].safe_area,
         },
