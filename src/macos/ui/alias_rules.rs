@@ -257,7 +257,7 @@ impl AliasRulesEditor {
             mtm,
         ));
         view.addSubview(&hint(
-            tr!("1–2 个小写字母", "1–2 lowercase letters"),
+            tr!("1–3 个小写字母", "1–3 lowercase letters"),
             rect(122.0, 402.0, 324.0, 24.0),
             mtm,
         ));

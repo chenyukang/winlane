@@ -55,7 +55,7 @@ impl Aliases {
         let mut used = BTreeSet::new();
         for (app, alias) in &aliases.apps {
             if app.is_empty()
-                || !(1..=2).contains(&alias.len())
+                || !(1..=3).contains(&alias.len())
                 || !alias.bytes().all(|ch| ch.is_ascii_lowercase())
                 || !used.insert(alias)
             {
@@ -69,7 +69,7 @@ impl Aliases {
         let mut window_aliases = BTreeSet::new();
         for window in aliases.windows.values() {
             if !aliases.apps.contains_key(&window.app)
-                || !(1..=2).contains(&window.alias.len())
+                || !(1..=3).contains(&window.alias.len())
                 || !window.alias.bytes().all(|ch| ch.is_ascii_lowercase())
                 || !window_aliases.insert(&window.alias)
                 || aliases

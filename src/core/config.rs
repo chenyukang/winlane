@@ -475,12 +475,12 @@ impl Config {
         let mut targets = std::collections::HashSet::new();
         let mut commands = std::collections::HashSet::new();
         for rule in &self.alias_rules {
-            if !(1..=2).contains(&rule.alias.len())
+            if !(1..=3).contains(&rule.alias.len())
                 || !rule.alias.bytes().all(|ch| ch.is_ascii_lowercase())
             {
                 return Err(tr!(
-                    "Alias 必须是 1–2 个小写英文字母。",
-                    "An alias must contain 1–2 lowercase English letters."
+                    "Alias 必须是 1–3 个小写英文字母。",
+                    "An alias must contain 1–3 lowercase English letters."
                 )
                 .into());
             }

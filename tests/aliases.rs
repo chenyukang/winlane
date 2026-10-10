@@ -105,6 +105,8 @@ fn duplicate_app_names_and_many_collisions_never_reassign_existing_aliases() {
         .map(|app| aliases.get(&app.id).unwrap())
         .collect();
     assert_eq!(assigned.len(), apps.len());
+    // Automatically assigned aliases stay within two letters even though a
+    // configured rule may use three.
     assert!(
         assigned.iter().all(|alias| (1..=2).contains(&alias.len())
             && alias.bytes().all(|ch| ch.is_ascii_lowercase()))
@@ -116,7 +118,7 @@ fn duplicate_app_names_and_many_collisions_never_reassign_existing_aliases() {
 fn malformed_duplicate_and_overlong_saved_aliases_are_rejected() {
     for json in [
         "broken",
-        r#"{"app":"abc"}"#,
+        r#"{"app":"abcd"}"#,
         r#"{"app":"A"}"#,
         r#"{"app":""}"#,
         r#"{"":"a"}"#,

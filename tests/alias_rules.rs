@@ -164,7 +164,8 @@ fn more_specific_rules_win_and_multiple_matches_remain_unique() {
 #[test]
 fn rules_validate_aliases_targets_duplicates_and_legacy_settings() {
     assert!(Config::from_json("{}").unwrap().alias_rules.is_empty());
-    for alias in ["", "abc", "A", "1", "中"] {
+    // Application aliases may be up to three letters; four are too many.
+    for alias in ["", "abcd", "A", "1", "中"] {
         assert!(
             Config {
                 alias_rules: vec![rule(alias, "code", "")],
@@ -172,6 +173,17 @@ fn rules_validate_aliases_targets_duplicates_and_legacy_settings() {
             }
             .validate()
             .is_err()
+        );
+    }
+    for alias in ["a", "st", "abc"] {
+        assert!(
+            Config {
+                alias_rules: vec![rule(alias, "code", "")],
+                ..Config::default()
+            }
+            .validate()
+            .is_ok(),
+            "{alias} must be a valid alias"
         );
     }
     for rules in [
