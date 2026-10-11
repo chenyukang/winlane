@@ -1,3 +1,4 @@
+use crate::macos::platform::media_keys;
 use core_foundation::base::TCFType;
 use core_foundation::bundle::CFBundle;
 use core_foundation::string::{CFString, CFStringRef};
@@ -40,6 +41,10 @@ enum Operation {
         send: DockNotification,
     },
     Copy(String),
+    Volume {
+        key: i32,
+        post: media_keys::Post,
+    },
 }
 
 pub struct PreparedCommand {
@@ -71,6 +76,9 @@ impl PreparedCommand {
                 )
                 .into());
             }
+            CommandId::VolumeUp => volume(media_keys::SOUND_UP),
+            CommandId::VolumeDown => volume(media_keys::SOUND_DOWN),
+            CommandId::VolumeMute => volume(media_keys::MUTE),
             CommandId::ShowMenu => {
                 let display = display.ok_or_else(|| {
                     tr!(
@@ -217,6 +225,7 @@ impl PreparedCommand {
                     NSPasteboardTypeString
                 });
             }
+            Operation::Volume { key, post } => post(key),
         }
         Ok(())
     }
@@ -228,6 +237,13 @@ impl Drop for PowerConnection {
     fn drop(&mut self) {
         // SAFETY: This is the owned connection returned by IOPMFindPowerManagement.
         unsafe { IOServiceClose(self.0) };
+    }
+}
+
+fn volume(key: i32) -> Operation {
+    Operation::Volume {
+        key,
+        post: media_keys::post,
     }
 }
 

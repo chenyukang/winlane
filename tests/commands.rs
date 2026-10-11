@@ -188,6 +188,56 @@ fn registered_commands_have_unique_names_and_ids() {
 }
 
 #[test]
+fn volume_commands_match_their_keywords() {
+    for (command, queries) in [
+        (
+            CommandId::VolumeUp,
+            [
+                "volume-up",
+                "VOLUME UP",
+                "volume up",
+                "louder",
+                "调高音量",
+                "提高音量",
+            ],
+        ),
+        (
+            CommandId::VolumeDown,
+            [
+                "volume-down",
+                "volume down",
+                "quieter",
+                "降低音量",
+                "调低音量",
+                "音量小",
+            ],
+        ),
+        (
+            CommandId::VolumeMute,
+            [
+                "volume-mute",
+                "mute",
+                "unmute",
+                "silence",
+                "静音",
+                "取消静音",
+            ],
+        ),
+    ] {
+        for query in queries {
+            assert_eq!(matching_commands(query), [command], "{query}");
+        }
+    }
+    for (command, name) in [
+        (CommandId::VolumeUp, "\"volume-up\""),
+        (CommandId::VolumeDown, "\"volume-down\""),
+        (CommandId::VolumeMute, "\"volume-mute\""),
+    ] {
+        assert_eq!(serde_json::to_string(&command).unwrap(), name);
+    }
+}
+
+#[test]
 fn snippet_command_has_an_explicit_search_entry() {
     for query in [
         "snippet",

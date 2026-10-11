@@ -26,6 +26,9 @@ You can also bind a memorable **alias** to a command in **Settings → Aliases**
 | `mission-control` | `mission control`, `mission`, `调度中心`, `窗口总览` | Open Mission Control to choose a window or desktop. |
 | `date` | `date`, `time`, `clock`, `日期`, `时间` | Show the current date and time and copy it to the clipboard. |
 | `meeting` | `meeting`, `calendar`, `zoom`, `会议`, `日程` | List today’s upcoming calendar meetings and open a meeting link. [Guide](meeting.md). |
+| `volume-up` | `volume up`, `louder`, `提高音量`, `调高音量` | Turn the system volume up by one step. |
+| `volume-down` | `volume down`, `quieter`, `降低音量`, `调低音量` | Turn the system volume down by one step. |
+| `volume-mute` | `mute`, `unmute`, `silence`, `静音` | Toggle system mute. |
 
 `show-menu` reveals the macOS menu bar on the display where you selected the command. It sends a mouse-move event to that display's top edge after dismissing the picker. It leaves the pointer there so the bar remains visible until you move away. It does not open a menu, change system preferences, or restart system processes. Accessibility access is required, and macOS controls the reveal animation.
 
@@ -50,6 +53,8 @@ The screenshot command runs `/usr/sbin/screencapture -i -s -c -d` without a shel
 `toggle-appearance` reads the current system appearance when you execute it, then switches light to dark or dark to light. Both `dark mode` and `light mode` find the same toggle command. Winlane's own appearance preference is preserved: choose **Settings → Appearance → System** if you want Winlane to follow the system change.
 
 The appearance toggle resolves SkyLight's native [system appearance functions](https://saagarjha.com/blog/2018/12/01/scheduling-dark-mode/) at runtime. It does not launch a helper or send Apple Events to System Events. If either function is unavailable, the command reports an error without changing the appearance. These are undocumented interfaces and may need updating for future macOS versions; the setter does not report whether every application has finished updating.
+
+`volume-up`, `volume-down` and `volume-mute` post the same system-defined media keys the keyboard's own volume keys send, so macOS performs the change and shows its usual volume HUD. Each command is one step and holding its shortcut does not repeat. They affect the current default output device only, never select a device, and the mute command toggles mute without changing the stored volume level. Accessibility access is required to post the events, like other system commands that synthesize input. Because the events are posted instead of coming from a HID device, these commands work even when a third-party keyboard's top row is in function-key mode.
 
 The picker closes before a system command executes. These commands do not change power, password, or keyboard-shortcut preferences. They do not run shell scripts or require a persistent helper. `lock-screen` and `mission-control` resolve undocumented macOS functions at runtime, as [Hammerspoon](https://github.com/Hammerspoon/hammerspoon/tree/master/extensions) does. If an interface is missing, Winlane reports an error instead of attempting the action; future macOS changes may require an update. `sleep` uses Apple's [IOPMSleepSystem](https://developer.apple.com/documentation/iokit/1557121-iopmsleepsystem) and reports a system error if the request is rejected. The lock API does not report whether the screen actually locked.
 

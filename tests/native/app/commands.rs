@@ -98,6 +98,9 @@ pub(super) fn verify_command_search(mtm: MainThreadMarker) {
         CommandId::MissionControl,
         CommandId::Screenshot,
         CommandId::ToggleAppearance,
+        CommandId::VolumeUp,
+        CommandId::VolumeDown,
+        CommandId::VolumeMute,
     ] {
         state.query.replace(command.definition().name.into());
         delegate.filter();

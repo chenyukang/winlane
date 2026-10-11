@@ -25,6 +25,9 @@ pub enum CommandId {
     Meeting,
     #[serde(rename = "branch")]
     GitBranch,
+    VolumeUp,
+    VolumeDown,
+    VolumeMute,
 }
 
 pub struct Command {
@@ -239,6 +242,30 @@ pub const COMMANDS: &[Command] = &[
             "分支",
             "切换分支",
         ],
+    },
+    Command {
+        id: CommandId::VolumeUp,
+        name: "volume-up",
+        title_en: "Turn the volume up",
+        title_zh: "调高音量",
+        symbol: "speaker.plus",
+        keywords: &["volume up", "louder", "提高音量", "调高音量", "音量大"],
+    },
+    Command {
+        id: CommandId::VolumeDown,
+        name: "volume-down",
+        title_en: "Turn the volume down",
+        title_zh: "调低音量",
+        symbol: "speaker.minus",
+        keywords: &["volume down", "quieter", "降低音量", "调低音量", "音量小"],
+    },
+    Command {
+        id: CommandId::VolumeMute,
+        name: "volume-mute",
+        title_en: "Mute or unmute",
+        title_zh: "静音 / 取消静音",
+        symbol: "speaker.slash",
+        keywords: &["mute", "unmute", "silence", "静音", "取消静音"],
     },
 ];
 

@@ -1,5 +1,6 @@
 use super::*;
 
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 static LOCK_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -7,6 +8,11 @@ static MISSION_CONTROL_CALLS: AtomicUsize = AtomicUsize::new(0);
 static DARK_APPEARANCE: AtomicBool = AtomicBool::new(false);
 static APPEARANCE_READS: AtomicUsize = AtomicUsize::new(0);
 static APPEARANCE_WRITES: AtomicUsize = AtomicUsize::new(0);
+static POSTED_MEDIA_KEYS: Mutex<Vec<i32>> = Mutex::new(Vec::new());
+
+fn record_media_key(key: i32) {
+    POSTED_MEDIA_KEYS.lock().unwrap().push(key);
+}
 
 unsafe extern "C" fn read_appearance() -> Bool {
     APPEARANCE_READS.fetch_add(1, Ordering::Relaxed);
@@ -76,6 +82,26 @@ pub fn verify_prepared_commands(mtm: MainThreadMarker) {
     mission_control.execute().unwrap();
     assert_eq!(MISSION_CONTROL_CALLS.load(Ordering::Relaxed), 1);
 
+    // Volume commands post media keys; record the dispatch instead of changing the volume.
+    for (command, expected_key) in [
+        (CommandId::VolumeUp, media_keys::SOUND_UP),
+        (CommandId::VolumeDown, media_keys::SOUND_DOWN),
+        (CommandId::VolumeMute, media_keys::MUTE),
+    ] {
+        let mut prepared = PreparedCommand::prepare(command, None, mtm).unwrap();
+        let Operation::Volume { key, post } = &mut prepared.operation else {
+            panic!("{command:?} must prepare the volume operation");
+        };
+        assert_eq!(*key, expected_key);
+        *post = record_media_key;
+        prepared.execute().unwrap();
+        assert_eq!(
+            POSTED_MEDIA_KEYS.lock().unwrap().pop(),
+            Some(expected_key),
+            "{command:?}"
+        );
+    }
+
     let mut screenshot = PreparedCommand::prepare(CommandId::Screenshot, None, mtm).unwrap();
     let Operation::Screenshot(capture) = &mut screenshot.operation else {
         panic!("screenshot must prepare the native selection utility");
@@ -136,7 +162,7 @@ pub fn verify_prepared_commands(mtm: MainThreadMarker) {
     assert!(is_datetime(text), "unexpected date format: {text}");
     // Do not execute; the copy would write to the real clipboard.
     println!(
-        "System command checks passed: native interfaces resolved, light/dark toggles dispatched to isolated state, error handling verified; no system appearance, screen lock, sleep or desktop changed."
+        "System command checks passed: native interfaces resolved, light/dark toggles dispatched to isolated state, media keys dispatched to an isolated recorder, error handling verified; no system appearance, screen lock, sleep, desktop or volume changed."
     );
 }
 

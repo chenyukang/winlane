@@ -11,6 +11,7 @@ pub(crate) mod installed_apps;
 pub(crate) mod keep_awake;
 pub(crate) mod logging;
 pub(crate) mod main_wake;
+pub(crate) mod media_keys;
 pub(crate) mod meeting;
 pub(crate) mod menu_bar;
 pub(crate) mod open_url;
