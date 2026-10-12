@@ -26,6 +26,7 @@ You can also bind a memorable **alias** to a command in **Settings → Aliases**
 | `mission-control` | `mission control`, `mission`, `调度中心`, `窗口总览` | Open Mission Control to choose a window or desktop. |
 | `date` | `date`, `time`, `clock`, `日期`, `时间` | Show the current date and time and copy it to the clipboard. |
 | `meeting` | `meeting`, `calendar`, `zoom`, `会议`, `日程` | List today’s upcoming calendar meetings and open a meeting link. [Guide](meeting.md). |
+| `block-music` | `block music`, `no music`, `itunes`, `阻止音乐` | Toggle blocking of Music and iTunes launching. |
 | `toggle-music` | `play`, `pause`, `music`, `spotify`, `播放`, `暂停` | Play or pause the current player. |
 | `volume-up` | `volume up`, `louder`, `提高音量`, `调高音量` | Turn the system volume up by one step. |
 | `volume-down` | `volume down`, `quieter`, `降低音量`, `调低音量` | Turn the system volume down by one step. |
@@ -54,6 +55,8 @@ The screenshot command runs `/usr/sbin/screencapture -i -s -c -d` without a shel
 `toggle-appearance` reads the current system appearance when you execute it, then switches light to dark or dark to light. Both `dark mode` and `light mode` find the same toggle command. Winlane's own appearance preference is preserved: choose **Settings → Appearance → System** if you want Winlane to follow the system change.
 
 The appearance toggle resolves SkyLight's native [system appearance functions](https://saagarjha.com/blog/2018/12/01/scheduling-dark-mode/) at runtime. It does not launch a helper or send Apple Events to System Events. If either function is unavailable, the command reports an error without changing the appearance. These are undocumented interfaces and may need updating for future macOS versions; the setter does not report whether every application has finished updating.
+
+`block-music` toggles a Winlane setting and says so in the panel, because nothing else on screen changes. While it is on, Music or iTunes that macOS launches by itself — a reconnected Bluetooth headset, a media key, a web page — is asked to quit again right away, the way noTunes does. The request is a normal quit, never a force kill, and only the app's own process is named, so its helpers are untouched. The setting is off by default and is kept in your saved settings.
 
 `toggle-music` posts the keyboard's play/pause key, so it pauses or resumes whichever player macOS treats as current — Music, Spotify, a browser tab, and so on — exactly as pressing that key does. It never launches a player, so it does nothing when nothing is playing.
 

@@ -29,6 +29,7 @@ pub enum CommandId {
     VolumeDown,
     VolumeMute,
     ToggleMusic,
+    BlockMusic,
 }
 
 pub struct Command {
@@ -259,6 +260,20 @@ pub const COMMANDS: &[Command] = &[
         title_zh: "调低音量",
         symbol: "speaker.minus",
         keywords: &["volume down", "quieter", "降低音量", "调低音量", "音量小"],
+    },
+    Command {
+        id: CommandId::BlockMusic,
+        name: "block-music",
+        title_en: "Keep Music from launching itself",
+        title_zh: "阻止音乐自动启动",
+        symbol: "music.note",
+        keywords: &[
+            "block music",
+            "no music",
+            "itunes",
+            "阻止音乐",
+            "音乐不启动",
+        ],
     },
     Command {
         id: CommandId::ToggleMusic,

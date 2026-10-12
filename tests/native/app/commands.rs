@@ -100,6 +100,7 @@ pub(super) fn verify_command_search(mtm: MainThreadMarker) {
         CommandId::ToggleAppearance,
         CommandId::VolumeUp,
         CommandId::ToggleMusic,
+        CommandId::BlockMusic,
         CommandId::VolumeDown,
         CommandId::VolumeMute,
     ] {

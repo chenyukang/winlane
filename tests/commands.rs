@@ -229,6 +229,7 @@ fn volume_commands_match_their_keywords() {
         }
     }
     for (command, name) in [
+        (CommandId::BlockMusic, "\"block-music\""),
         (CommandId::ToggleMusic, "\"toggle-music\""),
         (CommandId::VolumeUp, "\"volume-up\""),
         (CommandId::VolumeDown, "\"volume-down\""),

@@ -80,6 +80,8 @@ impl PreparedCommand {
             CommandId::VolumeDown => media_key(media_keys::SOUND_DOWN),
             CommandId::VolumeMute => media_key(media_keys::MUTE),
             CommandId::ToggleMusic => media_key(media_keys::PLAY_PAUSE),
+            // A Winlane setting, handled before this point; see the app layer.
+            CommandId::BlockMusic => return Err(unavailable(command)),
             CommandId::ShowMenu => {
                 let display = display.ok_or_else(|| {
                     tr!(

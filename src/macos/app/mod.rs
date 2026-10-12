@@ -15,6 +15,7 @@ mod launch;
 mod layout;
 mod meeting;
 mod menus;
+mod music_block;
 mod open_url;
 mod panel;
 mod preferences;

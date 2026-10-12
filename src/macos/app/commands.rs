@@ -73,6 +73,36 @@ impl Delegate {
     }
 
     pub(super) fn execute_command(&self, command: CommandId) {
+        // A Winlane setting rather than a system action: flip it, save it, and
+        // say what happened, since nothing on screen changes otherwise.
+        if command == CommandId::BlockMusic {
+            let mut config = self.ivars().config.borrow().clone();
+            config.block_music = !config.block_music;
+            let on = config.block_music;
+            let result = self.apply_config(config);
+            self.dismiss();
+            match result {
+                Ok(()) => {
+                    crate::macos::platform::logging::record(
+                        crate::macos::platform::logging::Level::Info,
+                        "music-block",
+                        "toggled",
+                        || format!("enabled={on}"),
+                    );
+                    self.report_switch_error(&trf!(
+                        "阻止音乐自动启动：{}",
+                        "Keep music from launching: {}",
+                        if on {
+                            tr!("已开启", "on")
+                        } else {
+                            tr!("已关闭", "off")
+                        }
+                    ));
+                }
+                Err(error) => self.selection_failed(&error),
+            }
+            return;
+        }
         match crate::macos::platform::system_commands::PreparedCommand::prepare(
             command,
             self.ivars().keyboard_display.get(),
