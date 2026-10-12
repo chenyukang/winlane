@@ -82,15 +82,16 @@ pub fn verify_prepared_commands(mtm: MainThreadMarker) {
     mission_control.execute().unwrap();
     assert_eq!(MISSION_CONTROL_CALLS.load(Ordering::Relaxed), 1);
 
-    // Volume commands post media keys; record the dispatch instead of changing the volume.
+    // Volume and play/pause commands post media keys; record the dispatch instead of changing the machine.
     for (command, expected_key) in [
+        (CommandId::ToggleMusic, media_keys::PLAY_PAUSE),
         (CommandId::VolumeUp, media_keys::SOUND_UP),
         (CommandId::VolumeDown, media_keys::SOUND_DOWN),
         (CommandId::VolumeMute, media_keys::MUTE),
     ] {
         let mut prepared = PreparedCommand::prepare(command, None, mtm).unwrap();
-        let Operation::Volume { key, post } = &mut prepared.operation else {
-            panic!("{command:?} must prepare the volume operation");
+        let Operation::MediaKey { key, post } = &mut prepared.operation else {
+            panic!("{command:?} must prepare the media key operation");
         };
         assert_eq!(*key, expected_key);
         *post = record_media_key;

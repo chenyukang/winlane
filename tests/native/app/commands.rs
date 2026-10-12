@@ -99,6 +99,7 @@ pub(super) fn verify_command_search(mtm: MainThreadMarker) {
         CommandId::Screenshot,
         CommandId::ToggleAppearance,
         CommandId::VolumeUp,
+        CommandId::ToggleMusic,
         CommandId::VolumeDown,
         CommandId::VolumeMute,
     ] {

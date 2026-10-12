@@ -41,7 +41,7 @@ enum Operation {
         send: DockNotification,
     },
     Copy(String),
-    Volume {
+    MediaKey {
         key: i32,
         post: media_keys::Post,
     },
@@ -76,9 +76,10 @@ impl PreparedCommand {
                 )
                 .into());
             }
-            CommandId::VolumeUp => volume(media_keys::SOUND_UP),
-            CommandId::VolumeDown => volume(media_keys::SOUND_DOWN),
-            CommandId::VolumeMute => volume(media_keys::MUTE),
+            CommandId::VolumeUp => media_key(media_keys::SOUND_UP),
+            CommandId::VolumeDown => media_key(media_keys::SOUND_DOWN),
+            CommandId::VolumeMute => media_key(media_keys::MUTE),
+            CommandId::ToggleMusic => media_key(media_keys::PLAY_PAUSE),
             CommandId::ShowMenu => {
                 let display = display.ok_or_else(|| {
                     tr!(
@@ -225,7 +226,7 @@ impl PreparedCommand {
                     NSPasteboardTypeString
                 });
             }
-            Operation::Volume { key, post } => post(key),
+            Operation::MediaKey { key, post } => post(key),
         }
         Ok(())
     }
@@ -240,8 +241,8 @@ impl Drop for PowerConnection {
     }
 }
 
-fn volume(key: i32) -> Operation {
-    Operation::Volume {
+fn media_key(key: i32) -> Operation {
+    Operation::MediaKey {
         key,
         post: media_keys::post,
     }

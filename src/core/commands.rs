@@ -28,6 +28,7 @@ pub enum CommandId {
     VolumeUp,
     VolumeDown,
     VolumeMute,
+    ToggleMusic,
 }
 
 pub struct Command {
@@ -258,6 +259,14 @@ pub const COMMANDS: &[Command] = &[
         title_zh: "调低音量",
         symbol: "speaker.minus",
         keywords: &["volume down", "quieter", "降低音量", "调低音量", "音量小"],
+    },
+    Command {
+        id: CommandId::ToggleMusic,
+        name: "toggle-music",
+        title_en: "Play or pause music",
+        title_zh: "播放 / 暂停音乐",
+        symbol: "playpause",
+        keywords: &["play", "pause", "music", "spotify", "播放", "暂停", "音乐"],
     },
     Command {
         id: CommandId::VolumeMute,

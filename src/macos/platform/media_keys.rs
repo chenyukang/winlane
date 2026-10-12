@@ -7,6 +7,9 @@ use objc2_foundation::NSPoint;
 pub(crate) const SOUND_UP: i32 = 0;
 pub(crate) const SOUND_DOWN: i32 = 1;
 pub(crate) const MUTE: i32 = 7;
+// The keyboard's play/pause key. It toggles whichever player macOS considers
+// current, the same as pressing the key by hand.
+pub(crate) const PLAY_PAUSE: i32 = 16;
 
 // NX_SUBTYPE_AUX_CONTROL_BUTTONS, the subtype macOS uses for media keys.
 const AUX_CONTROL_BUTTONS: i16 = 8;
