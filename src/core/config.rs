@@ -351,6 +351,9 @@ pub struct Config {
     #[serde(default = "key_remaps_enabled_by_default")]
     pub key_remaps_enabled: bool,
     pub alias_rules: Vec<AliasRule>,
+    /// Quit Music or iTunes again as soon as it launches by itself.
+    #[serde(default)]
+    pub block_music: bool,
     pub snippets: Vec<crate::features::snippets::Snippet>,
     pub quicklinks: Vec<crate::features::quicklinks::Quicklink>,
     pub clipboard: crate::features::clipboard::ClipboardSettings,
@@ -385,6 +388,7 @@ impl Default for Config {
             key_remaps: Vec::new(),
             key_remaps_enabled: true,
             alias_rules: Vec::new(),
+            block_music: false,
             snippets: Vec::new(),
             quicklinks: Vec::new(),
             clipboard: Default::default(),

@@ -8,6 +8,7 @@ pub mod input_indicator;
 pub mod input_rules;
 pub mod keep_awake;
 pub mod meeting;
+pub mod music_block;
 pub mod open_url;
 pub mod projects;
 pub mod quicklinks;
