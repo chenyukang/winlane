@@ -1,3 +1,4 @@
+mod application_activation;
 mod bluetooth;
 mod clipboard;
 mod commands;
@@ -66,6 +67,17 @@ pub fn verify_hidden_panels() {
     }
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Prohibited);
+    // Focused regression suite, independent of event-tap / system permissions.
+    if std::env::var_os("WINLANE_ACTIVATION_SMOKE").is_some() {
+        application_activation::verify_application_activation(mtm);
+        verify_async_focus_order(mtm);
+        verify_recency_persistence(mtm);
+        verify_async_window_snapshot(mtm);
+        verify_external_focus_history(mtm);
+        verify_responsive_panels(mtm);
+        window_liveness::verify_window_liveness(mtm);
+        return;
+    }
     crate::macos::ui::material::tests::verify_panel_materials(mtm);
     crate::macos::ui::input::tests::verify_shared_input(mtm);
     crate::macos::ui::input_indicator::tests::verify(mtm);
@@ -130,6 +142,7 @@ pub fn verify_hidden_panels() {
     input_start::verify_command_reapplies_input_policy(mtm);
     verify_direct_layout_input(mtm);
     input_rules::verify(mtm);
+    application_activation::verify_application_activation(mtm);
     verify_async_focus_order(mtm);
     verify_recency_persistence(mtm);
     verify_async_window_snapshot(mtm);

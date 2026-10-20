@@ -52,11 +52,13 @@ impl Delegate {
         direction: i8,
         scope: Option<SearchScope>,
     ) {
+        let started = Instant::now();
+        self.ivars().preparing_panel.set(true);
+        self.poll_application_windows();
         self.ivars().auto_appclose.borrow().cancel();
         self.cancel_settings_focus();
         self.ivars().project_open.take();
         self.remember_app_input();
-        self.ivars().preparing_panel.set(true);
         self.cancel_scoped_refresh();
         self.clear_quicklink_input();
         self.ivars().search_scope.set(scope);
@@ -117,16 +119,19 @@ impl Delegate {
             self.ivars().current_app_only.set(false);
         }
         self.schedule_scoped_refresh();
-        self.filter_preserving(if scope.is_some() { None } else { preserve });
-        self.prepare_switch_selection();
         if !self.ivars().demo.get() {
             self.refresh();
         }
+        self.filter_preserving(if scope.is_some() { None } else { preserve });
+        self.prepare_switch_selection();
         self.ivars().preparing_panel.set(false);
         if self.ivars().config.borrow().panel_display_target == PanelDisplayTarget::ActiveDisplay {
             self.select_active_panel_display();
         }
         self.sync_displays();
+        crate::macos::platform::recency_trace::record_slow("prepare", started, || {
+            format!("session={session} mode={mode:?}")
+        });
     }
 
     pub(super) fn cancel_switch_timer(&self) -> bool {
@@ -457,6 +462,11 @@ impl Delegate {
         if state.mode.get() != Some(PanelMode::Switch) {
             return;
         }
+        // A quick release must not commit to an older cached app while the
+        // app just left is still being discovered. Navigation stays queued.
+        if self.waiting_for_application_window() {
+            return;
+        }
         let matches = state.matches.borrow();
         let windows = state.windows.borrow();
         let anchor = if let Some(id) = state.switch_anchor.get() {
@@ -537,6 +547,7 @@ impl Delegate {
             state.selected.set(index);
             self.activate_selected();
         } else if !state.loading.get()
+            && !self.waiting_for_application_window()
             && state
                 .switch_selection
                 .borrow()

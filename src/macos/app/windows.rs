@@ -136,6 +136,7 @@ impl Delegate {
     /// Switch to a window. The row can outlive the process it was built from,
     /// so the app is found again, and started when nothing is running.
     fn activate_window(&self, window: &WindowInfo) {
+        let started = Instant::now();
         if self.ivars().demo.get() {
             self.selection_failed(&trf!(
                 "演示选择：{} · {}（未切换真实窗口）",
@@ -255,6 +256,9 @@ impl Delegate {
             preferences.insert(query, window.id);
         }
         self.end_session();
+        crate::macos::platform::recency_trace::record_slow("activate", started, || {
+            format!("app_pid={} window={}", window.pid, window.id)
+        });
     }
 
     /// The bundle identifier the last scan recorded for a window's app. The

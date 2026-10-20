@@ -1,8 +1,8 @@
 use winlane::core::config::{Config, visible_matches};
 use winlane::core::discovery::{
     AX_CANNOT_COMPLETE, AX_NO_VALUE, FocusRead, finish_application_scan, merge_window_sources,
-    normal_window_surface, read_focused_window, read_published_windows, read_with_retry,
-    remote_window_token, switchable_window, switchable_window_role,
+    normal_window_surface, read_activation_window, read_focused_window, read_published_windows,
+    read_with_retry, remote_window_token, switchable_window, switchable_window_role,
 };
 use winlane::core::search::WindowInfo;
 
@@ -329,4 +329,61 @@ fn distinct_windows_with_identical_titles_are_not_collapsed() {
     let matches = visible_matches(&items, "chrome", None, &Config::default(), Some(42), &[], 0);
     assert_eq!(matches.len(), 2);
     assert_ne!(items[matches[0]].id, items[matches[1]].id);
+}
+
+#[test]
+fn activation_tries_the_main_window_before_any_long_focus_retry() {
+    let mut calls = Vec::new();
+    let result = read_activation_window(|attribute, timeout| {
+        calls.push((attribute.to_owned(), timeout));
+        match attribute {
+            "AXFocusedWindow" => Err(AX_CANNOT_COMPLETE),
+            "AXMainWindow" => Ok(42),
+            _ => unreachable!(),
+        }
+    });
+    assert_eq!(result, Ok(42));
+    assert_eq!(
+        calls,
+        [
+            ("AXFocusedWindow".into(), 0.02),
+            ("AXMainWindow".into(), 0.02)
+        ]
+    );
+    assert!(calls.iter().map(|(_, timeout)| timeout).sum::<f32>() <= 0.04);
+}
+
+#[test]
+fn activation_keeps_exact_focus_priority_and_the_slow_app_fallback() {
+    let mut calls = 0;
+    assert_eq!(
+        read_activation_window(|attribute, timeout| {
+            calls += 1;
+            assert_eq!(attribute, "AXFocusedWindow");
+            assert_eq!(timeout, 0.02);
+            Ok(11)
+        }),
+        Ok(11)
+    );
+    assert_eq!(
+        calls, 1,
+        "a readable focused window wins over its main-window sibling"
+    );
+    let mut calls = Vec::new();
+    assert_eq!(
+        read_activation_window(|attribute, timeout| {
+            calls.push((attribute.to_owned(), timeout));
+            if attribute == "AXFocusedWindow" && timeout >= 0.8 {
+                Ok(13)
+            } else {
+                Err(AX_NO_VALUE)
+            }
+        }),
+        Ok(13)
+    );
+    assert_eq!(
+        calls.len(),
+        4,
+        "both fast reads precede bounded background retries"
+    );
 }

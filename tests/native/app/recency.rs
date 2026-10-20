@@ -50,6 +50,8 @@ pub(super) fn verify_recency_persistence(mtm: MainThreadMarker) {
     delegate.remember_window(2);
     assert!(defaults.stringForKey(key).is_none());
     assert_ne!(delegate.ivars().focus_revision.get(), revision);
+    // An unresolved app activation is process-local, not a persistent window ID.
+    delegate.remember_window(crate::macos::app::recency::application_visit(-99));
     delegate.will_terminate(sel!(applicationWillTerminate:), &quit);
     assert_eq!(saved(), [2, 1, 3]);
     drop(delegate);

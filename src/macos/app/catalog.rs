@@ -33,6 +33,7 @@ impl Delegate {
             return;
         }
         state.closed_windows.borrow_mut().clear();
+        state.window_additions.borrow_mut().clear();
         let identities = state.identities.borrow().clone();
         let include_minimized = state.config.borrow().include_minimized;
         state.loading.set(true);
@@ -52,9 +53,28 @@ impl Delegate {
         let state = self.ivars();
         let WindowSnapshot {
             mut windows,
-            identities,
+            mut identities,
             mut server_ids,
         } = snapshot;
+        // Metadata obtained from a newer activation also survives an older scan,
+        // even when its targeted window read has not finished yet.
+        for pending in state.application_window_receivers.borrow().iter() {
+            if let Some(identity) = state.identities.borrow().get(&pending.pid) {
+                identities
+                    .entry(pending.pid)
+                    .or_insert_with(|| identity.clone());
+            }
+        }
+        // The scan may predate an app launch. Do not erase a window already
+        // delivered by that app's independent, higher-priority focus read.
+        for window in state.window_additions.take() {
+            if !windows.iter().any(|known| known.id == window.id) {
+                if let Some(identity) = state.identities.borrow().get(&window.pid) {
+                    identities.insert(window.pid, identity.clone());
+                }
+                windows.push(window);
+            }
+        }
         windows.retain(|window| !state.closed_windows.borrow().contains(&window.id));
         server_ids.retain(|id, _| !state.closed_windows.borrow().contains(id));
         state.closed_windows.borrow_mut().clear();
@@ -83,6 +103,7 @@ impl Delegate {
         } else {
             let selected_id = self.selected_result();
             self.install_windows(windows);
+            self.prune_application_visits();
             self.filter_preserving(selected_id);
             self.prepare_switch_selection();
             self.commit_switch_if_ready();
@@ -119,6 +140,7 @@ impl Delegate {
         });
         self.update_aliases(&windows);
         self.ivars().windows.replace(windows);
+        self.resolve_application_visits();
     }
 
     pub(super) fn update_aliases(&self, windows: &[WindowInfo]) {

@@ -375,7 +375,7 @@ impl ShortcutRouter {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct SwitchSelection {
     len: usize,
     index: usize,
