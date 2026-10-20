@@ -16,8 +16,9 @@ use std::ptr;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use winlane::core::discovery::{
-    AX_CANNOT_COMPLETE, AX_NO_VALUE, FocusRead, READ_TIMEOUT, read_focused_window,
-    read_published_windows, read_with_retry, remote_window_token, switchable_window_role,
+    AX_CANNOT_COMPLETE, AX_NO_VALUE, FocusRead, READ_TIMEOUT, read_activation_window,
+    read_focused_window, read_published_windows, read_with_retry, remote_window_token,
+    switchable_window_role,
 };
 use winlane::core::search::WindowInfo;
 use winlane::{tr, trf};
@@ -623,6 +624,10 @@ fn scan_application(
 }
 
 pub fn focused_window(pid: i32, policy: FocusRead) -> Option<u64> {
+    Some(focused_element(pid, policy)?.id(pid))
+}
+
+fn focused_element(pid: i32, policy: FocusRead) -> Option<Element> {
     let application = Element::application(pid)?;
     let value = read_focused_window(policy, |timeout| {
         application.set_timeout(timeout);
@@ -642,9 +647,50 @@ pub fn focused_window(pid: i32, policy: FocusRead) -> Option<u64> {
     if unsafe { CFGetTypeID(value.as_CFTypeRef()) } != unsafe { AXUIElementGetTypeID() } {
         return None;
     }
-    let id = Element(value).id(pid);
-    crate::macos::platform::recency_trace::record("ax-window", || format!("app_pid={pid} id={id}"));
-    Some(id)
+    let element = Element(value);
+    crate::macos::platform::recency_trace::record("ax-window", || {
+        format!("app_pid={pid} id={}", element.id(pid))
+    });
+    Some(element)
+}
+
+/// Read only the newly activated app, without waiting for a full inventory scan.
+/// AXMainWindow remains available when the app has already opened another app.
+pub fn activated_window(pid: i32, app: &str) -> Option<(WindowInfo, Option<u32>)> {
+    if !is_trusted() {
+        return None;
+    }
+    let application = Element::application(pid)?;
+    let value = read_activation_window(|attribute, timeout| {
+        application.set_timeout(timeout);
+        application.attribute_once(attribute)
+    })
+    .ok()?;
+    // SAFETY: Check the owned attribute's CF type before treating it as an AX element.
+    if unsafe { CFGetTypeID(value.as_CFTypeRef()) != AXUIElementGetTypeID() } {
+        return None;
+    }
+    let window = Element(value);
+    let minimized = window.boolean("AXMinimized");
+    if !switchable_window_role(
+        window.string("AXRole").as_deref(),
+        window.string("AXSubrole").as_deref(),
+        minimized,
+    ) {
+        return None;
+    }
+    let server_id = window.server_id();
+    let info = WindowInfo {
+        id: window.id(pid),
+        pid,
+        app: app.into(),
+        title: window.string("AXTitle").unwrap_or_default(),
+        minimized: minimized.unwrap_or(false),
+    };
+    if let Some(server_id) = server_id {
+        remember_window(pid, server_id, &info, &window);
+    }
+    Some((info, server_id))
 }
 
 pub fn focused_window_server_id(pid: i32, policy: FocusRead) -> Option<u32> {

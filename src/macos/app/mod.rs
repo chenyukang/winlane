@@ -200,6 +200,12 @@ struct WindowSnapshot {
     server_ids: HashMap<u64, u32>,
 }
 
+struct PendingApplicationWindow {
+    pid: i32,
+    app: String,
+    receiver: Receiver<Option<(WindowInfo, Option<u32>)>>,
+}
+
 struct PendingFocus {
     receiver: Receiver<Option<u64>>,
     pid: i32,
@@ -351,6 +357,9 @@ struct AppState {
     recency_store: OnceCell<Retained<NSUserDefaults>>,
     focus_observer: RefCell<Option<crate::macos::platform::focus_observer::FocusObserver>>,
     focus_receiver: RefCell<Option<PendingFocus>>,
+    application_window_receivers: RefCell<Vec<PendingApplicationWindow>>,
+    // Windows discovered after the in-flight full scan started.
+    window_additions: RefCell<Vec<WindowInfo>>,
     focus_pid: Cell<i32>,
     focus_revision: Cell<u64>,
     preferences: RefCell<HashMap<String, u64>>,

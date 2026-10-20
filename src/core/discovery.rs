@@ -25,6 +25,23 @@ pub fn read_focused_window<T>(
     }
 }
 
+/// Try both immediately useful attributes before giving a busy focused-window
+/// query the long background timeout. Apps handing off to another app can still
+/// expose AXMainWindow even while AXFocusedWindow is unavailable.
+pub fn read_activation_window<T>(
+    mut read: impl FnMut(&str, f32) -> Result<T, i32>,
+) -> Result<T, i32> {
+    for attribute in ["AXFocusedWindow", "AXMainWindow"] {
+        if let Ok(window) = read(attribute, 0.02) {
+            return Ok(window);
+        }
+    }
+    read_focused_window(FocusRead::Background, |timeout| {
+        read("AXFocusedWindow", timeout)
+    })
+    .or_else(|_| read_with_retry(|timeout| read("AXMainWindow", timeout)))
+}
+
 pub fn read_with_retry<T>(mut read: impl FnMut(f32) -> Result<T, i32>) -> Result<T, i32> {
     match read(READ_TIMEOUT) {
         Err(AX_CANNOT_COMPLETE) => read(RETRY_TIMEOUT),

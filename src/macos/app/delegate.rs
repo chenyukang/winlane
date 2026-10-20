@@ -204,9 +204,16 @@ define_class!(
             { self.present_panels(); }
         }
         #[unsafe(method(workspaceActivated:))]
-        fn workspace_activated(&self, _: &NSNotification) {
+        fn workspace_activated(&self, notification: &NSNotification) {
             self.request_app_input_rules();
-            self.track_frontmost();
+            // frontmostApplication may already name the next app when queued
+            // activation notifications are delivered. Track the event's app.
+            if let Some(app) = notification.userInfo()
+                // SAFETY: This immutable AppKit key is available on supported macOS versions.
+                .and_then(|info| info.objectForKey(unsafe { NSWorkspaceApplicationKey }))
+                .and_then(|object| object.downcast::<NSRunningApplication>().ok())
+            { self.track_application(&app); }
+            else { self.track_frontmost(); }
         }
         #[unsafe(method(appInputSourceChanged:))]
         fn app_input_source_changed(&self, _: &NSNotification) { self.remember_app_input(); }
@@ -647,6 +654,7 @@ define_class!(
             self.quit_blocked_music();
             self.tick_window_liveness();
             self.drain_shortcut_actions();
+            self.poll_application_windows();
             self.poll_focus();
             self.poll_auto_appclose();
             self.poll_app_launch();
