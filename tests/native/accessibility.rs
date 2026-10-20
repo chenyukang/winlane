@@ -243,3 +243,80 @@ pub fn verify_rebuilt_identity_lookup() {
     remote_scans().lock().unwrap().remove(&window.pid);
     println!("Rebuilt-identity lookup passed: WindowServer identity recovers the window.");
 }
+
+/// No remote window operation is needed: a negative PID makes rediscovery fail
+/// immediately, reproducing the destructive-cache path deterministically.
+pub fn verify_failed_lookup_keeps_window_metadata() {
+    let pid = -17171;
+    let server = u32::MAX - 17;
+    let element = Element::application(std::process::id() as i32).unwrap();
+    let info = WindowInfo {
+        id: 17171,
+        pid,
+        app: "Fixture".into(),
+        title: "last known".into(),
+        minimized: false,
+    };
+    remember_window(pid, server, &info, &element);
+    remote_scans().lock().unwrap().insert(
+        pid,
+        RemoteScan {
+            next: 500,
+            ..RemoteScan::default()
+        },
+    );
+    assert!(find_fresh_window(pid, info.id, None).is_err());
+    {
+        let remembered = remembered_windows().lock().unwrap();
+        let cached = &remembered[&pid][&server];
+        assert_eq!(cached.id, info.id);
+        assert_eq!(cached.title, info.title);
+    }
+    assert_eq!(
+        remote_scans().lock().unwrap()[&pid].next,
+        500,
+        "an uncached lookup must not reset an already advancing remote scan"
+    );
+    {
+        let mut scans = remote_scans().lock().unwrap();
+        scans.get_mut(&pid).unwrap().elements.insert(server, 9);
+    }
+    assert!(find_fresh_window(pid, info.id, Some(server)).is_err());
+    assert_eq!(remote_scans().lock().unwrap()[&pid].next, 0);
+    remote_scans().lock().unwrap().get_mut(&pid).unwrap().next = 800;
+    assert!(find_fresh_window(pid, info.id, Some(server)).is_err());
+    assert_eq!(
+        remote_scans().lock().unwrap()[&pid].next,
+        800,
+        "only invalidating an actual cached token restarts discovery"
+    );
+    let fresh = Element::application(std::process::id() as i32).unwrap();
+    refresh_remembered_element(pid, server, &fresh);
+    {
+        let remembered = remembered_windows().lock().unwrap();
+        let cached = &remembered[&pid][&server];
+        assert_eq!(
+            cached.id, info.id,
+            "refreshing the handle must preserve the visible row identity"
+        );
+        assert_eq!(cached.element, fresh.raw() as usize);
+    }
+    // A newer metadata generation need not contain the selected old AX id.
+    // The caller's stable server hint must remain usable, and unrelated cache
+    // records must never be discarded as a side effect of that lookup.
+    remembered_windows()
+        .lock()
+        .unwrap()
+        .get_mut(&pid)
+        .unwrap()
+        .get_mut(&server)
+        .unwrap()
+        .id = 17172;
+    assert!(find_fresh_window(pid, info.id, Some(server)).is_err());
+    assert!(remembered_windows().lock().unwrap()[&pid].contains_key(&server));
+    remembered_windows().lock().unwrap().remove(&pid);
+    remote_scans().lock().unwrap().remove(&pid);
+    println!(
+        "Failed AX rediscovery preserves window metadata, refreshes handles and carries the server identity; repeated failures do not restart recovery; no application windows changed."
+    );
+}

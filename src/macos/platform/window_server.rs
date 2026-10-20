@@ -1,5 +1,6 @@
 use core_foundation::array::{CFArray, CFArrayRef};
 use core_foundation::base::{CFType, TCFType};
+use core_foundation::boolean::CFBoolean;
 use core_foundation::dictionary::CFDictionary;
 use core_foundation::number::CFNumber;
 use core_foundation::string::CFString;
@@ -54,6 +55,7 @@ pub fn window_center(id: u32) -> Option<(f64, f64)> {
 pub struct Inventory {
     pub normal: HashMap<i32, HashSet<u32>>,
     known: HashSet<u32>,
+    on_screen: HashSet<u32>,
 }
 
 impl Inventory {
@@ -82,6 +84,12 @@ impl Inventory {
                 continue;
             };
             inventory.known.insert(id);
+            if value_for(&dict, "kCGWindowIsOnscreen")
+                .and_then(|value| value.downcast_into::<CFBoolean>())
+                .is_some_and(bool::from)
+            {
+                inventory.on_screen.insert(id);
+            }
             let Some(pid) =
                 integer(&dict, "kCGWindowOwnerPID").and_then(|pid| i32::try_from(pid).ok())
             else {
@@ -107,6 +115,10 @@ impl Inventory {
 
     pub fn contains(&self, id: u32) -> bool {
         self.known.contains(&id)
+    }
+
+    pub fn is_on_screen(&self, id: u32) -> bool {
+        self.on_screen.contains(&id)
     }
 
     pub fn rejects(&self, pid: i32, id: u32) -> bool {

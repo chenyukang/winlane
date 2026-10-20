@@ -5,6 +5,53 @@ pub(super) fn verify_window_liveness(mtm: MainThreadMarker) {
         let delegate = responsive_fixture(mtm);
         let state = delegate.ivars();
         state.mode.set(Some(mode));
+        state
+            .window_server_ids
+            .replace(HashMap::from([(1, 101), (2, 102), (3, 103)]));
+        state
+            .deferred_windows
+            .replace(Some(state.windows.borrow().clone()));
+        delegate.filter();
+        let before = state.windows.borrow().clone();
+        delegate.note_destroyed_ax_window(2);
+        assert_eq!(
+            *state.windows.borrow(),
+            before,
+            "AX object destruction alone must not erase a live WindowServer window"
+        );
+        assert!(
+            state
+                .deferred_windows
+                .borrow()
+                .as_ref()
+                .unwrap()
+                .iter()
+                .any(|w| w.id == 2)
+        );
+        let (tx, rx) = mpsc::channel();
+        state.window_check_receiver.replace(Some(rx));
+        tx.send(Vec::new()).unwrap();
+        delegate.poll_window_liveness();
+        assert_eq!(
+            *state.windows.borrow(),
+            before,
+            "a surviving surface keeps its cached row"
+        );
+        let (tx, rx) = mpsc::channel();
+        state.window_check_receiver.replace(Some(rx));
+        tx.send(vec![2]).unwrap();
+        delegate.poll_window_liveness();
+        assert!(
+            !state.windows.borrow().iter().any(|w| w.id == 2),
+            "actual WindowServer disappearance still prunes the row"
+        );
+        delegate.end_session();
+    }
+
+    for mode in [PanelMode::Switch, PanelMode::Search] {
+        let delegate = responsive_fixture(mtm);
+        let state = delegate.ivars();
+        state.mode.set(Some(mode));
         delegate.filter();
         if mode == PanelMode::Switch {
             state

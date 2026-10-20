@@ -16,6 +16,7 @@ impl Delegate {
     }
 
     pub(super) fn launch_application(&self, application: &ApplicationTarget, origin: LaunchOrigin) {
+        self.cancel_window_activation("new-launch");
         self.remember_frontmost_window();
         self.end_session();
         self.ivars().launch_receiver.replace(None);

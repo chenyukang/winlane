@@ -60,6 +60,7 @@ define_class!(
         }
         #[unsafe(method(applicationWillTerminate:))]
         fn will_terminate(&self, _: &NSNotification) {
+            self.cancel_window_activation("app-terminating");
             self.ivars().auto_appclose.borrow().cancel();
             let _ = self.ivars().keep_awake.borrow_mut().apply(winlane::features::keep_awake::Choice::Stop);
             self.ivars().keep_awake_indicator.take();
@@ -205,6 +206,7 @@ define_class!(
         }
         #[unsafe(method(workspaceActivated:))]
         fn workspace_activated(&self, notification: &NSNotification) {
+            self.cancel_interrupted_window_activation();
             self.request_app_input_rules();
             // frontmostApplication may already name the next app when queued
             // activation notifications are delivered. Track the event's app.
@@ -267,6 +269,13 @@ define_class!(
             self.request_settings_focus(&settings);
             self.update_update_settings();
             self.report_shortcut_status();
+        }
+        #[unsafe(method(verifyWindowActivation:))]
+        fn verify_window_activation(&self, timer: &NSTimer) {
+            self.drain_shortcut_actions();
+            let current = self.ivars().window_activation_timer.borrow().as_ref()
+                .is_some_and(|pending| std::ptr::eq(&**pending, timer));
+            if current { self.poll_window_activation(); }
         }
         #[unsafe(method(retrySettingsFocus:))]
         fn retry_settings_focus(&self, timer: &NSTimer) {
@@ -654,6 +663,7 @@ define_class!(
             self.quit_blocked_music();
             self.tick_window_liveness();
             self.drain_shortcut_actions();
+            self.poll_window_activation();
             self.poll_application_windows();
             self.poll_focus();
             self.poll_auto_appclose();

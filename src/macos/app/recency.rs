@@ -100,7 +100,7 @@ impl Delegate {
                 {
                     match event {
                         crate::macos::platform::focus_observer::WindowEvent::Destroyed(id) => {
-                            delegate.remove_closed_windows(&[id]);
+                            delegate.note_destroyed_ax_window(id);
                         }
                         crate::macos::platform::focus_observer::WindowEvent::FocusChanged => {
                             delegate.check_window_liveness();

@@ -11,6 +11,35 @@ pub(super) fn liveness_due(last: Option<std::time::Instant>, now: std::time::Ins
 }
 
 impl Delegate {
+    /// Destroying an AX object is not necessarily closing its WindowServer
+    /// surface (DingTalk rebuilds AX objects across activation/Space changes).
+    /// Validate known rows asynchronously instead of deleting them immediately.
+    pub(super) fn note_destroyed_ax_window(&self, id: u64) {
+        let state = self.ivars();
+        let known = state.window_server_ids.borrow().contains_key(&id)
+            || state.windows.borrow().iter().any(|window| window.id == id)
+            || state
+                .deferred_windows
+                .borrow()
+                .as_ref()
+                .is_some_and(|windows| windows.iter().any(|window| window.id == id));
+        if !known {
+            return;
+        }
+        crate::macos::platform::logging::record(
+            crate::macos::platform::logging::Level::Info,
+            "window-discovery",
+            "ax-destroyed-check",
+            || {
+                serde_json::json!({
+                "window_id":id,"server_id":state.window_server_ids.borrow().get(&id),
+                "action":"verify-windowserver-not-delete"})
+                .to_string()
+            },
+        );
+        self.check_window_liveness();
+    }
+
     /// Keep a visible list honest while a window closes behind it.
     pub(super) fn tick_window_liveness(&self) {
         let state = self.ivars();

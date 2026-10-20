@@ -1,3 +1,4 @@
+pub mod activation;
 pub mod aliases;
 pub mod app_catalog;
 pub mod commands;

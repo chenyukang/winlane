@@ -125,6 +125,34 @@ impl Delegate {
     }
 
     pub(super) fn install_windows(&self, windows: Vec<WindowInfo>) {
+        let group = |windows: &[WindowInfo]| {
+            let mut by_pid: HashMap<i32, Vec<u64>> = HashMap::new();
+            for window in windows {
+                by_pid.entry(window.pid).or_default().push(window.id);
+            }
+            for ids in by_pid.values_mut() {
+                ids.sort_unstable();
+            }
+            by_pid
+        };
+        let before = group(&self.ivars().windows.borrow());
+        let after = group(&windows);
+        let pids: HashSet<_> = before.keys().chain(after.keys()).copied().collect();
+        for pid in pids {
+            if before.get(&pid) != after.get(&pid) {
+                crate::macos::platform::logging::record(
+                    crate::macos::platform::logging::Level::Info,
+                    "window-discovery",
+                    "inventory-changed",
+                    || {
+                        serde_json::json!({
+                        "target_pid":pid,"bundle_id":self.ivars().identities.borrow().get(&pid).map(|app| &app.id),
+                        "window_ids_before":before.get(&pid).cloned().unwrap_or_default(),
+                        "window_ids_after":after.get(&pid).cloned().unwrap_or_default()}).to_string()
+                    },
+                );
+            }
+        }
         crate::macos::platform::recency_trace::record("inventory", || {
             format!(
                 "windows={:?} apps={:?} recent={:?}",

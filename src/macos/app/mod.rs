@@ -33,6 +33,7 @@ mod sleep_blockers;
 mod snippets;
 mod time_indicator;
 mod views;
+mod window_activation;
 mod window_liveness;
 mod windows;
 
@@ -266,6 +267,9 @@ struct AppState {
     settings_release_pending: Cell<bool>,
     settings_focus_pending: Cell<Option<PendingSettingsFocus>>,
     settings_focus_timer: RefCell<Option<Retained<NSTimer>>>,
+    window_activation: RefCell<Option<window_activation::PendingWindowActivation>>,
+    window_activation_timer: RefCell<Option<Retained<NSTimer>>>,
+    activation_sequence: Cell<u64>,
     app_input_rules: RefCell<winlane::features::input_rules::Runtime>,
     app_input_pending: Cell<bool>,
     settings_last_tab: Cell<Option<isize>>,

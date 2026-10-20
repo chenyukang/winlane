@@ -15,6 +15,7 @@ impl Delegate {
     }
 
     pub(super) fn request_settings_focus(&self, settings: &SettingsWindow) {
+        self.cancel_window_activation("settings");
         self.cancel_settings_focus();
         self.ivars()
             .settings_focus_pending

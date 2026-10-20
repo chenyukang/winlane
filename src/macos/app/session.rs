@@ -52,6 +52,7 @@ impl Delegate {
         direction: i8,
         scope: Option<SearchScope>,
     ) {
+        self.cancel_window_activation("new-gesture");
         let started = Instant::now();
         self.ivars().preparing_panel.set(true);
         self.poll_application_windows();
@@ -326,6 +327,7 @@ impl Delegate {
     }
 
     pub(super) fn dismiss(&self) {
+        self.cancel_window_activation("dismissed");
         self.cancel_routing();
         self.end_session();
         if let Some(previous) = NSRunningApplication::runningApplicationWithProcessIdentifier(
@@ -483,7 +485,28 @@ impl Delegate {
                 })
         };
         if let Some(selection) = state.switch_selection.borrow_mut().as_mut() {
+            let first_snapshot = selection.selected().is_none();
             selection.install(matches.len(), anchor);
+            if first_snapshot && selection.selected().is_some() {
+                let mut counts: HashMap<i32, usize> = HashMap::new();
+                for &i in matches.iter() {
+                    *counts.entry(windows[i].pid).or_default() += 1;
+                }
+                crate::macos::platform::logging::record(
+                    crate::macos::platform::logging::Level::Info,
+                    "window-discovery",
+                    "switch-list",
+                    || {
+                        let mut apps: Vec<_> = counts.into_iter().collect();
+                        apps.sort_unstable();
+                        serde_json::json!({"session":state.session.get(),"window_count":matches.len(),
+                            "apps":apps.into_iter().map(|(pid,count)| serde_json::json!({
+                                "target_pid":pid,"window_count":count,
+                                "bundle_id":state.identities.borrow().get(&pid).map(|app| &app.id)
+                            })).collect::<Vec<_>>()}).to_string()
+                    },
+                );
+            }
             if let Some(index) = selection.selected() {
                 state.selected.set(index);
             }

@@ -21,6 +21,7 @@ mod scoped_loading;
 mod settings;
 mod settings_focus;
 mod snippet_search;
+mod window_activation;
 mod window_liveness;
 mod window_search;
 
@@ -69,6 +70,8 @@ pub fn verify_hidden_panels() {
     app.setActivationPolicy(NSApplicationActivationPolicy::Prohibited);
     // Focused regression suite, independent of event-tap / system permissions.
     if std::env::var_os("WINLANE_ACTIVATION_SMOKE").is_some() {
+        accessibility::tests::verify_failed_lookup_keeps_window_metadata();
+        window_activation::verify(mtm);
         application_activation::verify_application_activation(mtm);
         verify_async_focus_order(mtm);
         verify_recency_persistence(mtm);
@@ -108,6 +111,7 @@ pub fn verify_hidden_panels() {
     crate::macos::ui::app_shortcuts::tests::verify_hidden_settings(&delegate, mtm);
     crate::macos::platform::installed_apps::tests::verify_catalog();
     crate::macos::platform::accessibility::tests::verify_fresh_window_lookup();
+    accessibility::tests::verify_failed_lookup_keeps_window_metadata();
     crate::macos::platform::catalog_watcher::tests::verify();
     verify_catalog_refresh(mtm);
     verify_launch_search(mtm);
@@ -142,6 +146,7 @@ pub fn verify_hidden_panels() {
     input_start::verify_command_reapplies_input_policy(mtm);
     verify_direct_layout_input(mtm);
     input_rules::verify(mtm);
+    window_activation::verify(mtm);
     application_activation::verify_application_activation(mtm);
     verify_async_focus_order(mtm);
     verify_recency_persistence(mtm);

@@ -71,34 +71,61 @@ pub fn resolve_application(target: &ApplicationTarget) -> Result<Retained<NSURL>
     ))
 }
 
-/// Activate a running app through LaunchServices and, once it is frontmost
-/// on its own Space, restore and focus a specific window. Activation must
-/// come first so macOS switches Spaces from a full-screen app the way
-/// clicking the Dock icon does; restoring the window only afterwards keeps
-/// it from landing on the full-screen app's Space. Returns an error only
-/// when the app has no bundle URL to reopen.
-pub fn activate_and_raise(
+/// Completion is evidence of an open request, not proof of foreground focus.
+/// Never raise a window in this callback: a cancelled request may finish late.
+#[derive(Debug)]
+pub struct ActivationError {
+    pub domain: String,
+    pub code: isize,
+}
+
+pub fn activate_running(
     app: &NSRunningApplication,
-    window_id: u64,
+    request_id: u64,
     wake: WakeHandle,
-) -> Result<(), String> {
-    let Some(url) = app.bundleURL() else {
-        return Err(tr!(
-            "系统未接受切换请求，请重试或检查辅助功能权限。",
-            "macOS did not accept the switch. Try again or check Accessibility access."
+) -> Result<Receiver<Result<i32, ActivationError>>, String> {
+    let url = app.bundleURL().ok_or_else(|| {
+        tr!(
+            "无法读取应用路径。",
+            "The application path could not be read."
         )
-        .into());
-    };
+        .to_string()
+    })?;
     let pid = app.processIdentifier();
     let configuration = NSWorkspaceOpenConfiguration::configuration();
     configuration.setActivates(true);
     configuration.setCreatesNewApplicationInstance(false);
     configuration.setAddsToRecentItems(false);
-    // The completion handler runs after macOS finishes activating the app,
-    // so the chosen window is deminiaturized and focused on its own Space.
-    let completion = RcBlock::new(move |_: *mut NSRunningApplication, _: *mut NSError| {
+    let (tx, rx) = mpsc::channel();
+    let completion = RcBlock::new(move |app: *mut NSRunningApplication, error: *mut NSError| {
         autoreleasepool(|_| {
-            let _ = crate::macos::platform::accessibility::raise_window(pid, window_id);
+            // SAFETY: AppKit owns these nullable arguments for this callback.
+            let result = unsafe {
+                if let Some(error) = error.as_ref() {
+                    Err(ActivationError {
+                        domain: error.domain().to_string(),
+                        code: error.code(),
+                    })
+                } else if let Some(app) = app.as_ref() {
+                    Ok(app.processIdentifier())
+                } else {
+                    Err(ActivationError {
+                        domain: "Winlane.Activation".into(),
+                        code: 1,
+                    })
+                }
+            };
+            if tx.send(result).is_err() {
+                super::logging::record(
+                    super::logging::Level::Info,
+                    "window-activation",
+                    "late-completion",
+                    || {
+                        serde_json::json!({"request_id":request_id,"target_pid":pid,"ignored":true})
+                            .to_string()
+                    },
+                );
+            }
             wake.signal();
         });
     });
@@ -107,7 +134,7 @@ pub fn activate_and_raise(
         &configuration,
         Some(&completion),
     );
-    Ok(())
+    Ok(rx)
 }
 
 pub fn launch(

@@ -29,6 +29,8 @@ type AxError = i32;
 type AxRef = CFTypeRef;
 
 const AX_SUCCESS: AxError = 0;
+// Internal sentinel, never presented as an operating-system AX error in logs.
+const AX_REQUEST_CANCELLED: AxError = i32::MIN;
 const AX_ATTRIBUTE_UNSUPPORTED: AxError = -25205;
 const AX_ACTION_UNSUPPORTED: AxError = -25206;
 const AX_NOT_IMPLEMENTED: AxError = -25208;
@@ -322,6 +324,18 @@ impl Element {
     }
 
     fn set_boolean_if_supported(&self, name: &str, value: bool) -> Result<bool, AxError> {
+        self.set_boolean_if_supported_when(name, value, &|| true)
+    }
+
+    fn set_boolean_if_supported_when(
+        &self,
+        name: &str,
+        value: bool,
+        current: &impl Fn() -> bool,
+    ) -> Result<bool, AxError> {
+        if !current() {
+            return Err(AX_REQUEST_CANCELLED);
+        }
         let name = CFString::new(name);
         let mut settable = 0;
         // SAFETY: Both inputs are live and settable is a valid Boolean out-pointer.
@@ -337,6 +351,11 @@ impl Element {
         }
         if status != AX_SUCCESS {
             return Err(status);
+        }
+        // Recheck after the potentially blocking attribute query, immediately
+        // before writing. A detached worker must not resume an old handoff.
+        if !current() {
+            return Err(AX_REQUEST_CANCELLED);
         }
         let value = CFBoolean::from(value);
         // SAFETY: The AX element, attribute string, and Boolean remain owned for
@@ -502,6 +521,39 @@ fn remember_window(pid: i32, server_id: u32, info: &WindowInfo, element: &Elemen
         .insert(server_id, entry);
 }
 
+/// Refresh the retained handle without throwing away the row's last-known
+/// metadata. The old object may already be invalid remotely, but is still a
+/// locally retained CF object and its identity can safely be hashed/released.
+fn refresh_remembered_element(pid: i32, server: u32, element: &Element) {
+    let replaced = {
+        let mut remembered = remembered_windows().lock().unwrap();
+        let Some(entry) = remembered
+            .get_mut(&pid)
+            .and_then(|entries| entries.get_mut(&server))
+        else {
+            return;
+        };
+        let raw = element.raw();
+        // SAFETY: Transfer a new retain to the cache before releasing its old one.
+        unsafe { CFRetain(raw) };
+        (
+            std::mem::replace(&mut entry.element, raw as usize),
+            entry.id,
+        )
+    };
+    // SAFETY: The cache's previous retain has transferred to this local owner.
+    let previous = unsafe { CFType::wrap_under_create_rule(replaced.0 as CFTypeRef) };
+    let old_id = element_id(pid, &previous);
+    let new_id = element.id(pid);
+    if old_id != new_id {
+        record(Level::Info, "window-discovery", "ax-handle-rebuilt", || {
+            serde_json::json!({"target_pid":pid,"server_id":server,"window_id":replaced.1,
+                "old_ax_id":old_id,"new_ax_id":new_id,"metadata_preserved":true})
+            .to_string()
+        });
+    }
+}
+
 /// A previously seen window that is still alive but currently invisible to
 /// accessibility queries, typically because it was minimized. The retained
 /// element handle keeps answering reads and actions after minimizing.
@@ -618,7 +670,37 @@ fn scan_application(
                 }
             }
         }
+        if !new_results.is_empty() {
+            record(
+                Level::Info,
+                "window-discovery",
+                "retained-window-used",
+                || {
+                    serde_json::json!({"target_pid":pid,
+                    "window_ids":new_results.iter().map(|(window, _)| window.id).collect::<Vec<_>>(),
+                    "server_ids":new_results.iter().filter_map(|(_, server)| *server).collect::<Vec<_>>(),
+                    "reason":"surface-alive-ax-unpublished"}).to_string()
+                },
+            );
+        }
         results.extend(new_results);
+    }
+    if results.is_empty()
+        && inventory
+            .normal
+            .get(&pid)
+            .is_some_and(|surfaces| !surfaces.is_empty())
+    {
+        record(
+            Level::Info,
+            "window-discovery",
+            "surfaces-without-ax",
+            || {
+                serde_json::json!({"target_pid":pid,"surface_count":inventory.normal[&pid].len(),
+                "reason":"no-published-or-remembered-window"})
+                .to_string()
+            },
+        );
     }
     Ok(results)
 }
@@ -773,6 +855,10 @@ pub fn list_windows(
 }
 
 fn find_window(pid: i32, id: u64) -> Result<Element, String> {
+    find_window_with_server(pid, id, None)
+}
+
+fn find_window_with_server(pid: i32, id: u64, server_hint: Option<u32>) -> Result<Element, String> {
     if !is_trusted() {
         return Err(tr!(
             "尚未开启辅助功能权限。",
@@ -790,6 +876,7 @@ fn find_window(pid: i32, id: u64) -> Result<Element, String> {
     // error (for example a temporarily busy app) keeps the retained handle so
     // minimized windows stay reachable.
     if let Some(window) = remembered_element(pid, id)
+        && server_hint.is_none_or(|server| window.server_id() == Some(server))
         && window.attribute_once("AXRole") != Err(AX_INVALID_UI_ELEMENT)
     {
         return Ok(window);
@@ -799,7 +886,7 @@ fn find_window(pid: i32, id: u64) -> Result<Element, String> {
     // objects (WeChat's Chromium UI does this), which changes the AX-derived
     // ID while the window itself stays. `find_fresh_window` also accepts the
     // WindowServer identity and refuses to guess between two matches.
-    find_fresh_window(pid, id)
+    find_fresh_window(pid, id, server_hint)
 }
 
 /// Turn a common Accessibility error into a message with a next step. The raw
@@ -869,26 +956,24 @@ enum WindowMatch {
     Ambiguous,
 }
 
-/// Drop an invalid retained handle before scanning again. The AX identity may
-/// change while the WindowServer surface stays the same, so match the fresh
-/// element by its WindowServer ID as well as by the old AX-derived ID.
-fn find_fresh_window(pid: i32, id: u64) -> Result<Element, String> {
-    let server_id = {
-        let mut remembered = remembered_windows().lock().unwrap();
-        let entries = remembered.get_mut(&pid);
-        let server_id = entries
-            .as_ref()
-            .and_then(|entries| entries.iter().find(|(_, entry)| entry.id == id))
-            .map(|(&server_id, _)| server_id);
-        if let (Some(entries), Some(server_id)) = (entries, server_id) {
-            entries.remove(&server_id);
-        }
-        server_id
-    };
+/// AX objects can be rebuilt while the physical window stays alive. Keep the
+/// remembered metadata and server mapping until WindowServer proves closure;
+/// an unsuccessful AX lookup is not evidence that the window disappeared.
+fn find_fresh_window(pid: i32, id: u64, server_hint: Option<u32>) -> Result<Element, String> {
+    let server_id = server_hint.or_else(|| {
+        let remembered = remembered_windows().lock().unwrap();
+        remembered.get(&pid).and_then(|entries| {
+            entries
+                .iter()
+                .find_map(|(&server, entry)| (entry.id == id).then_some(server))
+        })
+    });
     if let Some(server_id) = server_id
         && let Some(scan) = remote_scans().lock().unwrap().get_mut(&pid)
+        && scan.elements.remove(&server_id).is_some()
     {
-        scan.elements.remove(&server_id);
+        // Restart once for an invalid cached token, not on every failed lookup:
+        // otherwise repeated activation attempts can never advance recovery.
         scan.next = 0;
     }
     let application = Element::application(pid).ok_or(tr!(
@@ -900,18 +985,28 @@ fn find_fresh_window(pid: i32, id: u64) -> Result<Element, String> {
         .iter()
         .map(|window| (window.id(pid), window.server_id()))
         .collect();
-    let index = matching_window(&candidates, id, server_id).map_err(|outcome| match outcome {
-        WindowMatch::Missing => tr!(
-            "窗口已关闭，请刷新窗口列表。",
-            "The window has closed. Refresh the window list."
-        )
-        .to_owned(),
-        WindowMatch::Ambiguous => tr!(
-            "无法确定目标窗口，请刷新窗口列表。",
-            "Could not identify the window. Refresh the window list."
-        )
-        .to_owned(),
-    })?;
+    let index = matching_window(&candidates, id, server_id)
+        .inspect_err(|outcome| {
+            record(Level::Info, "window-discovery", "lookup-unresolved", || {
+                serde_json::json!({"target_pid":pid,"window_id":id,"server_id":server_id,
+                "outcome":format!("{outcome:?}"),"metadata_preserved":server_id.is_some_and(|server| {
+                    remembered_windows().lock().unwrap().get(&pid).is_some_and(|entries| entries.contains_key(&server))
+                })})
+                .to_string()
+            });
+        })
+        .map_err(|outcome| match outcome {
+            WindowMatch::Missing => tr!(
+                "窗口已关闭，请刷新窗口列表。",
+                "The window has closed. Refresh the window list."
+            )
+            .to_owned(),
+            WindowMatch::Ambiguous => tr!(
+                "无法确定目标窗口，请刷新窗口列表。",
+                "Could not identify the window. Refresh the window list."
+            )
+            .to_owned(),
+        })?;
     Ok(Element(windows[index].0.clone()))
 }
 
@@ -940,20 +1035,93 @@ pub fn set_minimized(pid: i32, id: u64, minimized: bool) -> Result<(), String> {
     }
 }
 
+/// A read-only sample for the activation verifier. No titles or content cross
+/// the worker boundary. A messaging failure is logged as its real AX code.
+pub fn activation_window_state(
+    pid: i32,
+    expected_server: Option<u32>,
+) -> winlane::core::activation::WindowState {
+    use winlane::core::activation::WindowState;
+    let mut state = WindowState::default();
+    let focused = Element::application(pid)
+        .ok_or(AX_INVALID_UI_ELEMENT)
+        .and_then(|app| {
+            app.set_timeout(0.02);
+            let value = app.attribute_once("AXFocusedWindow")?;
+            // SAFETY: The attribute owns a CF object and is checked before wrapping.
+            if unsafe { CFGetTypeID(value.as_CFTypeRef()) != AXUIElementGetTypeID() } {
+                return Err(AX_NO_VALUE);
+            }
+            Ok(Element(value))
+        });
+    match focused {
+        Ok(window) => {
+            state.focused_id = Some(window.id(pid));
+            state.focused_server_id = window.server_id();
+            if let Some(server) = state.focused_server_id
+                && expected_server.is_none_or(|expected| expected == server)
+            {
+                refresh_remembered_element(pid, server, &window);
+            }
+        }
+        Err(code) => state.ax_error = Some(code),
+    }
+    if let Some(id) = expected_server.or(state.focused_server_id)
+        && let Some(inventory) = Inventory::try_read()
+    {
+        state.alive = Some(inventory.contains(id));
+        state.on_screen = Some(inventory.is_on_screen(id));
+    }
+    state
+}
+
 pub fn raise_window(pid: i32, id: u64) -> Result<(), String> {
-    let window = find_window(pid, id)?;
-    match raise_window_element(&window) {
-        Err((AX_INVALID_UI_ELEMENT, original)) => {
-            let refreshed = find_fresh_window(pid, id).map_err(|_| original)?;
-            raise_window_element(&refreshed).map_err(|(_, message)| message)
+    raise_window_guarded(pid, id, None, &|| true, &|_, _, _| {})
+}
+
+/// Every write is guarded, including writes after a blocking lookup. Cancelling
+/// does not have to wait for an AX read or a remote app to become responsive.
+pub fn raise_window_guarded(
+    pid: i32,
+    id: u64,
+    server_hint: Option<u32>,
+    current: &impl Fn() -> bool,
+    report: &impl Fn(&str, &str, Option<i32>),
+) -> Result<(), String> {
+    if !current() {
+        report("lookup", "cancelled", None);
+        return Err(tr!("切换已取消。", "Switch cancelled.").into());
+    }
+    let window = find_window_with_server(pid, id, server_hint)
+        .inspect_err(|_| report("lookup", "error", None))?;
+    match raise_window_element(&window, current, report) {
+        Err((AX_INVALID_UI_ELEMENT, original)) if current() => {
+            let refreshed = find_fresh_window(pid, id, server_hint).map_err(|_| original)?;
+            raise_window_element(&refreshed, current, report).map_err(|(_, message)| message)
         }
         result => result.map_err(|(_, message)| message),
     }
 }
 
-fn raise_window_element(window: &Element) -> Result<(), (AxError, String)> {
+fn raise_window_element(
+    window: &Element,
+    current: &impl Fn() -> bool,
+    report: &impl Fn(&str, &str, Option<i32>),
+) -> Result<(), (AxError, String)> {
+    let cancelled = || {
+        (
+            AX_REQUEST_CANCELLED,
+            tr!("切换已取消。", "Switch cancelled.").to_string(),
+        )
+    };
+    if !current() {
+        report("AXRaise", "cancelled", None);
+        return Err(cancelled());
+    }
     if window.boolean("AXMinimized") == Some(true) {
-        match window.set_boolean_if_supported("AXMinimized", false) {
+        let result = window.set_boolean_if_supported_when("AXMinimized", false, current);
+        report_boolean_write("AXMinimized", &result, report);
+        match result {
             Ok(true) => {}
             Ok(false) => {
                 return Err((
@@ -965,6 +1133,7 @@ fn raise_window_element(window: &Element) -> Result<(), (AxError, String)> {
                     .into(),
                 ));
             }
+            Err(AX_REQUEST_CANCELLED) => return Err(cancelled()),
             Err(code) => {
                 return Err((
                     code,
@@ -978,27 +1147,35 @@ fn raise_window_element(window: &Element) -> Result<(), (AxError, String)> {
             }
         }
     }
+    // Some applications reject optional AXMain/AXFocused writes but implement
+    // AXRaise. Still try the exact window; the verifier, not API acceptance,
+    // decides success. Invalid elements and cancelled requests must stop here.
     for attribute in ["AXMain", "AXFocused"] {
-        window
-            .set_boolean_if_supported(attribute, true)
-            .map_err(|code| {
-                (
-                    code,
-                    ax_failure(code).unwrap_or_else(|| {
-                        trf!(
-                            "无法聚焦窗口（错误 {code}）。",
-                            "Could not focus the window (error {code})."
-                        )
-                    }),
-                )
-            })?;
+        let result = window.set_boolean_if_supported_when(attribute, true, current);
+        report_boolean_write(attribute, &result, report);
+        match result {
+            Err(AX_REQUEST_CANCELLED) => return Err(cancelled()),
+            Err(AX_INVALID_UI_ELEMENT) => {
+                return Err((
+                    AX_INVALID_UI_ELEMENT,
+                    ax_failure(AX_INVALID_UI_ELEMENT).unwrap(),
+                ));
+            }
+            _ => {}
+        }
+    }
+    if !current() {
+        report("AXRaise", "cancelled", None);
+        return Err(cancelled());
     }
     let action = CFString::new("AXRaise");
-    // SAFETY: The retained AX window and CFString live through the synchronous
-    // action request. No ownership is transferred.
+    // SAFETY: The retained AX window and action remain alive for this call.
     let status = unsafe { AXUIElementPerformAction(window.raw(), action.as_concrete_TypeRef()) };
-    // System Settings can reject AXRaise even for a live standard window.
-    // The caller still activates the app after setting the target window's focus.
+    report(
+        "AXRaise",
+        if status == AX_SUCCESS { "ok" } else { "error" },
+        Some(status),
+    );
     if matches!(
         status,
         AX_SUCCESS | AX_ATTRIBUTE_UNSUPPORTED | AX_ACTION_UNSUPPORTED | AX_NOT_IMPLEMENTED
@@ -1014,6 +1191,19 @@ fn raise_window_element(window: &Element) -> Result<(), (AxError, String)> {
                 )
             }),
         ))
+    }
+}
+
+fn report_boolean_write(
+    operation: &str,
+    result: &Result<bool, AxError>,
+    report: &impl Fn(&str, &str, Option<i32>),
+) {
+    match *result {
+        Ok(true) => report(operation, "ok", Some(AX_SUCCESS)),
+        Ok(false) => report(operation, "skipped", None),
+        Err(AX_REQUEST_CANCELLED) => report(operation, "cancelled", None),
+        Err(code) => report(operation, "error", Some(code)),
     }
 }
 
