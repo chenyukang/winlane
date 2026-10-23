@@ -201,9 +201,34 @@ impl Delegate {
                     .filter(|candidate| candidate.pid == window.pid)
                     .count()
                     == 1;
-                if !only_window || !self.activate_app(&target_app) {
+                if !only_window {
                     self.selection_failed(&error);
                     return;
+                }
+                // A bare activation leaves the window behind when its
+                // accessibility handle is unusable — the app comes forward with
+                // no window, which looks like the desktop. Let LaunchServices
+                // activate the app and raise the window once activation
+                // completes, the same path minimized windows use.
+                crate::macos::platform::logging::record(
+                    crate::macos::platform::logging::Level::Debug,
+                    "switch",
+                    "raise-failed",
+                    || format!("app_pid={} window={}", window.pid, window.id),
+                );
+                if let Err(fallback) = crate::macos::platform::applications::activate_and_raise(
+                    &target_app,
+                    window.id,
+                    self.ivars().wake.get().unwrap().handle(),
+                ) {
+                    if self.discard_missing_window(window) {
+                        return;
+                    }
+                    // Apps without a bundle URL cannot go through LaunchServices.
+                    if !self.activate_app(&target_app) {
+                        self.selection_failed(&fallback);
+                        return;
+                    }
                 }
             } else if !self.activate_app(&target_app) {
                 self.selection_failed(tr!(
