@@ -62,9 +62,19 @@ impl Inventory {
     }
 
     pub fn try_read() -> Option<Self> {
+        Self::read_with(1 << 4)
+    }
+
+    /// Only the windows currently drawn on a visible desktop. A window on another
+    /// Space, or one the app ordered out, is missing here even though it exists.
+    pub fn try_read_onscreen() -> Option<Self> {
+        Self::read_with((1 << 0) | (1 << 4))
+    }
+
+    fn read_with(options: u32) -> Option<Self> {
         // SAFETY: All windows, excluding desktop surfaces. This reads metadata,
         // not pixels or window titles, and does not request screen recording.
-        let raw = unsafe { CGWindowListCopyWindowInfo(1 << 4, 0) };
+        let raw = unsafe { CGWindowListCopyWindowInfo(options, 0) };
         if raw.is_null() {
             return None;
         }

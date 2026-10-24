@@ -243,7 +243,8 @@ impl Delegate {
         // desktop. Check again shortly afterwards and put the chosen window back,
         // but never undo a switch the user made in the meantime.
         let (pid, id) = (window.pid, window.id);
-        std::thread::spawn(move || retain_window_focus(pid, id));
+        let server_id = self.ivars().window_server_ids.borrow().get(&id).copied();
+        std::thread::spawn(move || retain_window_focus(pid, id, server_id));
         self.remember_window(window.id);
         let query = self.ivars().query.borrow().trim().to_lowercase();
         if !query.is_empty() {
@@ -381,7 +382,7 @@ impl Delegate {
 /// Runs on a background thread and stops as soon as the app is no longer in
 /// front, so a quick follow-up switch is never undone.
 #[allow(deprecated)]
-fn retain_window_focus(pid: i32, id: u64) {
+fn retain_window_focus(pid: i32, id: u64, server_id: Option<u32>) {
     for (attempt, pause) in [(0u8, 80u64), (1, 120)] {
         std::thread::sleep(std::time::Duration::from_millis(pause));
         let frontmost = NSWorkspace::sharedWorkspace()
@@ -413,5 +414,34 @@ fn retain_window_focus(pid: i32, id: u64) {
             "focus-lost",
             || format!("app_pid={pid} window={id}"),
         );
+        return;
     }
+    // Focus can be right while nothing is drawn: the window may sit on another
+    // desktop, or the app ordered it out. Ask the WindowServer whether it is on
+    // screen, and make one last attempt that shows every window of the app.
+    let Some(server_id) = server_id else {
+        return;
+    };
+    let onscreen = crate::macos::platform::window_server::Inventory::try_read_onscreen()
+        .is_some_and(|inventory| inventory.contains(server_id));
+    if onscreen {
+        return;
+    }
+    crate::macos::platform::logging::record(
+        crate::macos::platform::logging::Level::Debug,
+        "switch",
+        "focus-invisible",
+        || format!("app_pid={pid} window={id} server_id={server_id}"),
+    );
+    if NSWorkspace::sharedWorkspace()
+        .frontmostApplication()
+        .map(|app| app.processIdentifier())
+        != Some(pid)
+    {
+        return;
+    }
+    if let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) {
+        app.activateWithOptions(NSApplicationActivationOptions::ActivateAllWindows);
+    }
+    let _ = accessibility::raise_window(pid, id);
 }
