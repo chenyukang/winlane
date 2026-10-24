@@ -145,6 +145,7 @@ pub fn verify_hidden_panels() {
     verify_open_panel_rechecks_window_liveness(mtm);
 
     accessibility::tests::verify_rebuilt_identity_lookup();
+    accessibility::tests::verify_identityless_twin_windows_are_dropped();
     delegate.ivars().demo.set(true);
     delegate.ivars().windows.replace(demo_windows());
     delegate.ivars().mode.set(Some(PanelMode::Search));

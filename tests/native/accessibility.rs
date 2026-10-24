@@ -243,3 +243,43 @@ pub fn verify_rebuilt_identity_lookup() {
     remote_scans().lock().unwrap().remove(&window.pid);
     println!("Rebuilt-identity lookup passed: WindowServer identity recovers the window.");
 }
+
+/// A window row must not appear twice because an app published a hidden twin
+/// without a WindowServer identity.
+pub fn verify_identityless_twin_windows_are_dropped() {
+    let window = |title: &str| winlane::core::search::WindowInfo {
+        id: 1,
+        pid: 10,
+        app: "WeChat".into(),
+        title: title.into(),
+        minimized: false,
+    };
+    let mut windows = vec![
+        (window("Wechat"), Some(7)),
+        (window("Wechat"), None),
+        (window("Chat"), None),
+        (window(""), None),
+    ];
+    drop_identityless_twins(&mut windows);
+    assert_eq!(
+        windows.len(),
+        3,
+        "only the identity-less twin of an identified title is dropped"
+    );
+    assert!(
+        windows
+            .iter()
+            .any(|(w, id)| w.title == "Wechat" && id.is_some()),
+        "the window with an identity is kept"
+    );
+    assert!(
+        windows
+            .iter()
+            .any(|(w, id)| w.title == "Chat" && id.is_none()),
+        "a window without a twin stays listed"
+    );
+    assert!(
+        windows.iter().any(|(w, _)| w.title.is_empty()),
+        "an empty title is never used as a duplicate key"
+    );
+}
