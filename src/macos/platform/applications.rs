@@ -1,7 +1,9 @@
 use super::main_wake::WakeHandle;
 use block2::RcBlock;
 use objc2::rc::{Retained, autoreleasepool};
-use objc2_app_kit::{NSRunningApplication, NSWorkspace, NSWorkspaceOpenConfiguration};
+use objc2_app_kit::{
+    NSApplicationActivationOptions, NSRunningApplication, NSWorkspace, NSWorkspaceOpenConfiguration,
+};
 use objc2_foundation::{NSBundle, NSError, NSString, NSURL};
 use std::path::Path;
 use std::sync::mpsc::{self, Receiver};
@@ -115,6 +117,33 @@ pub fn launch(
     wake: WakeHandle,
 ) -> Result<Receiver<Result<i32, String>>, String> {
     let url = resolve_application(target)?;
+    // A running app is activated the way a Dock click does before the open
+    // request, so a window the app ordered out is shown again. The open request
+    // still runs, which reopens the app when it holds no window at all.
+    if let Some(running) = NSRunningApplication::runningApplicationsWithBundleIdentifier(
+        &NSString::from_str(&target.bundle_id),
+    )
+    .iter()
+    .find(|app| !app.isTerminated())
+    {
+        let current = NSRunningApplication::currentApplication();
+        let _ = running.activateFromApplication_options(
+            &current,
+            NSApplicationActivationOptions::ActivateAllWindows,
+        );
+        crate::macos::platform::logging::record(
+            crate::macos::platform::logging::Level::Debug,
+            "launch",
+            "activate-running",
+            || {
+                format!(
+                    "bundle={} pid={}",
+                    target.bundle_id,
+                    running.processIdentifier()
+                )
+            },
+        );
+    }
     let configuration = NSWorkspaceOpenConfiguration::configuration();
     configuration.setActivates(true);
     configuration.setCreatesNewApplicationInstance(false);
