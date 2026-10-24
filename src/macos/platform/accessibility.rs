@@ -869,6 +869,16 @@ fn find_fresh_window(pid: i32, id: u64) -> Result<Element, String> {
     Ok(Element(windows[index].0.clone()))
 }
 
+/// The window macOS currently considers focused in this application.
+///
+/// Used right after a switch to check that the app did not hand focus to one of
+/// its own internal windows, which leaves nothing visible in front.
+pub fn focused_window_id(pid: i32) -> Option<u64> {
+    let application = Element::application(pid)?;
+    let window = application.element("AXFocusedWindow").ok()?;
+    Some(window.id(pid))
+}
+
 /// Whether a window Winlane listed is still there, by identity. Native checks
 /// use it to show that every row they list stays selectable.
 #[cfg(test)]

@@ -238,6 +238,12 @@ impl Delegate {
                 return;
             }
         }
+        // Chromium-based apps can hand focus to an internal window right after
+        // activation, which leaves no visible window in front and looks like the
+        // desktop. Check again shortly afterwards and put the chosen window back,
+        // but never undo a switch the user made in the meantime.
+        let (pid, id) = (window.pid, window.id);
+        std::thread::spawn(move || retain_window_focus(pid, id));
         self.remember_window(window.id);
         let query = self.ivars().query.borrow().trim().to_lowercase();
         if !query.is_empty() {
@@ -367,5 +373,39 @@ impl Delegate {
                 "Could not hide the app. It may have quit."
             )),
         }
+    }
+}
+
+/// Re-raise a window whose app moved focus to one of its internal windows.
+///
+/// Runs on a background thread and stops as soon as the app is no longer in
+/// front, so a quick follow-up switch is never undone.
+fn retain_window_focus(pid: i32, id: u64) {
+    for (attempt, pause) in [(0u8, 80u64), (1, 120)] {
+        std::thread::sleep(std::time::Duration::from_millis(pause));
+        let frontmost = NSWorkspace::sharedWorkspace()
+            .frontmostApplication()
+            .map(|app| app.processIdentifier());
+        if frontmost != Some(pid) {
+            return;
+        }
+        if accessibility::focused_window_id(pid) == Some(id) {
+            return;
+        }
+        let _ = accessibility::raise_window(pid, id);
+        crate::macos::platform::logging::record(
+            crate::macos::platform::logging::Level::Debug,
+            "switch",
+            "focus-corrected",
+            || format!("app_pid={pid} window={id} attempt={attempt}"),
+        );
+    }
+    if accessibility::focused_window_id(pid) != Some(id) {
+        crate::macos::platform::logging::record(
+            crate::macos::platform::logging::Level::Debug,
+            "switch",
+            "focus-lost",
+            || format!("app_pid={pid} window={id}"),
+        );
     }
 }
