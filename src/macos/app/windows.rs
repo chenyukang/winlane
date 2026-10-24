@@ -380,6 +380,7 @@ impl Delegate {
 ///
 /// Runs on a background thread and stops as soon as the app is no longer in
 /// front, so a quick follow-up switch is never undone.
+#[allow(deprecated)]
 fn retain_window_focus(pid: i32, id: u64) {
     for (attempt, pause) in [(0u8, 80u64), (1, 120)] {
         std::thread::sleep(std::time::Duration::from_millis(pause));
@@ -391,6 +392,11 @@ fn retain_window_focus(pid: i32, id: u64) {
         }
         if accessibility::focused_window_id(pid) == Some(id) {
             return;
+        }
+        // Raise alone only moves focus; an app that ordered its window out needs
+        // the same activation a Dock click performs before the window is shown.
+        if let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) {
+            app.activateWithOptions(NSApplicationActivationOptions::ActivateAllWindows);
         }
         let _ = accessibility::raise_window(pid, id);
         crate::macos::platform::logging::record(
