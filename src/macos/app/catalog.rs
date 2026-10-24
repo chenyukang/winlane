@@ -349,7 +349,13 @@ impl Delegate {
     pub(super) fn activate_app(&self, app: &NSRunningApplication) -> bool {
         let current = NSRunningApplication::currentApplication();
         NSApplication::sharedApplication(self.mtm()).yieldActivationToApplication(app);
-        app.activateFromApplication_options(&current, NSApplicationActivationOptions::empty())
+        // A Dock click activates with `activateAllWindows`, which is what makes
+        // macOS show windows the app had ordered out; a bare activation can
+        // leave an app in front with nothing visible behind it.
+        app.activateFromApplication_options(
+            &current,
+            NSApplicationActivationOptions::ActivateAllWindows,
+        )
     }
 
     pub(super) fn application_icon(&self, app: &ApplicationTarget) -> Retained<NSImage> {
