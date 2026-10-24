@@ -385,17 +385,26 @@ impl Delegate {
 fn retain_window_focus(pid: i32, id: u64, server_id: Option<u32>) {
     for (attempt, pause) in [(0u8, 80u64), (1, 120)] {
         std::thread::sleep(std::time::Duration::from_millis(pause));
-        let frontmost = NSWorkspace::sharedWorkspace()
+        // Never undo a switch the user made in the meantime.
+        if NSWorkspace::sharedWorkspace()
             .frontmostApplication()
-            .map(|app| app.processIdentifier());
-        if frontmost != Some(pid) {
+            .map(|app| app.processIdentifier())
+            != Some(pid)
+        {
             return;
         }
-        if accessibility::focused_window_id(pid) == Some(id) {
+        let focused = accessibility::focused_window_id(pid) == Some(id);
+        // Focus says nothing about whether anything is drawn: the window can be
+        // on another desktop or ordered out while it still holds focus.
+        let onscreen = server_id.is_none_or(|server_id| {
+            crate::macos::platform::window_server::Inventory::try_read_onscreen()
+                .is_some_and(|inventory| inventory.contains(server_id))
+        });
+        if focused && onscreen {
             return;
         }
-        // Raise alone only moves focus; an app that ordered its window out needs
-        // the same activation a Dock click performs before the window is shown.
+        // Ask for the app's windows the way a Dock click does, then raise this
+        // one: that both shows an ordered-out window and moves focus back.
         if let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) {
             app.activateWithOptions(NSApplicationActivationOptions::ActivateAllWindows);
         }
@@ -403,7 +412,11 @@ fn retain_window_focus(pid: i32, id: u64, server_id: Option<u32>) {
         crate::macos::platform::logging::record(
             crate::macos::platform::logging::Level::Debug,
             "switch",
-            "focus-corrected",
+            if focused {
+                "focus-invisible"
+            } else {
+                "focus-corrected"
+            },
             || format!("app_pid={pid} window={id} attempt={attempt}"),
         );
     }
@@ -414,34 +427,5 @@ fn retain_window_focus(pid: i32, id: u64, server_id: Option<u32>) {
             "focus-lost",
             || format!("app_pid={pid} window={id}"),
         );
-        return;
     }
-    // Focus can be right while nothing is drawn: the window may sit on another
-    // desktop, or the app ordered it out. Ask the WindowServer whether it is on
-    // screen, and make one last attempt that shows every window of the app.
-    let Some(server_id) = server_id else {
-        return;
-    };
-    let onscreen = crate::macos::platform::window_server::Inventory::try_read_onscreen()
-        .is_some_and(|inventory| inventory.contains(server_id));
-    if onscreen {
-        return;
-    }
-    crate::macos::platform::logging::record(
-        crate::macos::platform::logging::Level::Debug,
-        "switch",
-        "focus-invisible",
-        || format!("app_pid={pid} window={id} server_id={server_id}"),
-    );
-    if NSWorkspace::sharedWorkspace()
-        .frontmostApplication()
-        .map(|app| app.processIdentifier())
-        != Some(pid)
-    {
-        return;
-    }
-    if let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) {
-        app.activateWithOptions(NSApplicationActivationOptions::ActivateAllWindows);
-    }
-    let _ = accessibility::raise_window(pid, id);
 }
