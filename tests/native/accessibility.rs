@@ -283,3 +283,19 @@ pub fn verify_identityless_twin_windows_are_dropped() {
         "an empty title is never used as a duplicate key"
     );
 }
+
+/// An application that never publishes its windows must not be probed on every
+/// scan: the pause grows with the streak and clears on a successful scan.
+pub fn verify_probe_backoff_grows_and_clears() {
+    assert_eq!(probe_cooldown(0), std::time::Duration::ZERO);
+    assert_eq!(probe_cooldown(1), std::time::Duration::from_secs(5));
+    assert_eq!(probe_cooldown(2), std::time::Duration::from_secs(15));
+    assert_eq!(probe_cooldown(9), std::time::Duration::from_secs(60));
+    let pid = 987_654;
+    assert!(probe_allowed(pid), "an unknown application is probed");
+    record_probe(pid, false);
+    assert!(!probe_allowed(pid), "a failure pauses probing");
+    record_probe(pid, false);
+    record_probe(pid, true);
+    assert!(probe_allowed(pid), "a successful scan clears the pause");
+}

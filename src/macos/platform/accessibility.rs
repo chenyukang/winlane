@@ -382,6 +382,43 @@ fn all_windows(
     )
 }
 
+/// How long to stop probing an application whose windows accessibility never
+/// publishes. Every attempt costs the whole probe budget, and some apps (WeChat,
+/// Warp, Code) never answer, so retrying them on every scan only slows the scan
+/// down without ever resolving anything.
+fn probe_cooldown(streak: u32) -> Duration {
+    match streak {
+        0 => Duration::ZERO,
+        1 => Duration::from_secs(5),
+        2 => Duration::from_secs(15),
+        _ => Duration::from_secs(60),
+    }
+}
+
+fn probe_until() -> &'static Mutex<HashMap<i32, (Instant, u32)>> {
+    static UNTIL: OnceLock<Mutex<HashMap<i32, (Instant, u32)>>> = OnceLock::new();
+    UNTIL.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Whether this application may be probed now. A streak of failures pauses the
+/// probing, and any successful scan clears it.
+fn probe_allowed(pid: i32) -> bool {
+    let until = probe_until().lock().unwrap();
+    until
+        .get(&pid)
+        .is_none_or(|(paused_until, _)| Instant::now() >= *paused_until)
+}
+
+fn record_probe(pid: i32, resolved: bool) {
+    let mut until = probe_until().lock().unwrap();
+    if resolved {
+        until.remove(&pid);
+        return;
+    }
+    let streak = until.get(&pid).map_or(1, |(_, streak)| streak + 1);
+    until.insert(pid, (Instant::now() + probe_cooldown(streak), streak));
+}
+
 fn complete_windows(
     published: Vec<Element>,
     pid: i32,
@@ -454,6 +491,12 @@ fn complete_windows(
     if invalid_cached_element {
         scan.next = 0;
     }
+    if !probe_allowed(pid) {
+        // This application never publishes these windows; probing it again would
+        // spend the whole budget for nothing.
+        remote_scans().lock().unwrap().insert(pid, scan);
+        return windows;
+    }
     let started = Instant::now();
     while !missing.is_empty() && started.elapsed() < Duration::from_millis(250) {
         let element_id = scan.next;
@@ -478,6 +521,7 @@ fn complete_windows(
             scan.next
         )
     });
+    record_probe(pid, missing.is_empty());
     remote_scans().lock().unwrap().insert(pid, scan);
     windows
 }
