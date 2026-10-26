@@ -568,6 +568,21 @@ fn remembered_element(pid: i32, id: u64) -> Option<Element> {
     }))
 }
 
+/// An app can publish a second, hidden window with the same title and no
+/// WindowServer identity. It looks like a duplicate row and cannot be raised
+/// reliably, so the window that has an identity wins.
+fn drop_identityless_twins(windows: &mut Vec<(WindowInfo, Option<u32>)>) {
+    let identified: HashSet<String> = windows
+        .iter()
+        .filter(|(_, server_id)| server_id.is_some())
+        .map(|(window, _)| window.title.clone())
+        .filter(|title| !title.is_empty())
+        .collect();
+    windows.retain(|(window, server_id)| {
+        server_id.is_some() || window.title.is_empty() || !identified.contains(&window.title)
+    });
+}
+
 fn scan_application(
     pid: i32,
     app: &str,
@@ -702,6 +717,7 @@ fn scan_application(
             },
         );
     }
+    drop_identityless_twins(&mut results);
     Ok(results)
 }
 
@@ -1066,11 +1082,11 @@ pub fn activation_window_state(
         }
         Err(code) => state.ax_error = Some(code),
     }
-    if let Some(id) = expected_server.or(state.focused_server_id)
-        && let Some(inventory) = Inventory::try_read()
-    {
-        state.alive = Some(inventory.contains(id));
-        state.on_screen = Some(inventory.is_on_screen(id));
+    if let Some(id) = expected_server.or(state.focused_server_id) {
+        // An off-Space window is still alive. Check existence independently
+        // from the on-screen list used to confirm a visible handoff.
+        state.alive = Inventory::try_read().map(|inventory| inventory.contains(id));
+        state.on_screen = Inventory::try_read_onscreen().map(|inventory| inventory.contains(id));
     }
     state
 }

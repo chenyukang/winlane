@@ -1,6 +1,5 @@
 use core_foundation::array::{CFArray, CFArrayRef};
 use core_foundation::base::{CFType, TCFType};
-use core_foundation::boolean::CFBoolean;
 use core_foundation::dictionary::CFDictionary;
 use core_foundation::number::CFNumber;
 use core_foundation::string::CFString;
@@ -55,7 +54,6 @@ pub fn window_center(id: u32) -> Option<(f64, f64)> {
 pub struct Inventory {
     pub normal: HashMap<i32, HashSet<u32>>,
     known: HashSet<u32>,
-    on_screen: HashSet<u32>,
 }
 
 impl Inventory {
@@ -64,9 +62,19 @@ impl Inventory {
     }
 
     pub fn try_read() -> Option<Self> {
+        Self::read_with(1 << 4)
+    }
+
+    /// Only the windows currently drawn on a visible desktop. A window on another
+    /// Space, or one the app ordered out, is missing here even though it exists.
+    pub fn try_read_onscreen() -> Option<Self> {
+        Self::read_with((1 << 0) | (1 << 4))
+    }
+
+    fn read_with(options: u32) -> Option<Self> {
         // SAFETY: All windows, excluding desktop surfaces. This reads metadata,
         // not pixels or window titles, and does not request screen recording.
-        let raw = unsafe { CGWindowListCopyWindowInfo(1 << 4, 0) };
+        let raw = unsafe { CGWindowListCopyWindowInfo(options, 0) };
         if raw.is_null() {
             return None;
         }
@@ -84,12 +92,6 @@ impl Inventory {
                 continue;
             };
             inventory.known.insert(id);
-            if value_for(&dict, "kCGWindowIsOnscreen")
-                .and_then(|value| value.downcast_into::<CFBoolean>())
-                .is_some_and(bool::from)
-            {
-                inventory.on_screen.insert(id);
-            }
             let Some(pid) =
                 integer(&dict, "kCGWindowOwnerPID").and_then(|pid| i32::try_from(pid).ok())
             else {
@@ -115,10 +117,6 @@ impl Inventory {
 
     pub fn contains(&self, id: u32) -> bool {
         self.known.contains(&id)
-    }
-
-    pub fn is_on_screen(&self, id: u32) -> bool {
-        self.on_screen.contains(&id)
     }
 
     pub fn rejects(&self, pid: i32, id: u32) -> bool {

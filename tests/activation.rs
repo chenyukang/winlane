@@ -127,3 +127,16 @@ fn rejected_request_retries_but_exit_closed_window_and_deadline_are_terminal() {
         Decision::Failed(Failure::WindowClosed)
     );
 }
+
+#[test]
+fn focused_but_invisible_window_is_raised_and_must_settle_after_becoming_visible() {
+    let mut r = request();
+    let visible = observed(20, 7);
+    assert_eq!(r.decide(ms(0), visible, false), Decision::Wait);
+    let mut hidden = visible;
+    hidden.window.on_screen = Some(false);
+    assert_eq!(r.decide(ms(50), hidden, false), Decision::Raise);
+    assert_eq!(r.decide(ms(100), visible, false), Decision::Wait);
+    assert_eq!(r.decide(ms(149), visible, false), Decision::Wait);
+    assert_eq!(r.decide(ms(150), visible, false), Decision::Confirmed);
+}

@@ -71,6 +71,7 @@ pub fn verify_hidden_panels() {
     // Focused regression suite, independent of event-tap / system permissions.
     if std::env::var_os("WINLANE_ACTIVATION_SMOKE").is_some() {
         accessibility::tests::verify_failed_lookup_keeps_window_metadata();
+        accessibility::tests::verify_identityless_twin_windows_are_dropped();
         window_activation::verify(mtm);
         application_activation::verify_application_activation(mtm);
         verify_async_focus_order(mtm);
@@ -163,6 +164,7 @@ pub fn verify_hidden_panels() {
     verify_open_panel_rechecks_window_liveness(mtm);
 
     accessibility::tests::verify_rebuilt_identity_lookup();
+    accessibility::tests::verify_identityless_twin_windows_are_dropped();
     delegate.ivars().demo.set(true);
     delegate.ivars().windows.replace(demo_windows());
     delegate.ivars().mode.set(Some(PanelMode::Search));

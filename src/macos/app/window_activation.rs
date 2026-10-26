@@ -400,6 +400,34 @@ impl Delegate {
 
     fn raise_activation_window(&self, id: u64) {
         self.cancel_interrupted_window_activation();
+        let pid = {
+            let slot = self.ivars().window_activation.borrow();
+            let Some(p) = slot.as_ref().filter(|p| p.id == id) else {
+                return;
+            };
+            p.window.pid
+        };
+        let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) else {
+            self.fail_window_activation(id, "app-exited", json!({}));
+            return;
+        };
+        // Like a Dock click, restore ordered-out windows before correcting
+        // focus. Keep retries inside the cancellable, bounded handoff.
+        let allowed = self.activate_app(&app);
+        if let Some(p) = self
+            .ivars()
+            .window_activation
+            .borrow()
+            .as_ref()
+            .filter(|p| p.id == id)
+        {
+            p.trace(
+                "cooperative-result",
+                Level::Info,
+                json!({"allowed":allowed,"reason":"show-window-retry"}),
+            );
+        }
+        self.cancel_interrupted_window_activation();
         let task = {
             let mut slot = self.ivars().window_activation.borrow_mut();
             let Some(p) = slot.as_mut().filter(|p| p.id == id) else {
