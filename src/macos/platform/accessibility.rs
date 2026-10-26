@@ -215,11 +215,7 @@ impl Element {
             self.attribute_once(name)
         });
         self.set_timeout(READ_TIMEOUT);
-        if let Err(code) = &result {
-            record(Level::Debug, "accessibility", "attribute-error", || {
-                format!("attribute={name} code={code}")
-            });
-        }
+
         result
     }
 
@@ -315,9 +311,7 @@ impl Element {
         } else {
             None
         };
-        record(Level::Debug, "accessibility", "candidate", || {
-            format!("role={role:?} subrole={subrole:?}")
-        });
+
         switchable_window_role(role.as_deref(), subrole.as_deref(), minimized)
     }
 
