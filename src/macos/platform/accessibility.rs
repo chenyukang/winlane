@@ -754,17 +754,9 @@ pub fn activated_window(pid: i32, app: &str) -> Option<(WindowInfo, Option<u32>)
 }
 
 pub fn focused_window_server_id(pid: i32, policy: FocusRead) -> Option<u32> {
-    let application = Element::application(pid)?;
-    let value = read_focused_window(policy, |timeout| {
-        application.set_timeout(timeout);
-        application.attribute_once("AXFocusedWindow")
-    })
-    .ok()?;
-    // SAFETY: The owned attribute is checked before treating it as an AX element.
-    if unsafe { CFGetTypeID(value.as_CFTypeRef()) } != unsafe { AXUIElementGetTypeID() } {
-        return None;
-    }
-    Element(value).server_id()
+    // One reader for the focused window: this only asks it for the identity the
+    // WindowServer assigned instead of reading the attribute a second time.
+    focused_element(pid, policy)?.server_id()
 }
 
 pub fn project_windows(pid: i32) -> Vec<winlane::features::projects::focus::Window> {
