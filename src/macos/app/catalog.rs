@@ -128,14 +128,17 @@ impl Delegate {
         crate::macos::platform::recency_trace::record("inventory", || {
             format!(
                 "windows={:?} apps={:?} recent={:?}",
-                windows.iter().map(|w| (w.id, w.pid)).collect::<Vec<_>>(),
+                crate::macos::platform::recency_trace::brief(
+                    &windows.iter().map(|w| (w.id, w.pid)).collect::<Vec<_>>(),
+                    8
+                ),
                 self.ivars()
                     .identities
                     .borrow()
                     .iter()
                     .map(|(pid, app)| (*pid, &app.id))
                     .collect::<Vec<_>>(),
-                self.ivars().recency.borrow(),
+                crate::macos::platform::recency_trace::brief(&self.ivars().recency.borrow(), 8),
             )
         });
         self.update_aliases(&windows);

@@ -123,8 +123,11 @@ impl Delegate {
                 !query.is_empty(),
                 self.ivars().previous_pid.get(),
                 self.ivars().previous_window.get(),
-                matched.iter().map(|&i| windows[i].id).collect::<Vec<_>>(),
-                self.ivars().recency.borrow(),
+                crate::macos::platform::recency_trace::brief(
+                    &matched.iter().map(|&i| windows[i].id).collect::<Vec<_>>(),
+                    8
+                ),
+                crate::macos::platform::recency_trace::brief(&self.ivars().recency.borrow(), 8),
             )
         });
         let command_matches = if self.ivars().mode.get() == Some(PanelMode::Search)
