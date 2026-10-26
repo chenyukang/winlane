@@ -16,7 +16,7 @@ fn pending(delegate: &Delegate, id: u64) {
     let request = PendingWindowActivation::new(
         id,
         state.session.get(),
-        window,
+        &window,
         "example.activation-test".into(),
         "sensitive-search-not-for-logs".into(),
         Some(-10),
@@ -24,6 +24,10 @@ fn pending(delegate: &Delegate, id: u64) {
     );
     request.trace("requested", logging::Level::Info, serde_json::json!({}));
     state.window_activation.replace(Some(request));
+    install_timer(delegate);
+}
+
+fn install_timer(delegate: &Delegate) -> Retained<NSTimer> {
     let timer = unsafe {
         NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
             60.0,
@@ -33,7 +37,11 @@ fn pending(delegate: &Delegate, id: u64) {
             true,
         )
     };
-    state.window_activation_timer.replace(Some(timer));
+    delegate
+        .ivars()
+        .window_activation_timer
+        .replace(Some(timer.clone()));
+    timer
 }
 fn observed(front: i32) -> Observation {
     Observation {
@@ -66,6 +74,16 @@ pub(super) fn verify(mtm: MainThreadMarker) {
     let before = state.recency.borrow().clone();
     pending(&delegate, 1001);
     delegate.observe_window_activation(1001, observed(-10));
+    let token = {
+        let slot = state.window_activation.borrow();
+        let request = slot.as_ref().unwrap();
+        request.trace(
+            "field-override",
+            logging::Level::Info,
+            serde_json::json!({"front_pid":-20,"on_screen":null}),
+        );
+        request.current.clone()
+    };
     assert!(state.window_activation.borrow().is_some());
     assert_eq!(
         *state.recency.borrow(),
@@ -90,6 +108,10 @@ pub(super) fn verify(mtm: MainThreadMarker) {
     }
     delegate.observe_window_activation(1001, observed(-20));
     assert!(state.window_activation.borrow().is_none());
+    assert!(
+        !token.load(Ordering::Acquire),
+        "confirmation revokes AX write permission"
+    );
     assert!(!timer.isValid());
     assert_eq!(state.recency.borrow()[0], 7);
     assert_eq!(
@@ -123,8 +145,27 @@ pub(super) fn verify(mtm: MainThreadMarker) {
     assert!(state.window_activation.borrow().is_none());
     delegate.end_session();
     pending(&delegate, 1003);
+    let token = state
+        .window_activation
+        .borrow()
+        .as_ref()
+        .unwrap()
+        .current
+        .clone();
+    let timer = state
+        .window_activation_timer
+        .borrow()
+        .as_ref()
+        .unwrap()
+        .clone();
     delegate.finish_window_activation(1002, Decision::Cancelled, observed(-10));
     delegate.finish_window_activation(1002, Decision::Confirmed, observed(-20));
+    delegate.finish_window_activation(1002, Decision::Failed(Failure::TimedOut), observed(-10));
+    assert!(
+        token.load(Ordering::Acquire),
+        "stale callbacks cannot revoke a newer request"
+    );
+    assert!(timer.isValid(), "stale callbacks cannot stop a newer timer");
     assert_eq!(
         state.window_activation.borrow().as_ref().unwrap().id,
         1003,
@@ -134,7 +175,19 @@ pub(super) fn verify(mtm: MainThreadMarker) {
     delegate.finish_window_activation(1003, Decision::Failed(Failure::TimedOut), observed(-10));
     assert!(state.window_activation.borrow().is_none());
     assert!(state.window_activation_timer.borrow().is_none());
+    assert!(
+        !token.load(Ordering::Acquire),
+        "failure revokes AX write permission"
+    );
+    assert!(!timer.isValid());
     assert_eq!(*state.recency.borrow(), before);
+    let orphan = install_timer(&delegate);
+    delegate.cancel_window_activation("orphan-timer-test");
+    assert!(
+        !orphan.isValid(),
+        "cancellation cleans up a timer even without a request"
+    );
+    assert!(state.window_activation_timer.borrow().is_none());
 
     let operations = std::cell::RefCell::new(Vec::new());
     assert!(
@@ -153,6 +206,27 @@ pub(super) fn verify(mtm: MainThreadMarker) {
     assert!(contents.contains("event=\"confirmed\""));
     assert!(contents.contains("event=\"failed\""));
     assert!(contents.contains("event=\"cancelled\""));
+    let override_line = contents
+        .lines()
+        .find(|line| line.contains("event=\"field-override\""))
+        .unwrap();
+    let encoded = override_line.split_once(" data=").unwrap().1;
+    let data: String = serde_json::from_str(encoded).unwrap();
+    let fields: serde_json::Value = serde_json::from_str(&data).unwrap();
+    assert_eq!(
+        fields["front_pid"], -20,
+        "explicit fields override the previous observation"
+    );
+    assert!(
+        fields["on_screen"].is_null(),
+        "an explicit null also overrides an observed value"
+    );
+    assert_eq!(
+        fields["focused_id"], 7,
+        "unspecified observation fields are retained"
+    );
+    assert_eq!(fields["target_pid"], -20);
+    assert_eq!(fields["window_id"], 7);
     assert!(!contents.contains("sensitive-window-title"));
     assert!(!contents.contains("sensitive-search"));
     println!(

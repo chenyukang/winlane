@@ -290,6 +290,25 @@ pub fn verify_failed_lookup_keeps_window_metadata() {
         800,
         "only invalidating an actual cached token restarts discovery"
     );
+    // Force the hazardous interleaving deterministically: retain a snapshot,
+    // release its original owner, then replace and remove the cache's handle
+    // before using that snapshot. No remote application is queried or changed.
+    let snapshot = {
+        let remembered = remembered_windows().lock().unwrap();
+        let cached = &remembered[&pid][&server];
+        // SAFETY: The cache and the original element both own this live object.
+        let before = unsafe { core_foundation::base::CFGetRetainCount(element.raw()) };
+        let snapshot = cached.element();
+        // SAFETY: The original element remains owned until after this assertion.
+        assert_eq!(
+            unsafe { core_foundation::base::CFGetRetainCount(element.raw()) },
+            before + 1,
+            "the snapshot must own its reference before the cache is unlocked"
+        );
+        snapshot
+    };
+    let snapshot_id = snapshot.id(pid);
+    drop(element);
     let fresh = Element::application(std::process::id() as i32).unwrap();
     refresh_remembered_element(pid, server, &fresh);
     {
@@ -316,8 +335,13 @@ pub fn verify_failed_lookup_keeps_window_metadata() {
     assert!(remembered_windows().lock().unwrap()[&pid].contains_key(&server));
     remembered_windows().lock().unwrap().remove(&pid);
     remote_scans().lock().unwrap().remove(&pid);
+    assert_eq!(
+        snapshot.id(pid),
+        snapshot_id,
+        "the snapshot remains usable after the original and cache references are released"
+    );
     println!(
-        "Failed AX rediscovery preserves window metadata, refreshes handles and carries the server identity; repeated failures do not restart recovery; no application windows changed."
+        "Failed AX rediscovery preserves window metadata and server identity; retained snapshots survive cache replacement/removal; repeated failures do not restart recovery; no application windows changed."
     );
 }
 

@@ -122,6 +122,15 @@ struct RememberedWindow {
     element: usize,
 }
 
+impl RememberedWindow {
+    /// Call while holding the cache lock, before another worker can replace
+    /// or release the cache's reference. AX reads happen after unlocking.
+    fn element(&self) -> Element {
+        // SAFETY: The cache owns a live retain; give this snapshot its own.
+        Element(unsafe { CFType::wrap_under_get_rule(self.element as CFTypeRef) })
+    }
+}
+
 impl Drop for RememberedWindow {
     fn drop(&mut self) {
         // SAFETY: `element` was retained when this entry was created.
@@ -561,11 +570,7 @@ fn remembered_element(pid: i32, id: u64) -> Option<Element> {
     let remembered = remembered_windows().lock().unwrap();
     let scan = remembered.get(&pid)?;
     let entry = scan.values().find(|entry| entry.id == id)?;
-    // SAFETY: the address was retained when the window was remembered; the
-    // returned wrapper takes its own reference.
-    Some(Element(unsafe {
-        CFType::wrap_under_get_rule(entry.element as CFTypeRef)
-    }))
+    Some(entry.element())
 }
 
 /// An app can publish a second, hidden window with the same title and no
@@ -629,7 +634,7 @@ fn scan_application(
         // workers and find_window also need.
         struct Pending {
             server_id: u32,
-            element_addr: usize,
+            element: Element,
             fallback_title: String,
             fallback_minimized: bool,
             id: u64,
@@ -642,7 +647,7 @@ fn scan_application(
                     if let Some(entry) = entries.get(server_id) {
                         pending.push(Pending {
                             server_id: *server_id,
-                            element_addr: entry.element,
+                            element: entry.element(),
                             fallback_title: entry.title.clone(),
                             fallback_minimized: entry.minimized,
                             id: entry.id,
@@ -655,12 +660,12 @@ fn scan_application(
         let mut updates = Vec::new();
         let mut new_results = Vec::new();
         for entry in pending {
-            // SAFETY: the address was retained when the window was remembered;
-            // the wrapper takes its own reference.
-            let element =
-                Element(unsafe { CFType::wrap_under_get_rule(entry.element_addr as CFTypeRef) });
-            let title = element.string("AXTitle").unwrap_or(entry.fallback_title);
-            let minimized = element
+            let title = entry
+                .element
+                .string("AXTitle")
+                .unwrap_or(entry.fallback_title);
+            let minimized = entry
+                .element
                 .boolean("AXMinimized")
                 .unwrap_or(entry.fallback_minimized);
             updates.push((entry.server_id, title.clone(), minimized));
@@ -792,17 +797,7 @@ pub fn activated_window(pid: i32, app: &str) -> Option<(WindowInfo, Option<u32>)
 }
 
 pub fn focused_window_server_id(pid: i32, policy: FocusRead) -> Option<u32> {
-    let application = Element::application(pid)?;
-    let value = read_focused_window(policy, |timeout| {
-        application.set_timeout(timeout);
-        application.attribute_once("AXFocusedWindow")
-    })
-    .ok()?;
-    // SAFETY: The owned attribute is checked before treating it as an AX element.
-    if unsafe { CFGetTypeID(value.as_CFTypeRef()) } != unsafe { AXUIElementGetTypeID() } {
-        return None;
-    }
-    Element(value).server_id()
+    focused_element(pid, policy)?.server_id()
 }
 
 pub fn project_windows(pid: i32) -> Vec<winlane::features::projects::focus::Window> {

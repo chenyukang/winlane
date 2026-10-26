@@ -16,7 +16,6 @@ pub(super) struct PendingWindowActivation {
     pub(super) id: u64,
     pub(super) started: Instant,
     pub(super) session: u64,
-    pub(super) window: WindowInfo,
     pub(super) bundle: String,
     pub(super) query: String,
     pub(super) policy: Activation,
@@ -33,7 +32,7 @@ impl PendingWindowActivation {
     pub(super) fn new(
         id: u64,
         session: u64,
-        window: WindowInfo,
+        window: &WindowInfo,
         bundle: String,
         query: String,
         origin: Option<i32>,
@@ -51,7 +50,6 @@ impl PendingWindowActivation {
                 origin,
                 std::process::id() as i32,
             ),
-            window,
             bundle,
             query,
             current: Arc::new(AtomicBool::new(true)),
@@ -65,39 +63,63 @@ impl PendingWindowActivation {
     }
 
     fn base(&self) -> Value {
-        json!({"test_mode":cfg!(test),"request_id":self.id,"session":self.session,"target_pid":self.window.pid,
-            "bundle_id":self.bundle,"window_id":self.window.id,"server_id":self.policy.server_id,
+        let mut base = json!({"test_mode":cfg!(test),"request_id":self.id,"session":self.session,"target_pid":self.policy.target_pid,
+            "bundle_id":self.bundle,"window_id":self.policy.window_id,"server_id":self.policy.server_id,
             "origin_pid":self.policy.origin_pid,"phase":if self.policy.fallback {"launchservices"} else {"cooperative"},
-            "raise_attempt":self.policy.raises})
+            "raise_attempt":self.policy.raises});
+        if let Some(o) = self.last_observation {
+            base["front_pid"] = json!(o.front_pid);
+            base["active"] = json!(o.active);
+            base["running"] = json!(o.running);
+            base["focused_id"] = json!(o.window.focused_id);
+            base["focused_server_id"] = json!(o.window.focused_server_id);
+            base["on_screen"] = json!(o.window.on_screen);
+            base["alive"] = json!(o.window.alive);
+            base["ax_error"] = json!(o.window.ax_error);
+        }
+        base
     }
 
-    pub(super) fn trace(&self, event: &str, level: Level, mut extra: Value) {
-        if let Some(o) = self.last_observation {
-            let fields = json!({"front_pid":o.front_pid,"active":o.active,"running":o.running,
-                "focused_id":o.window.focused_id,"focused_server_id":o.window.focused_server_id,
-                "on_screen":o.window.on_screen,"alive":o.window.alive,"ax_error":o.window.ax_error});
-            for (key, value) in fields.as_object().unwrap() {
-                if extra.get(key).is_none() {
-                    extra[key] = value.clone();
-                }
-            }
-        }
-        trace(self.base(), self.started, event, level, extra);
+    pub(super) fn trace(&self, event: &str, level: Level, extra: Value) {
+        trace(|| self.base(), self.started, event, level, extra);
     }
 }
 
-fn trace(mut base: Value, started: Instant, event: &str, level: Level, extra: Value) {
+fn trace(base: impl FnOnce() -> Value, started: Instant, event: &str, level: Level, extra: Value) {
     logging::record(level, "window-activation", event, || {
-        for (key, value) in extra.as_object().unwrap() {
-            base[key] = value.clone();
-        }
+        let mut base = base();
+        let Value::Object(extra) = extra else {
+            unreachable!("activation log fields must be an object");
+        };
+        base.as_object_mut().unwrap().extend(extra);
         base["elapsed_ms"] = json!(started.elapsed().as_secs_f64() * 1000.0);
         base.to_string()
     });
 }
 
+fn app_observation(pid: i32, bundle: &str, window: WindowState) -> Observation {
+    let app = NSRunningApplication::runningApplicationWithProcessIdentifier(pid);
+    Observation {
+        front_pid: NSWorkspace::sharedWorkspace()
+            .frontmostApplication()
+            .map(|app| app.processIdentifier()),
+        active: app.as_ref().is_some_and(|a| a.isActive()),
+        running: app.as_ref().is_some_and(|a| {
+            !a.isTerminated()
+                && (bundle.is_empty()
+                    || a.bundleIdentifier()
+                        .is_some_and(|id| id.to_string() == bundle))
+        }),
+        window,
+    }
+}
+
 impl Delegate {
-    pub(super) fn request_window_activation(&self, window: WindowInfo, app: &NSRunningApplication) {
+    pub(super) fn request_window_activation(
+        &self,
+        window: &WindowInfo,
+        app: &NSRunningApplication,
+    ) {
         self.cancel_window_activation("superseded");
         let state = self.ivars();
         let id = state.activation_sequence.get().wrapping_add(1);
@@ -113,7 +135,7 @@ impl Delegate {
         let pending = PendingWindowActivation::new(
             id,
             state.session.get(),
-            window.clone(),
+            window,
             app.bundleIdentifier()
                 .map(|id| id.to_string())
                 .unwrap_or_default(),
@@ -170,8 +192,7 @@ impl Delegate {
     }
 
     pub(super) fn cancel_window_activation(&self, reason: &str) {
-        if let Some(pending) = self.ivars().window_activation.take() {
-            pending.current.store(false, Ordering::Release);
+        if let Some(pending) = self.take_window_activation(None) {
             let front = NSWorkspace::sharedWorkspace()
                 .frontmostApplication()
                 .map(|app| app.processIdentifier());
@@ -180,9 +201,6 @@ impl Delegate {
                 Level::Info,
                 json!({"reason":reason,"front_pid":front}),
             );
-        }
-        if let Some(timer) = self.ivars().window_activation_timer.take() {
-            timer.invalidate();
         }
     }
 
@@ -211,25 +229,11 @@ impl Delegate {
             .window_activation
             .borrow()
             .as_ref()
-            .map(|p| (p.window.pid, p.bundle.clone()))
+            .map(|p| (p.policy.target_pid, p.bundle.clone()))
         else {
             return;
         };
-        let app = NSRunningApplication::runningApplicationWithProcessIdentifier(pid);
-        let front = NSWorkspace::sharedWorkspace()
-            .frontmostApplication()
-            .map(|app| app.processIdentifier());
-        let mut observation = Observation {
-            front_pid: front,
-            active: app.as_ref().is_some_and(|a| a.isActive()),
-            running: app.as_ref().is_some_and(|a| {
-                !a.isTerminated()
-                    && (bundle.is_empty()
-                        || a.bundleIdentifier()
-                            .is_some_and(|id| id.to_string() == bundle))
-            }),
-            window: WindowState::default(),
-        };
+        let mut observation = app_observation(pid, &bundle, WindowState::default());
         let (id, guard_decision) = {
             let mut slot = self.ivars().window_activation.borrow_mut();
             let Some(pending) = slot.as_mut() else {
@@ -334,18 +338,7 @@ impl Delegate {
         if let Some(window) = sample {
             // Use current AppKit state, not the state at worker launch. A late
             // AX response from the target cannot undo a user's newer app switch.
-            observation.front_pid = NSWorkspace::sharedWorkspace()
-                .frontmostApplication()
-                .map(|app| app.processIdentifier());
-            observation.active = app.as_ref().is_some_and(|a| a.isActive());
-            observation.running = app.as_ref().is_some_and(|a| {
-                !a.isTerminated()
-                    && (bundle.is_empty()
-                        || a.bundleIdentifier()
-                            .is_some_and(|id| id.to_string() == bundle))
-            });
-            observation.window = window;
-            self.observe_window_activation(id, observation);
+            self.observe_window_activation(id, app_observation(pid, &bundle, window));
         }
         self.start_activation_probe(id);
     }
@@ -387,7 +380,7 @@ impl Delegate {
             let (tx, rx) = mpsc::channel();
             p.probe = Some((now, rx));
             p.next_probe = now + VERIFY_INTERVAL;
-            (p.window.pid, p.policy.server_id, tx)
+            (p.policy.target_pid, p.policy.server_id, tx)
         };
         let wake = self.ivars().wake.get().unwrap().handle();
         std::thread::spawn(move || {
@@ -405,7 +398,7 @@ impl Delegate {
             let Some(p) = slot.as_ref().filter(|p| p.id == id) else {
                 return;
             };
-            p.window.pid
+            p.policy.target_pid
         };
         let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) else {
             self.fail_window_activation(id, "app-exited", json!({}));
@@ -439,8 +432,8 @@ impl Delegate {
             let (tx, rx) = mpsc::channel();
             p.raise = Some(rx);
             (
-                p.window.pid,
-                p.window.id,
+                p.policy.target_pid,
+                p.policy.window_id,
                 p.current.clone(),
                 p.started,
                 p.base(),
@@ -459,7 +452,7 @@ impl Delegate {
                 &current,
                 &|operation, status, code| {
                     trace(
-                        task.4.clone(),
+                        || task.4.clone(),
                         task.3,
                         "ax-step",
                         Level::Info,
@@ -480,7 +473,7 @@ impl Delegate {
                 return;
             };
             p.trace("fallback-requested", Level::Info, json!({}));
-            p.window.pid
+            p.policy.target_pid
         };
         let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) else {
             self.fail_window_activation(id, "app-exited", json!({}));
@@ -521,23 +514,22 @@ impl Delegate {
         }
         match decision {
             Decision::Confirmed => {
-                let Some(pending) = self.take_window_activation(id) else {
+                let Some(mut pending) = self.take_window_activation(Some(id)) else {
                     return;
                 };
-                let mut pending = pending;
                 pending.last_observation = Some(observation);
                 pending.trace(
                     "confirmed",
                     Level::Info,
                     json!({"stable_ms":pending.policy.stable_ms(pending.started.elapsed())}),
                 );
-                self.remember_window(pending.window.id);
+                self.remember_window(pending.policy.window_id);
                 if !pending.query.is_empty() {
                     let mut preferences = self.ivars().preferences.borrow_mut();
                     if preferences.len() > 128 {
                         preferences.clear();
                     }
-                    preferences.insert(pending.query, pending.window.id);
+                    preferences.insert(pending.query, pending.policy.window_id);
                 }
             }
             Decision::Cancelled => self.cancel_window_activation("foreground-changed"),
@@ -565,32 +557,37 @@ impl Delegate {
         }
     }
 
-    fn take_window_activation(&self, id: u64) -> Option<PendingWindowActivation> {
-        if !self
-            .ivars()
-            .window_activation
-            .borrow()
-            .as_ref()
-            .is_some_and(|p| p.id == id)
+    /// A specific ID protects newer requests from stale completions. None
+    /// cancels unconditionally and also cleans up a timer without a request.
+    fn take_window_activation(&self, id: Option<u64>) -> Option<PendingWindowActivation> {
+        let state = self.ivars();
+        if let Some(id) = id
+            && !state
+                .window_activation
+                .borrow()
+                .as_ref()
+                .is_some_and(|p| p.id == id)
         {
             return None;
         }
-        let pending = self.ivars().window_activation.take()?;
-        pending.current.store(false, Ordering::Release);
-        if let Some(timer) = self.ivars().window_activation_timer.take() {
+        let pending = state.window_activation.take();
+        if let Some(pending) = &pending {
+            pending.current.store(false, Ordering::Release);
+        }
+        if let Some(timer) = state.window_activation_timer.take() {
             timer.invalidate();
         }
-        Some(pending)
+        pending
     }
 
     fn fail_window_activation(&self, id: u64, reason: &str, mut extra: Value) {
-        let Some(pending) = self.take_window_activation(id) else {
+        let Some(pending) = self.take_window_activation(Some(id)) else {
             return;
         };
         extra["reason"] = json!(reason);
         pending.trace("failed", Level::Warn, extra);
         if reason == "window-closed" {
-            self.remove_closed_windows(&[pending.window.id]);
+            self.remove_closed_windows(&[pending.policy.window_id]);
         }
         // Do not reopen our UI over a newer user task or a new Winlane session.
         let front = NSWorkspace::sharedWorkspace()
@@ -601,7 +598,7 @@ impl Delegate {
             || self.ivars().mode.get().is_some()
             || front.is_some_and(|pid| {
                 Some(pid) != pending.policy.origin_pid
-                    && pid != pending.window.pid
+                    && pid != pending.policy.target_pid
                     && pid != std::process::id() as i32
             })
         {
@@ -614,5 +611,19 @@ impl Delegate {
             "Could not confirm the selected window is in front. Retry or check the logs."
         ));
         self.present_panels();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn disabled_activation_logs_do_not_build_the_request_snapshot() {
+        super::trace(
+            || panic!("disabled logs must not build request fields"),
+            std::time::Instant::now(),
+            "disabled",
+            super::Level::Off,
+            serde_json::json!({}),
+        );
     }
 }

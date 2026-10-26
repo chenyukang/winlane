@@ -172,7 +172,7 @@ impl Delegate {
             ));
             return;
         }
-        self.request_window_activation(window.clone(), &target_app);
+        self.request_window_activation(window, &target_app);
     }
 
     /// The bundle identifier the last scan recorded for a window's app. The
