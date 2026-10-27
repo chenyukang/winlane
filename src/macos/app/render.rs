@@ -294,8 +294,8 @@ impl Delegate {
         ui.mode_label
             .setStringValue(&NSString::from_str(&if alias_query.is_empty() {
                 trf!(
-                    "切换模式 · {} 选择 · 松开 {} 或 ↵ 确认 · 输入 > 名字 可重命名",
-                    "Switch · {} to select · Release {} or ↵ to confirm · Type > to name",
+                    "切换模式 · {} 选择 · 松开 {} 或 ↵ 确认 · 空格搜索后输入 > 重命名",
+                    "Switch · {} to select · Release {} or ↵ · Space to search, then > to name",
                     config.switch_shortcut.display(),
                     config.switch_shortcut.release_label()
                 )
