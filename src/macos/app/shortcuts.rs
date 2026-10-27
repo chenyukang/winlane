@@ -61,13 +61,30 @@ impl Delegate {
             .as_ref()
             .is_some_and(ShortcutTap::is_enabled)
         {
-            state.hotkey_error.replace(Some(
-                tr!(
-                    "快捷键监听已暂停，请重新启动 Winlane。",
-                    "Shortcut monitoring is paused. Restart Winlane."
-                )
-                .into(),
-            ));
+            // The flag can read as disabled while keystrokes still arrive, so ask
+            // the system to enable the tap again before bothering the user.
+            let recovered = state
+                .shortcut_tap
+                .borrow()
+                .as_ref()
+                .is_some_and(ShortcutTap::re_enable);
+            if recovered {
+                state.hotkey_error.replace(None);
+                crate::macos::platform::logging::record(
+                    crate::macos::platform::logging::Level::Info,
+                    "shortcuts",
+                    "re-enabled",
+                    String::new,
+                );
+            } else {
+                state.hotkey_error.replace(Some(
+                    tr!(
+                        "快捷键监听已暂停，请重新启动 Winlane。",
+                        "Shortcut monitoring is paused. Restart Winlane."
+                    )
+                    .into(),
+                ));
+            }
             self.report_shortcut_status();
         }
     }

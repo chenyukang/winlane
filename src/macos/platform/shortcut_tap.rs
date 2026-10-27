@@ -162,6 +162,18 @@ impl ShortcutTap {
         unsafe { CGEventTapIsEnabled(self.port.as_concrete_TypeRef()) }
     }
 
+    /// Ask the system to enable the tap again after it disabled it.
+    ///
+    /// macOS disables a tap whose callback took too long, and the flag it keeps
+    /// can read as disabled while keystrokes still arrive. Re-enabling is the
+    /// documented recovery; only a tap that stays disabled afterwards is worth
+    /// telling the user about.
+    pub fn re_enable(&self) -> bool {
+        // SAFETY: This instance retains the port and is only used on the main thread.
+        unsafe { CGEventTapEnable(self.port.as_concrete_TypeRef(), true) };
+        self.is_enabled()
+    }
+
     /// The application whose keystrokes come next. Key remaps can leave named
     /// applications alone, so this has to follow the frontmost application;
     /// the delegate publishes it because the tap itself must stay free of
