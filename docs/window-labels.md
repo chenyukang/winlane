@@ -4,6 +4,8 @@ Windows of the same application often share a title that says little about the
 work they hold: three VS Code windows called `index.ts`, two terminals called
 `zsh`. A window name replaces that title in the switcher.
 
+The switcher footer says it too: **Type > to name**.
+
 1. Open the switcher with **Command + Tab** (or search with **Control + I**) and
    select the window you want to name.
 2. Type `>` followed by the name, for example `>模型 1 · 训练监控`, and press
