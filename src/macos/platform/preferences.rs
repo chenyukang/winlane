@@ -45,6 +45,35 @@ pub(crate) fn save_recency(recent: &[u64], defaults: &NSUserDefaults) {
     }
 }
 
+pub(crate) fn load_window_labels() -> Vec<winlane::features::window_labels::WindowLabel> {
+    let defaults = NSUserDefaults::standardUserDefaults();
+    let labels = defaults
+        .stringForKey(ns_string!("WinlaneWindowLabelsV1"))
+        .and_then(|value| {
+            serde_json::from_str::<Vec<winlane::features::window_labels::WindowLabel>>(
+                &value.to_string(),
+            )
+            .ok()
+        })
+        .unwrap_or_default();
+    if winlane::features::window_labels::validate(&labels).is_err() {
+        return Vec::new();
+    }
+    labels
+}
+
+pub(crate) fn save_window_labels(labels: &[winlane::features::window_labels::WindowLabel]) {
+    if winlane::features::window_labels::validate(labels).is_err() {
+        return;
+    }
+    let defaults = NSUserDefaults::standardUserDefaults();
+    let json = NSString::from_str(&serde_json::to_string(labels).unwrap());
+    // SAFETY: Window names are stored next to, not inside, the settings object.
+    unsafe {
+        defaults.setObject_forKey(Some(&json), ns_string!("WinlaneWindowLabelsV1"));
+    }
+}
+
 fn storage_key() -> &'static NSString {
     ns_string!("WindowlanePreferencesV1")
 }

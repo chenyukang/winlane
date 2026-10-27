@@ -221,6 +221,7 @@ type OpenUrlDeepReceiver = Receiver<OpenUrlDeepResult>;
 struct AppState {
     emoji_matches: RefCell<Vec<winlane::features::emoji::Emoji>>,
     auto_appclose: RefCell<auto_appclose::State>,
+    window_labels: RefCell<Vec<winlane::features::window_labels::WindowLabel>>,
     sleep_blockers: RefCell<sleep_blockers::Blockers>,
     files: RefCell<files::State>,
     keep_awake: RefCell<crate::macos::platform::keep_awake::KeepAwake>,

@@ -27,6 +27,9 @@ define_class!(
             preference_store::apply_language(self.ivars().config.borrow().language);
             input_source::set_rules(&self.ivars().config.borrow().input_rules, self.mtm());
             self.restore_recency(NSUserDefaults::standardUserDefaults());
+            self.ivars()
+                .window_labels
+                .replace(preference_store::load_window_labels());
             match preference_store::load_aliases() {
                 Ok(aliases) => {
                     self.ivars().aliases.replace(aliases.with_rules(&[], &HashMap::new(), &self.ivars().config.borrow().alias_rules));
@@ -66,6 +69,7 @@ define_class!(
             self.ivars().scroll_tap.take();
             self.ivars().catalog_watcher.take();
             self.save_recency();
+            preference_store::save_window_labels(&self.ivars().window_labels.borrow());
             self.save_app_input_history();
             self.ivars().clipboard.take();
             crate::macos::platform::logging::record(crate::macos::platform::logging::Level::Info, "app", "stop", String::new);
