@@ -261,6 +261,39 @@ impl Delegate {
         });
     }
 
+    /// Whether the row that is selected now is the one being renamed, so a stale
+    /// mode cannot rename a window the user has since moved away from.
+    pub(super) fn renaming_selected_window(&self) -> bool {
+        let Some(id) = self.ivars().renaming.get() else {
+            return false;
+        };
+        self.selected_window().is_some_and(|window| window.id == id)
+    }
+
+    /// Start renaming the selected window: the field holds its current name, so
+    /// Enter can keep or replace it and Escape can drop it.
+    pub(super) fn begin_rename_selected(&self) {
+        let Some(window) = self.selected_window() else {
+            self.selection_failed(tr!(
+                "先选中一个窗口，再按 ⌃⏎ 重命名。",
+                "Select a window first, then press Control+Enter to name it."
+            ));
+            return;
+        };
+        let current = self
+            .labelled_window(&window)
+            .map_or_else(String::new, |named| named.title);
+        self.ivars().renaming.set(Some(window.id));
+        self.ivars().query.replace(current);
+        self.filter();
+    }
+
+    pub(super) fn cancel_rename(&self) {
+        self.ivars().renaming.set(None);
+        self.ivars().query.replace(String::new());
+        self.filter();
+    }
+
     /// Name the selected window. An empty name puts its real title back.
     pub(super) fn rename_selected_window(&self, name: &str) {
         let Some(window) = self.selected_window() else {
@@ -298,6 +331,7 @@ impl Delegate {
         match winlane::features::window_labels::set_label(&mut labels, &identity, name) {
             Ok(()) => {
                 drop(labels);
+                self.ivars().renaming.set(None);
                 self.ivars().query.replace(String::new());
                 self.filter();
             }

@@ -87,6 +87,7 @@ define_class!(
                                 PanelCommand::Previous => delegate.move_selection(-1),
                                 PanelCommand::Accept => delegate.activate_selected(),
                                 PanelCommand::Cancel => delegate.cancel_search(),
+                                PanelCommand::Rename => delegate.begin_rename_selected(),
                             }
                             return;
                         }

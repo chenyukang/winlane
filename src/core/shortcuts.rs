@@ -42,6 +42,7 @@ pub fn letter_for_key(key: i64) -> Option<char> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PanelCommand {
+    Rename,
     Next,
     Previous,
     Accept,
@@ -50,6 +51,10 @@ pub enum PanelCommand {
 
 pub fn panel_command(key: i64, flags: u64, composing: bool) -> Option<PanelCommand> {
     let modifiers = flags & (COMMAND | CONTROL | OPTION | SHIFT);
+    // Control+Enter names the selected window instead of opening it.
+    if !composing && modifiers == CONTROL && matches!(key, 36 | 76) {
+        return Some(PanelCommand::Rename);
+    }
     if composing || modifiers & (CONTROL | OPTION) != 0 {
         return None;
     }

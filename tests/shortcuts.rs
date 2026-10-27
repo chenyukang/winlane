@@ -24,8 +24,19 @@ fn panel_navigation_preserves_composition_text_editing_and_system_shortcuts() {
     use winlane::core::shortcuts::panel_command;
     for key in [125, 126, TAB, 36, ESCAPE] {
         assert_eq!(panel_command(key, 0, true), None, "IME key {key}");
-        assert_eq!(panel_command(key, CONTROL, false), None);
         assert_eq!(panel_command(key, OPTION, false), None);
+    }
+    // Control+Enter names the selected window; it never reaches a field that is
+    // composing, and no other key gains a Control meaning.
+    for key in [36, 76] {
+        assert_eq!(
+            panel_command(key, CONTROL, false),
+            Some(PanelCommand::Rename)
+        );
+        assert_eq!(panel_command(key, CONTROL, true), None, "IME key {key}");
+    }
+    for key in [125, 126, TAB, ESCAPE] {
+        assert_eq!(panel_command(key, CONTROL, false), None);
     }
     for (key, flags) in [
         (0, 0),

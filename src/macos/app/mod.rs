@@ -222,6 +222,8 @@ struct AppState {
     emoji_matches: RefCell<Vec<winlane::features::emoji::Emoji>>,
     auto_appclose: RefCell<auto_appclose::State>,
     window_labels: RefCell<Vec<winlane::features::window_labels::WindowLabel>>,
+    /// The window being renamed, while the search field holds its new name.
+    renaming: Cell<Option<u64>>,
     sleep_blockers: RefCell<sleep_blockers::Blockers>,
     files: RefCell<files::State>,
     keep_awake: RefCell<crate::macos::platform::keep_awake::KeepAwake>,

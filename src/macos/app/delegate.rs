@@ -167,11 +167,9 @@ define_class!(
             } else if command == sel!(moveUp:) || command == sel!(insertBacktab:) {
                 self.move_selection(-1); true
             } else if command == sel!(insertNewline:) {
-                // ">name" names the selected window instead of opening it, and an
-                // empty name puts the real title back.
-                let query = self.ivars().query.borrow().clone();
-                if let Some(name) = query.trim_start().strip_prefix('>') {
-                    let name = name.trim().to_owned();
+                // While renaming, Enter saves the name the field holds.
+                if self.renaming_selected_window() {
+                    let name = self.ivars().query.borrow().clone();
                     self.rename_selected_window(&name);
                     true
                 } else {
@@ -179,7 +177,12 @@ define_class!(
                     true
                 }
             } else if command == sel!(cancelOperation:) {
-                self.cancel_search(); true
+                if self.renaming_selected_window() {
+                    self.cancel_rename();
+                    true
+                } else {
+                    self.cancel_search(); true
+                }
             } else { false }
         }
     }
