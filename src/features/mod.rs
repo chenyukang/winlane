@@ -15,3 +15,4 @@ pub mod quicklinks;
 pub mod scrolling;
 pub mod sleep_blockers;
 pub mod snippets;
+pub mod window_labels;
