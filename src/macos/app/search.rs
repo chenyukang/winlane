@@ -95,9 +95,12 @@ impl Delegate {
                 .collect(),
         };
         let named_windows: &[WindowInfo] = &named;
+        // Typing a name after ">" must not filter the list away: the window the
+        // name belongs to still has to be visible and selectable while typing.
+        let naming = query.trim_start().starts_with('>');
         let matched = visible_matches(
             named_windows,
-            if is_alias { "" } else { &query },
+            if is_alias || naming { "" } else { &query },
             preferred,
             &self.ivars().config.borrow(),
             scope_pid,
