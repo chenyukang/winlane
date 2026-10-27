@@ -261,6 +261,53 @@ impl Delegate {
         });
     }
 
+    /// Name the selected window. An empty name puts its real title back.
+    pub(super) fn rename_selected_window(&self, name: &str) {
+        let Some(window) = self.selected_window() else {
+            self.selection_failed(tr!(
+                "先选中一个窗口，再输入 > 新名字。",
+                "Select a window first, then type > and the name."
+            ));
+            return;
+        };
+        let Some(bundle_id) = self
+            .ivars()
+            .identities
+            .borrow()
+            .get(&window.pid)
+            .map(|identity| identity.id.clone())
+        else {
+            self.selection_failed(tr!(
+                "这个窗口所属的应用还不明确，请先刷新窗口列表。",
+                "Winlane does not know this window's app yet. Refresh the window list first."
+            ));
+            return;
+        };
+        let server_id = self
+            .ivars()
+            .window_server_ids
+            .borrow()
+            .get(&window.id)
+            .copied();
+        let identity = winlane::features::window_labels::WindowIdentity {
+            bundle_id: &bundle_id,
+            title: &window.title,
+            server_id,
+        };
+        let mut labels = self.ivars().window_labels.borrow_mut();
+        match winlane::features::window_labels::set_label(&mut labels, &identity, name) {
+            Ok(()) => {
+                drop(labels);
+                self.ivars().query.replace(String::new());
+                self.filter();
+            }
+            Err(error) => {
+                drop(labels);
+                self.selection_failed(&error);
+            }
+        }
+    }
+
     /// The window as the row should show it: the name the user gave it replaces
     /// the title, while the app name and alias stay as they are.
     pub(super) fn labelled_window(&self, window: &WindowInfo) -> Option<WindowInfo> {

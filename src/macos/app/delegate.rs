@@ -167,7 +167,17 @@ define_class!(
             } else if command == sel!(moveUp:) || command == sel!(insertBacktab:) {
                 self.move_selection(-1); true
             } else if command == sel!(insertNewline:) {
-                self.activate_selected(); true
+                // ">name" names the selected window instead of opening it, and an
+                // empty name puts the real title back.
+                let query = self.ivars().query.borrow().clone();
+                if let Some(name) = query.trim_start().strip_prefix('>') {
+                    let name = name.trim().to_owned();
+                    self.rename_selected_window(&name);
+                    true
+                } else {
+                    self.activate_selected();
+                    true
+                }
             } else if command == sel!(cancelOperation:) {
                 self.cancel_search(); true
             } else { false }
