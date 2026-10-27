@@ -787,7 +787,10 @@ impl Delegate {
                 RowContent::Clipboard(id, source, preview, tooltip)
             } else if let Some(&index) = matched.get(position - extra_count) {
                 let item = &windows[index];
-                RowContent::Window(item.clone(), aliases.for_window(item.id).map(str::to_owned))
+                RowContent::Window(
+                    self.labelled_window(item).unwrap_or_else(|| item.clone()),
+                    aliases.for_window(item.id).map(str::to_owned),
+                )
             } else if let Some(link) = quicklink_matches.get(position - extra_count - matched.len())
             {
                 RowContent::Quicklink(link.clone())

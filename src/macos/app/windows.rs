@@ -261,6 +261,40 @@ impl Delegate {
         });
     }
 
+    /// The window as the row should show it: the name the user gave it replaces
+    /// the title, while the app name and alias stay as they are.
+    pub(super) fn labelled_window(&self, window: &WindowInfo) -> Option<WindowInfo> {
+        let labels = self.ivars().window_labels.borrow();
+        if labels.is_empty() {
+            return None;
+        }
+        let bundle_id = self
+            .ivars()
+            .identities
+            .borrow()
+            .get(&window.pid)?
+            .id
+            .clone();
+        let server_id = self
+            .ivars()
+            .window_server_ids
+            .borrow()
+            .get(&window.id)
+            .copied();
+        let label = winlane::features::window_labels::label_for(
+            &labels,
+            &winlane::features::window_labels::WindowIdentity {
+                bundle_id: &bundle_id,
+                title: &window.title,
+                server_id,
+            },
+        )?;
+        Some(WindowInfo {
+            title: label.label.clone(),
+            ..window.clone()
+        })
+    }
+
     /// The bundle identifier the last scan recorded for a window's app. The
     /// window list and these identities come from the same scan, so a row still
     /// knows which app it belonged to after that app quits.
