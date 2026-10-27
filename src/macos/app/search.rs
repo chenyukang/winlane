@@ -82,8 +82,21 @@ impl Delegate {
         };
         let aliases = self.ivars().aliases.borrow();
         let is_alias = aliases.is_alias(&query);
+        // A window the user named is matched by that name, so typing part of it
+        // finds the window even when its real title says nothing about the work.
+        let named: Vec<WindowInfo> = match self.ivars().window_labels.borrow().is_empty() {
+            true => windows.to_vec(),
+            false => windows
+                .iter()
+                .map(|window| {
+                    self.labelled_window(window)
+                        .unwrap_or_else(|| window.clone())
+                })
+                .collect(),
+        };
+        let named_windows: &[WindowInfo] = &named;
         let matched = visible_matches(
-            &windows,
+            named_windows,
             if is_alias { "" } else { &query },
             preferred,
             &self.ivars().config.borrow(),
@@ -93,11 +106,11 @@ impl Delegate {
         );
         let alias_matches = if self.ivars().mode.get() == Some(PanelMode::Search) {
             aliases
-                .search_order(&query, &matched, &windows)
+                .search_order(&query, &matched, named_windows)
                 .map(|mut results| {
                     let included: HashSet<_> = results.iter().copied().collect();
                     let text_matches = visible_matches(
-                        &windows,
+                        named_windows,
                         &query,
                         preferred,
                         &self.ivars().config.borrow(),
@@ -113,7 +126,7 @@ impl Delegate {
                     results
                 })
         } else {
-            aliases.filter_order(&query, &matched, &windows)
+            aliases.filter_order(&query, &matched, named_windows)
         };
         let matched = alias_matches.unwrap_or(matched);
         crate::macos::platform::recency_trace::record("order", || {
