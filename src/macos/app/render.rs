@@ -38,11 +38,18 @@ impl Delegate {
         if ui.input.drawsBackground() != naming {
             ui.input.setDrawsBackground(naming);
             let tint = if naming {
-                NSColor::systemYellowColor().colorWithAlphaComponent(0.75)
+                NSColor::systemYellowColor().colorWithAlphaComponent(0.9)
             } else {
                 NSColor::clearColor()
             };
+            // A search field draws its bezel over the view's background, so the
+            // tint has to go on the cell to be visible at all.
             ui.input.setBackgroundColor(Some(&tint));
+            if let Some(cell) = ui.input.cell()
+                && let Some(cell) = cell.downcast_ref::<NSTextFieldCell>()
+            {
+                cell.setBackgroundColor(Some(&tint));
+            }
             // A stronger marker than a tint alone: the text itself is drawn in
             // the accent colour while the field holds a name, not a query.
             let text_color = if naming {
