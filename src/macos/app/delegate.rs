@@ -166,6 +166,12 @@ define_class!(
                 self.move_selection(1); true
             } else if command == sel!(moveUp:) || command == sel!(insertBacktab:) {
                 self.move_selection(-1); true
+            } else if command == sel!(insertNewlineIgnoringFieldEditor:) {
+                // Option+Return: AppKit hands this to the field editor whatever
+                // the input method is doing, so it reaches here where a menu key
+                // equivalent cannot while another app owns the menu bar.
+                self.begin_rename_selected();
+                true
             } else if command == sel!(insertNewline:) {
                 // While renaming, Enter saves the name the field holds.
                 if self.renaming_selected_window() {
