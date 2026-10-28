@@ -62,6 +62,19 @@ fn two_windows_with_the_same_title_keep_their_own_label() {
 }
 
 #[test]
+fn a_changed_title_keeps_the_name_on_its_window() {
+    let mut labels = Vec::new();
+    set_label(&mut labels, &window("index.ts", Some(5)), "左侧编辑器").unwrap();
+    // The editor appends a suffix while the same window stays open.
+    let renamed = window("index.ts — project (modified)", Some(5));
+    assert_eq!(
+        label_for(&labels, &renamed).map(|label| label.label.as_str()),
+        Some("左侧编辑器"),
+        "the WindowServer identity outranks a changed title"
+    );
+}
+
+#[test]
 fn renaming_a_window_replaces_rather_than_duplicates() {
     let mut labels = Vec::new();
     let target = window("index.ts", Some(3));

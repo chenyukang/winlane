@@ -59,14 +59,16 @@ pub fn label_for<'a>(
     labels: &'a [WindowLabel],
     window: &WindowIdentity<'_>,
 ) -> Option<&'a WindowLabel> {
-    let mut fallback = None;
-    for label in labels.iter().filter(|label| label.matches(window)) {
-        if label.server_id.is_some() && label.server_id == window.server_id {
-            return Some(label);
-        }
-        fallback.get_or_insert(label);
+    // The WindowServer identity is the strongest signal: a title can gain or lose
+    // a suffix while the window itself stays the same.
+    if let Some(server_id) = window.server_id
+        && let Some(label) = labels
+            .iter()
+            .find(|label| label.bundle_id == window.bundle_id && label.server_id == Some(server_id))
+    {
+        return Some(label);
     }
-    fallback
+    labels.iter().find(|label| label.matches(window))
 }
 
 /// Give this window a label, replacing whatever it had. An empty label removes
