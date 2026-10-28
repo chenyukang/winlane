@@ -261,6 +261,16 @@ impl Delegate {
         });
     }
 
+    /// Enter: save the name while renaming, otherwise switch to the selection.
+    pub(super) fn accept_selection(&self) {
+        if self.renaming_selected_window() {
+            let name = self.ivars().query.borrow().clone();
+            self.rename_selected_window(&name);
+        } else {
+            self.activate_selected();
+        }
+    }
+
     /// Whether the row that is selected now is the one being renamed, so a stale
     /// mode cannot rename a window the user has since moved away from.
     pub(super) fn renaming_selected_window(&self) -> bool {

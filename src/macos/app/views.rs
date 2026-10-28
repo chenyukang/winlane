@@ -69,13 +69,26 @@ define_class!(
                         }
                     }
                 }
+                if !composing
+                    && event.modifierFlags().contains(NSEventModifierFlags::Option)
+                    && event.modifierFlags().intersection(NSEventModifierFlags::Command | NSEventModifierFlags::Control | NSEventModifierFlags::Shift).is_empty()
+                    && event.keyCode() == 36
+                {
+                    // Option+Return names the selected window; the field editor
+                    // never sees it because the panel handles keys first.
+                    let delegate: Option<Retained<Delegate>> = unsafe { msg_send![self, delegate] };
+                    if let Some(delegate) = delegate {
+                        delegate.begin_rename_selected();
+                        return;
+                    }
+                }
                 if let Some(command) = panel_command(i64::from(event.keyCode()), event.modifierFlags().bits() as u64, composing) {
                     // SAFETY: build_ui installs our retained Delegate as this panel's sole delegate.
                     let delegate: Option<Retained<Delegate>> = unsafe { msg_send![self, delegate] };
                     if let Some(delegate) = delegate {
                         if delegate.editing_quicklink() {
                             match command {
-                                PanelCommand::Accept => { delegate.activate_selected(); return; }
+                                PanelCommand::Accept => { delegate.accept_selection(); return; }
                                 PanelCommand::Cancel => { delegate.cancel_search(); return; }
                                 PanelCommand::Next | PanelCommand::Previous if i64::from(event.keyCode()) == winlane::core::shortcuts::TAB => { delegate.step_quicklink_argument(if command == PanelCommand::Next { 1 } else { -1 }); return; }
                                 _ => {}
@@ -85,7 +98,7 @@ define_class!(
                             match command {
                                 PanelCommand::Next => delegate.move_selection(1),
                                 PanelCommand::Previous => delegate.move_selection(-1),
-                                PanelCommand::Accept => delegate.activate_selected(),
+                                PanelCommand::Accept => delegate.accept_selection(),
                                 PanelCommand::Cancel => delegate.cancel_search(),
                                 PanelCommand::Rename => delegate.begin_rename_selected(),
                             }
