@@ -95,9 +95,12 @@ impl Delegate {
                 .collect(),
         };
         let named_windows: &[WindowInfo] = &named;
+        // While a window is being renamed the field holds its new name, not a
+        // query: the list must stay exactly as it was so the row stays selectable.
+        let naming = self.ivars().renaming.get().is_some();
         let matched = visible_matches(
             named_windows,
-            if is_alias { "" } else { &query },
+            if is_alias || naming { "" } else { &query },
             preferred,
             &self.ivars().config.borrow(),
             scope_pid,

@@ -263,7 +263,7 @@ impl Delegate {
 
     /// Enter: save the name while renaming, otherwise switch to the selection.
     pub(super) fn accept_selection(&self) {
-        if self.renaming_selected_window() {
+        if self.ivars().renaming.get().is_some() {
             let name = self.ivars().query.borrow().clone();
             self.rename_selected_window(&name);
         } else {
@@ -306,10 +306,23 @@ impl Delegate {
 
     /// Name the selected window. An empty name puts its real title back.
     pub(super) fn rename_selected_window(&self, name: &str) {
-        let Some(window) = self.selected_window() else {
+        let window = self
+            .ivars()
+            .renaming
+            .get()
+            .and_then(|id| {
+                self.ivars()
+                    .windows
+                    .borrow()
+                    .iter()
+                    .find(|window| window.id == id)
+                    .cloned()
+            })
+            .or_else(|| self.selected_window());
+        let Some(window) = window else {
             self.selection_failed(tr!(
-                "先选中一个窗口，再输入 > 新名字。",
-                "Select a window first, then type > and the name."
+                "先选中一个窗口，再按 ⌥⏎ 重命名。",
+                "Select a window first, then press Option+Return to name it."
             ));
             return;
         };
