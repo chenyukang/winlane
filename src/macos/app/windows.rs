@@ -362,15 +362,29 @@ impl Delegate {
             title: &window.title,
             server_id,
         };
+        // "名字 #训练" sets both the name and the group; "#训练" only groups.
+        let (name, tag) = winlane::features::window_labels::split_tag(name);
         let mut labels = self.ivars().window_labels.borrow_mut();
-        match winlane::features::window_labels::set_label(&mut labels, &identity, name) {
+        let result = winlane::features::window_labels::set_label(&mut labels, &identity, &name)
+            .and_then(|()| match tag.as_deref() {
+                Some(tag) => winlane::features::window_labels::set_tag(&mut labels, &identity, tag),
+                None => Ok(()),
+            });
+        match result {
             Ok(()) => {
                 drop(labels);
                 crate::macos::platform::logging::record(
                     crate::macos::platform::logging::Level::Info,
                     "labels",
                     "saved",
-                    || format!("window={} length={}", window.id, name.chars().count()),
+                    || {
+                        format!(
+                            "window={} length={} tag={:?}",
+                            window.id,
+                            name.chars().count(),
+                            tag
+                        )
+                    },
                 );
                 self.ivars().renaming.set(None);
                 self.ivars().query.replace(String::new());
@@ -411,8 +425,14 @@ impl Delegate {
                 server_id,
             },
         )?;
+        let title = match (label.label.trim(), label.tag.as_deref()) {
+            ("", Some(tag)) => format!("· {tag}"),
+            ("", None) => String::new(),
+            (name, None) => name.to_owned(),
+            (name, Some(tag)) => format!("{name} · {tag}"),
+        };
         Some(WindowInfo {
-            title: label.label.clone(),
+            title,
             ..window.clone()
         })
     }

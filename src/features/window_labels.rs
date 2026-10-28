@@ -175,6 +175,22 @@ pub fn set_label(
     Ok(())
 }
 
+/// Split a typed value into a name and an optional group tag. A trailing word
+/// starting with `#` is the group, so "模型 1 #训练" names the window and puts it
+/// in the 训练 group; "#训练" only groups it.
+pub fn split_tag(input: &str) -> (String, Option<String>) {
+    let trimmed = input.trim();
+    let mut name_parts = Vec::new();
+    let mut tag = None;
+    for word in trimmed.split_whitespace() {
+        match word.strip_prefix('#') {
+            Some(rest) if !rest.is_empty() => tag = Some(rest.to_owned()),
+            _ => name_parts.push(word),
+        }
+    }
+    (name_parts.join(" "), tag)
+}
+
 /// Put this window in a group, or take it out when `tag` is empty. The name and
 /// the identity of the label are kept, so naming and grouping are independent.
 pub fn set_tag(

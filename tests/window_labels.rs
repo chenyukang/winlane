@@ -1,3 +1,4 @@
+use winlane::features::window_labels::split_tag;
 use winlane::features::window_labels::{
     MAX_LABEL_CHARS, WindowIdentity, WindowLabel, label_for, normalize_title, set_label, validate,
 };
@@ -184,5 +185,21 @@ fn tags_are_bounded_and_never_leave_the_colour_set() {
     assert!(
         validate(&[entry]).is_err(),
         "an entry needs a name or a tag"
+    );
+}
+
+#[test]
+fn typing_a_hash_sets_the_group_and_the_rest_names_the_window() {
+    assert_eq!(
+        split_tag("模型 1 · 训练监控 #训练"),
+        ("模型 1 · 训练监控".into(), Some("训练".into()))
+    );
+    assert_eq!(split_tag("#训练"), (String::new(), Some("训练".into())));
+    assert_eq!(split_tag("  只有名字  "), ("只有名字".into(), None));
+    assert_eq!(split_tag(""), (String::new(), None));
+    assert_eq!(
+        split_tag("hash # 单独"),
+        ("hash # 单独".into(), None),
+        "a lone hash stays part of the name"
     );
 }
