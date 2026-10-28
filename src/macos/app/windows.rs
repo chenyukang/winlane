@@ -263,6 +263,12 @@ impl Delegate {
 
     /// Enter: save the name while renaming, otherwise switch to the selection.
     pub(super) fn accept_selection(&self) {
+        crate::macos::platform::logging::record(
+            crate::macos::platform::logging::Level::Info,
+            "labels",
+            "accept",
+            || format!("renaming={:?}", self.ivars().renaming.get()),
+        );
         if self.ivars().renaming.get().is_some() {
             let name = self.ivars().query.borrow().clone();
             self.rename_selected_window(&name);
@@ -293,6 +299,12 @@ impl Delegate {
         let current = self
             .labelled_window(&window)
             .map_or_else(String::new, |named| named.title);
+        crate::macos::platform::logging::record(
+            crate::macos::platform::logging::Level::Info,
+            "labels",
+            "begin",
+            || format!("window={} prefilled={}", window.id, current.chars().count()),
+        );
         self.ivars().renaming.set(Some(window.id));
         self.ivars().query.replace(current);
         self.filter();
@@ -354,6 +366,12 @@ impl Delegate {
         match winlane::features::window_labels::set_label(&mut labels, &identity, name) {
             Ok(()) => {
                 drop(labels);
+                crate::macos::platform::logging::record(
+                    crate::macos::platform::logging::Level::Info,
+                    "labels",
+                    "saved",
+                    || format!("window={} length={}", window.id, name.chars().count()),
+                );
                 self.ivars().renaming.set(None);
                 self.ivars().query.replace(String::new());
                 self.filter();
