@@ -80,6 +80,11 @@ impl Delegate {
         self.add_window_actions(&window_menu);
         window_menu.addItem(&NSMenuItem::separatorItem(mtm));
         window_menu.addItem(&self.menu_item(
+            tr!("重命名窗口…", "Name Window…"),
+            sel!(renameSelectedWindow:),
+            "e",
+        ));
+        window_menu.addItem(&self.menu_item(
             tr!("刷新窗口", "Refresh Windows"),
             sel!(refreshWindows:),
             "r",

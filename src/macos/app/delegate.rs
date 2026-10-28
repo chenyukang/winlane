@@ -335,6 +335,13 @@ define_class!(
         }
         #[unsafe(method(settingsChanged:))]
         fn settings_changed(&self, _: Option<&AnyObject>) { self.autosave_settings(); }
+
+        /// Menu entry for naming the selected window. A menu key equivalent
+        /// reaches the app before the search field, which swallows Control+Enter.
+        #[unsafe(method(renameSelectedWindow:))]
+        fn rename_window_from_menu(&self, _: Option<&AnyObject>) {
+            self.begin_rename_selected();
+        }
         #[unsafe(method(addSearchShortcut:))]
         fn add_search_shortcut(&self, _: Option<&AnyObject>) {
             if let Some(settings) = self.settings_window() { settings.add_search_shortcut(); }
