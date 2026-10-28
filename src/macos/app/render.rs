@@ -38,11 +38,18 @@ impl Delegate {
         if ui.input.drawsBackground() != naming {
             ui.input.setDrawsBackground(naming);
             let tint = if naming {
-                NSColor::systemYellowColor().colorWithAlphaComponent(0.35)
+                NSColor::systemYellowColor().colorWithAlphaComponent(0.75)
             } else {
                 NSColor::clearColor()
             };
             ui.input.setBackgroundColor(Some(&tint));
+            // A stronger marker than a tint alone: the text itself is drawn in
+            // the accent colour while the field holds a name, not a query.
+            ui.input.setTextColor(Some(&if naming {
+                NSColor::systemOrangeColor()
+            } else {
+                NSColor::labelColor()
+            }));
         }
         drop(query);
         let state = self.ivars();
