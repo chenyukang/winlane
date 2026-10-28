@@ -45,11 +45,12 @@ impl Delegate {
             ui.input.setBackgroundColor(Some(&tint));
             // A stronger marker than a tint alone: the text itself is drawn in
             // the accent colour while the field holds a name, not a query.
-            ui.input.setTextColor(Some(&if naming {
+            let text_color = if naming {
                 NSColor::systemOrangeColor()
             } else {
                 NSColor::labelColor()
-            }));
+            };
+            ui.input.setTextColor(Some(&text_color));
         }
         drop(query);
         let state = self.ivars();
