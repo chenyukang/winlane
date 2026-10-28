@@ -1,6 +1,7 @@
 use winlane::features::window_labels::{
     MAX_LABEL_CHARS, WindowIdentity, WindowLabel, label_for, normalize_title, set_label, validate,
 };
+use winlane::features::window_labels::{MAX_TAG_CHARS, TagColor, set_tag};
 
 fn window<'a>(title: &'a str, server_id: Option<u32>) -> WindowIdentity<'a> {
     WindowIdentity {
@@ -96,6 +97,8 @@ fn labels_are_bounded_and_checked_when_loaded() {
         title_key: "t".into(),
         server_id: None,
         label: "n".into(),
+        tag: None,
+        color: None,
     });
     validate(&labels).unwrap();
 
@@ -111,4 +114,75 @@ fn labels_are_bounded_and_checked_when_loaded() {
     let mut overlong = labels.clone();
     overlong[0].label = too_long;
     assert!(validate(&overlong).is_err(), "an overlong name is rejected");
+}
+
+#[test]
+fn a_tag_groups_a_window_and_keeps_its_name() {
+    let mut labels = Vec::new();
+    let target = window("train log", Some(11));
+    set_label(&mut labels, &target, "模型 1 · 训练监控").unwrap();
+    set_tag(&mut labels, &target, "训练").unwrap();
+    let entry = label_for(&labels, &target).unwrap();
+    assert_eq!(
+        entry.label, "模型 1 · 训练监控",
+        "the name survives tagging"
+    );
+    assert_eq!(entry.tag.as_deref(), Some("训练"));
+    assert_eq!(entry.color, Some(TagColor::for_tag("训练")));
+    // The same tag always draws the same colour.
+    assert_eq!(
+        TagColor::for_tag("训练"),
+        TagColor::for_tag("训练"),
+        "a group keeps one colour"
+    );
+    // A tag can be removed without touching the name.
+    set_tag(&mut labels, &target, "   ").unwrap();
+    let entry = label_for(&labels, &target).unwrap();
+    assert_eq!(entry.tag, None);
+    assert_eq!(entry.label, "模型 1 · 训练监控");
+}
+
+#[test]
+fn a_window_can_be_grouped_without_being_named() {
+    let mut labels = Vec::new();
+    let target = window("zsh — ~/code", Some(12));
+    set_tag(&mut labels, &target, "资料").unwrap();
+    let entry = label_for(&labels, &target).unwrap();
+    assert!(
+        entry.label.is_empty(),
+        "a group alone does not name the window"
+    );
+    assert_eq!(entry.tag.as_deref(), Some("资料"));
+    // Removing the group of a window that only had a group drops the entry.
+    set_tag(&mut labels, &target, "").unwrap();
+    assert!(labels.is_empty());
+}
+
+#[test]
+fn tags_are_bounded_and_never_leave_the_colour_set() {
+    let mut labels = Vec::new();
+    let target = window("a", Some(13));
+    let too_long = "t".repeat(MAX_TAG_CHARS + 1);
+    assert!(set_tag(&mut labels, &target, &too_long).is_err());
+    assert!(labels.is_empty(), "a rejected tag is not stored");
+    let mut entry = WindowLabel {
+        bundle_id: "app".into(),
+        title_key: "t".into(),
+        server_id: None,
+        label: String::new(),
+        tag: Some("ok".into()),
+        color: Some(TagColor::Blue),
+    };
+    validate(&[entry.clone()]).unwrap();
+    entry.tag = Some(too_long.clone());
+    assert!(
+        validate(&[entry.clone()]).is_err(),
+        "an overlong tag is rejected"
+    );
+    entry.tag = None;
+    entry.label.clear();
+    assert!(
+        validate(&[entry]).is_err(),
+        "an entry needs a name or a tag"
+    );
 }
