@@ -308,6 +308,17 @@ impl Delegate {
         self.ivars().renaming.set(Some(window.id));
         self.ivars().query.replace(current);
         self.filter();
+        // Keep the row being named selected, so the panel shows what will change.
+        if let Some(position) = {
+            let windows = self.ivars().windows.borrow();
+            let matches = self.ivars().matches.borrow();
+            matches
+                .iter()
+                .position(|&index| windows.get(index).is_some_and(|item| item.id == window.id))
+        } {
+            self.ivars().selected.set(position);
+            self.render();
+        }
     }
 
     pub(super) fn cancel_rename(&self) {

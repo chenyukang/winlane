@@ -32,6 +32,18 @@ impl Delegate {
         if !composing && ui.input.stringValue().to_string() != *query {
             ui.input.setStringValue(&NSString::from_str(&query));
         }
+        // Naming a window is a different job for the same field, so it says so:
+        // the panel is tinted and the placeholder explains what Enter will do.
+        let naming = self.ivars().renaming.get().is_some();
+        if ui.input.drawsBackground() != naming {
+            ui.input.setDrawsBackground(naming);
+            let tint = if naming {
+                NSColor::systemYellowColor().colorWithAlphaComponent(0.35)
+            } else {
+                NSColor::clearColor()
+            };
+            ui.input.setBackgroundColor(Some(&tint));
+        }
         drop(query);
         let state = self.ivars();
         let list = &ui.list;
